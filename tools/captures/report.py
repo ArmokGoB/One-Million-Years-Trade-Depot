@@ -179,12 +179,24 @@ class SystemRecord:
 
 
 @dataclass
+class Label:
+    """An exotic sighting the player labelled, and the session (index into Captures.sessions) it's from."""
+
+    data: dict
+    session: int
+
+    @property
+    def ua(self) -> int:
+        return int(self.data.get("ua") or "0", 16) or int(self.data.get("seed") or "0", 16)
+
+
+@dataclass
 class Captures:
     sessions: list[Session] = field(default_factory=list)
     records: list[SystemRecord] = field(default_factory=list)
     queries: list[dict] = field(default_factory=list)
     names: list[dict] = field(default_factory=list)
-    labels: list[dict] = field(default_factory=list)
+    labels: list[Label] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -248,7 +260,7 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                 elif kind == "name":
                     captures.names.append(obj)
                 elif kind == "label":
-                    captures.labels.append(obj)
+                    captures.labels.append(Label(obj, len(captures.sessions) - 1))
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -579,31 +591,43 @@ def _portal_label(ua: int) -> str:
     return f"{(ua >> 52) & 0xF:X}{(ua >> 40) & 0xFFF:03X}{ua & MASK32:08X} galaxy {(ua >> 32) & 0xFF}"
 
 
+def final_labels(captures: Captures) -> list[Label]:
+    """One label per system per session: the last, since pressing the other key corrects a mistake."""
+    last: dict[tuple[int, int], Label] = {}
+    for label in captures.labels:
+        key = (label.session, label.ua & ~PLANET_BITS)
+        last.pop(key, None)  # so the list stays in the order of each system's last label
+        last[key] = label
+    return list(last.values())
+
+
 def label_lines(captures: Captures) -> list[str]:
     """Exotic sightings the player labelled, against each system's one exotic seed."""
     if not captures.labels:
         return []
-    counts = Counter(label.get("label") for label in captures.labels)
-    lines = [
-        "",
-        f"Exotic sightings labelled: {len(captures.labels)} ("
+    labels = final_labels(captures)
+    counts = Counter(label.data.get("label") for label in labels)
+    heading = (
+        f"Exotic sightings labelled: {len(labels)} ("
         + ", ".join(f"{k} {n}" for k, n in counts.most_common())
-        + ")",
-    ]
+        + ")"
+    )
+    if replaced := len(captures.labels) - len(labels):
+        heading += f"; {replaced} earlier label(s) replaced by a later one for the same system and session"
+    lines = ["", heading]
     by_seed: dict[str, set[str]] = {}
-    for label in captures.labels:
-        ua = int(label.get("ua") or "0", 16) or int(label.get("seed") or "0", 16)
-        exotic = label.get("exotic") or []
-        name = label.get("displayName") or "(unnamed)"
+    for label in labels:
+        exotic = label.data.get("exotic") or []
+        name = label.data.get("displayName") or "(unnamed)"
         lines.append(
-            f"  {_portal_label(ua)} {name}: {label.get('label')} "
+            f"  {_portal_label(label.ua)} {name}: {label.data.get('label')} "
             f"({', '.join(exotic) if exotic else 'no exotic in the ship list'})"
         )
         for seed in exotic:
-            by_seed.setdefault(seed, set()).add(label.get("label"))
-    conflicts = sorted(seed for seed, labels in by_seed.items() if len(labels) > 1)
+            by_seed.setdefault(seed, set()).add(label.data.get("label"))
+    conflicts = sorted(seed for seed, kinds in by_seed.items() if len(kinds) > 1)
     if conflicts:
-        lines.append("  labelled both ways: " + ", ".join(conflicts))
+        lines.append("  labelled both ways in different sessions: " + ", ".join(conflicts))
     return lines
 
 

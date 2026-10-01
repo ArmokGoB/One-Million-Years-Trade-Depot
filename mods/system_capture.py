@@ -28,14 +28,19 @@ of game memory goes through ReadProcessMemory, so if NMS.py's struct layouts
 stop matching the game after an update, the mod logs a warning instead of
 crashing the game.
 
-Run it with ``py -3.13 system_capture.py``. See README.md in this folder.
+Run it with ``py -3.13 system_capture.py``. While the game has focus, F6
+records the current system and F7 or F8 labels an exotic you saw; short
+tones confirm each, so you needn't leave the game. See README.md in this
+folder.
 """
 
 from __future__ import annotations
 
+import array
 import base64
 import ctypes
 import hashlib
+import io
 import json
 import logging
 import math
@@ -46,6 +51,7 @@ import struct
 import sys
 import threading
 import time
+import wave
 import zlib
 from collections import Counter
 from importlib import metadata
@@ -59,17 +65,41 @@ import pymhf.core._internal as pymhf_internal
 from nmspy.common import gameData
 from nmspy.decorators import main_loop
 from pymhf import Mod
+from pymhf.core.hooking import on_key_release
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.3.0"
+MOD_VERSION = "0.4.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 only adds fields and record types, so it keeps format 2.)
+# (0.3.0 and 0.4.0 only add fields, record types and controls, so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
 CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
 CAPTURE_FILE = CAPTURE_DIR / "systems.jsonl"
+
+# Keys that work while the game window has focus, so you can stay in the
+# game. pyMHF matches one key by the name the `keyboard` library gives it
+# ("f6", "home", "page up"); combinations such as Ctrl+F6 can't be used.
+# Change a key here if it clashes with your own bindings or another program.
+HOTKEYS = {
+    "record": "f6",  # record the current system now
+    "squid": "f7",  # the exotic you just saw here is a squid
+    "not a squid": "f8",  # ... isn't a squid
+}
+# Short tones tell you what happened while the log is hidden behind the game.
+PLAY_SOUNDS = True
+# Also play the "recorded" tone once per system, a few seconds after you
+# arrive, when the system is in the capture file.
+CHIME_ON_ARRIVAL = True
+SOUND_VOLUME = 0.3  # 0 to 1
+# Notes as (frequency in Hz, seconds); a frequency of 0 is a rest.
+SOUNDS = {
+    "recorded": [(880.0, 0.07), (1318.5, 0.12)],  # two rising notes
+    "squid": [(659.3, 0.07), (880.0, 0.07), (1174.7, 0.14)],  # three rising notes
+    "not a squid": [(1174.7, 0.07), (880.0, 0.07), (659.3, 0.14)],  # three falling notes
+    "problem": [(220.0, 0.18), (0.0, 0.07), (220.0, 0.18)],  # two low notes
+}
 
 # How often the main loop looks at the current system. The Generate hook
 # records systems as they are made; polling catches anything filled in later.
@@ -83,6 +113,7 @@ NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
 MAX_READ = 1 << 20
 MASK64 = (1 << 64) - 1
+PLANET_BITS = 0xF << 52  # the planet digit of a universal address
 ZERO_SEED = "0" * 16
 
 logger = logging.getLogger("TradeDepotCapture")
@@ -697,6 +728,80 @@ def describe(record: dict) -> str:
     return f"{name} ({where}): {pool}"
 
 
+def key_name(action: str) -> str:
+    """How a hotkey is written on the keyboard: "F6", "Page Up"."""
+    name = HOTKEYS[action]
+    return name.upper() if re.fullmatch(r"f\d{1,2}", name) else name.title()
+
+
+def tone(notes: list[tuple[float, float]], volume: float = SOUND_VOLUME, rate: int = 22050) -> bytes:
+    """A WAV file (mono, 16-bit) playing ``notes``, as bytes."""
+    volume = min(max(volume, 0.0), 1.0)
+    samples = array.array("h")
+    for frequency, seconds in notes:
+        count = round(rate * seconds)
+        fade = max(1, min(count // 2, round(rate * 0.006)))  # 6 ms each end, so notes don't click
+        for i in range(count):
+            if frequency <= 0:
+                samples.append(0)
+                continue
+            phase = 2 * math.pi * frequency * i / rate
+            # Some second harmonic makes a note easier to hear on small speakers.
+            level = 0.8 * math.sin(phase) + 0.2 * math.sin(2 * phase)
+            envelope = min(1.0, i / fade, (count - 1 - i) / fade)
+            samples.append(round(32767 * volume * envelope * level))
+    if sys.byteorder == "big":  # WAV samples are little-endian
+        samples.byteswap()
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+_sound_cache: dict[str, bytes] = {}
+_sound_lock = threading.Lock()
+_sound_failed: set[str] = set()
+
+
+def prepare_sounds() -> None:
+    """Build the sounds once, at startup, rather than while you play."""
+    if PLAY_SOUNDS:
+        for name, notes in SOUNDS.items():
+            if name not in _sound_cache:
+                _sound_cache[name] = tone(notes)
+
+
+def play_sound(name: str) -> threading.Thread | None:
+    """Play one of SOUNDS on a thread of its own, so neither the game nor the
+    keyboard waits for it. Does nothing where sound isn't available."""
+    if not PLAY_SOUNDS or name not in SOUNDS:
+        return None
+    try:
+        import winsound
+    except ImportError:  # not Windows
+        return None
+
+    def run() -> None:
+        try:
+            data = _sound_cache.get(name)
+            if data is None:
+                data = _sound_cache[name] = tone(SOUNDS[name])
+            with _sound_lock:  # one at a time, so none cuts another off
+                # Sounds from memory can't be asynchronous; this thread waits instead.
+                winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+        except Exception:
+            if name not in _sound_failed:  # once per sound, not every time
+                _sound_failed.add(name)
+                logger.warning("Couldn't play the %r sound.", name, exc_info=True)
+
+    thread = threading.Thread(target=run, name="TradeDepotSound", daemon=True)
+    thread.start()
+    return thread
+
+
 class TradeDepotCapture(Mod):
     __author__ = "One Million Years Trade Depot contributors"
     __description__ = "Records each star system you visit and the ships the game prepares for it."
@@ -732,7 +837,20 @@ class TradeDepotCapture(Mod):
         self._name_seeds: set[tuple[str, int]] = set()
         self._pending: list[dict] = []
         self._next_flush = 0.0
+        # Systems (universal address without the planet digit) whose arrival tone has played.
+        self._chimed: set[int] = set()
+        try:
+            prepare_sounds()
+        except Exception:
+            logger.warning("Couldn't prepare the sounds.", exc_info=True)
         logger.info("Trade Depot capture %s is recording to %s", MOD_VERSION, CAPTURE_FILE)
+        logger.info(
+            "While the game has focus: %s records the current system; %s notes that the exotic you "
+            "just saw here is a squid, %s that it isn't.",
+            key_name("record"),
+            key_name("squid"),
+            key_name("not a squid"),
+        )
 
     # --- GUI (read on the GUI thread, so these only return cached values) ---
 
@@ -766,17 +884,17 @@ class TradeDepotCapture(Mod):
     def capture_file(self):
         return str(CAPTURE_FILE)
 
-    @gui_button("Record the current system now")
+    @gui_button(f"Record the current system now ({key_name('record')})")
     def record_now(self):
         # The game thread does the reading, on its next frame.
         self._record_requested = True
         self._status = "Recording the current system..."
 
-    @gui_button("Exotic seen here: squid")
+    @gui_button(f"Exotic seen here: squid ({key_name('squid')})")
     def exotic_squid(self):
         self._request_label("squid")
 
-    @gui_button("Exotic seen here: not a squid")
+    @gui_button(f"Exotic seen here: not a squid ({key_name('not a squid')})")
     def exotic_not_squid(self):
         self._request_label("not a squid")
 
@@ -792,6 +910,23 @@ class TradeDepotCapture(Mod):
             os.startfile(str(CAPTURE_DIR))  # Windows only
         except Exception:
             logger.warning("Couldn't open %s", CAPTURE_DIR, exc_info=True)
+
+    # --- Hotkeys ---
+    # pyMHF calls these on its keyboard thread, and only while the game has
+    # focus. They do what the buttons do. They act on release because holding
+    # a key down repeats its press.
+
+    @on_key_release(HOTKEYS["record"])
+    def record_key(self):
+        self.record_now()
+
+    @on_key_release(HOTKEYS["squid"])
+    def squid_key(self):
+        self.exotic_squid()
+
+    @on_key_release(HOTKEYS["not a squid"])
+    def not_squid_key(self):
+        self.exotic_not_squid()
 
     # --- Game hooks ---
     # pyMHF treats a value returned by a "before" detour as replacement
@@ -964,10 +1099,19 @@ class TradeDepotCapture(Mod):
         label, self._label_requested = self._label_requested, None
         if label is None:
             return
+        try:
+            paired = self._write_label(label)
+        except Exception:
+            play_sound("problem")
+            raise
+        play_sound(label if paired else "problem")
+
+    def _write_label(self, label: str) -> bool:
+        """Write a label line for the loaded system. True if its ship list has an exotic to pair with."""
         active = active_system()
         if active is None:
             self._status = "No star system is loaded yet."
-            return
+            return False
         record = snapshot(active[0])
         record.update(self._where(None, active[0]))
         classes = ENUM_TABLES.get("shipClass", [])
@@ -992,9 +1136,10 @@ class TradeDepotCapture(Mod):
         if exotic:
             logger.info("Noted: the exotic in %s (seed %s) is %s.", where, ", ".join(exotic), label)
             self._status = f"Noted: the exotic here is {label}."
-        else:
-            logger.info("Noted, but %s has no exotic in its ship list.", where)
-            self._status = "Noted, but this system's ship list has no exotic."
+            return True
+        logger.info("Noted, but %s has no exotic in its ship list.", where)
+        self._status = "Noted, but this system's ship list has no exotic."
+        return False
 
     def _record_generated(self, this, use_settings_file, seed_pointer) -> None:
         address = address_of(this)
@@ -1037,17 +1182,37 @@ class TradeDepotCapture(Mod):
             self._last_seen = None
             if requested:
                 self._status = "No star system is loaded yet."
+                play_sound("problem")
             return
         address, current_ua = active
         seen = fingerprint(address)
         if requested:
-            self._record(address, "btn", self._where(current_ua, address), announce=True)
+            try:
+                self._record(address, "btn", self._where(current_ua, address), announce=True)
+            except Exception:
+                play_sound("problem")
+                raise
+            # Recorded now or earlier: either way the system is in the capture file.
+            play_sound("recorded")
+            self._arrived(seen, chime=False)
             self._last_polled = seen
         elif seen is not None and seen == self._last_seen and seen != self._last_polled:
             # Unchanged for a whole interval: settled enough to read in full.
             self._record(address, "poll", self._where(current_ua, address))
             self._last_polled = seen
+            self._arrived(seen)
         self._last_seen = seen
+
+    def _arrived(self, seen: tuple | None, chime: bool = True) -> None:
+        """The system has settled and is in the capture file: tone once per system per session."""
+        if seen is None:
+            return
+        system = int.from_bytes(seen[1], "little") & ~PLANET_BITS
+        if system in self._chimed:
+            return
+        self._chimed.add(system)
+        if chime and CHIME_ON_ARRIVAL:
+            play_sound("recorded")
 
     def _where(self, current_ua: int | None, named_system: int | None = None) -> dict:
         """Cross-checks for a record; with ``named_system``, also the name the game shows for it."""
