@@ -8,19 +8,24 @@ Set NMS_NAMEGEN to a clone of nms_namegen to include the generator comparison te
 
 from __future__ import annotations
 
+import array
 import base64
 import ctypes
 import importlib.util
 import inspect
+import io
 import json
 import math
 import os
 import sys
 import tempfile
+import threading
 import types
 import unittest
+import wave
 import zlib
 from pathlib import Path
+from unittest import mock
 
 import harness
 
@@ -267,6 +272,8 @@ class CaptureTestCase(unittest.TestCase):
         self._patch("read_memory", self.game.memory.read)
         self._patch("gameData", FakeGameData(self.game))
         self._patch("system_display_name", lambda address: self.game.display_name)
+        self.sounds: list[str] = []
+        self._patch("play_sound", self.sounds.append)
         self.capture = mod.TradeDepotCapture()
 
     def _patch(self, name, value):
@@ -326,6 +333,65 @@ class WiringTests(CaptureTestCase):
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
         self.assertEqual(len(self.capture._gui_widgets), 10)
+
+    def test_hotkeys_are_registered_on_key_release(self):
+        keys = {f.__name__: (f._hotkey, f._hotkey_press) for f in self.capture._hotkey_funcs}
+        self.assertEqual(
+            keys,
+            {"record_key": ("f6", "up"), "squid_key": ("f7", "up"), "not_squid_key": ("f8", "up")},
+        )
+
+    def test_pymhf_acts_on_key_releases_while_the_game_has_focus(self):
+        import pymhf.core.mod_loader as loader
+
+        callbacks = []
+        manager = loader.ModManager()
+        manager.hook_manager = types.SimpleNamespace(
+            register_hook=lambda hook: None, _add_custom_callbacks=lambda found: None
+        )
+        focused = mock.Mock(return_value=True)
+        with (
+            mock.patch.object(loader.keyboard, "hook", callbacks.append, create=True),
+            mock.patch.object(loader, "does_pid_have_focus", focused),
+        ):
+            capture = manager.instantiate_mod(mod.TradeDepotCapture)
+
+            def key(name: str, kind: str) -> None:
+                for callback in callbacks:
+                    callback(types.SimpleNamespace(name=name, event_type=kind))
+
+            self.assertEqual(len(callbacks), 3)
+            key("f7", "down")
+            self.assertIsNone(capture._label_requested, "nothing until the key is released")
+            key("f7", "up")
+            self.assertEqual(capture._label_requested, "squid")
+            key("f8", "up")
+            self.assertEqual(capture._label_requested, "not a squid")
+            key("f6", "up")
+            self.assertTrue(capture._record_requested)
+            capture._label_requested = None
+            focused.return_value = False
+            key("f7", "up")
+            self.assertIsNone(capture._label_requested, "nothing while another window has focus")
+
+    def test_hotkeys_are_distinct_single_keys(self):
+        names = list(mod.HOTKEYS.values())
+        self.assertEqual(len(set(names)), len(names))
+        for name in names:
+            self.assertEqual(name, name.lower(), "the keyboard library reports lower-case names")
+            self.assertNotIn("+", name, "pyMHF can't bind key combinations")
+
+    def test_buttons_name_their_keys(self):
+        labels = {w._widget_data.label for w in self.capture._gui_widgets if hasattr(w, "_widget_data")}
+        self.assertIn("Record the current system now (F6)", labels)
+        self.assertIn("Exotic seen here: squid (F7)", labels)
+        self.assertIn("Exotic seen here: not a squid (F8)", labels)
+
+    def test_key_names(self):
+        for key, shown in (("f6", "F6"), ("f12", "F12"), ("page up", "Page Up"), ("o", "O")):
+            with self.subTest(key=key):
+                self._patch("HOTKEYS", dict(mod.HOTKEYS, record=key))
+                self.assertEqual(mod.key_name("record"), shown)
 
     def test_layout_reads_inside_the_structs(self):
         self.assertEqual(mod.LAYOUT.ua, nms.cGcSolarSystem.mUA.offset)
@@ -648,6 +714,16 @@ class LabelTests(CaptureTestCase):
             "\n".join(logs.output),
         )
         self.assertEqual(self.capture.status, "Noted: the exotic here is squid.")
+        self.assertEqual(self.sounds, ["squid"])
+
+    def test_hotkeys_label_like_the_buttons(self):
+        for key, label in ((self.capture.squid_key, "squid"), (self.capture.not_squid_key, "not a squid")):
+            key()
+            self.assertEqual(self.capture.status, f"Noting that the exotic here is {label}...")
+            self.capture.on_frame()
+        self.assertEqual([line["label"] for line in self.lines() if line["t"] == "label"],
+                         ["squid", "not a squid"])  # fmt: skip
+        self.assertEqual(self.sounds, ["squid", "not a squid"])
 
     def test_label_without_an_exotic_in_the_list(self):
         self.game.set_ships(SHIPS[:2])
@@ -656,6 +732,7 @@ class LabelTests(CaptureTestCase):
         (label,) = [line for line in self.lines() if line["t"] == "label"]
         self.assertEqual((label["label"], label["exotic"]), ("not a squid", []))
         self.assertEqual(self.capture.status, "Noted, but this system's ship list has no exotic.")
+        self.assertEqual(self.sounds, ["problem"])
 
     def test_label_without_a_system(self):
         self.game.loaded = False
@@ -663,16 +740,43 @@ class LabelTests(CaptureTestCase):
         self.capture.on_frame()
         self.assertEqual(self.lines(), [])
         self.assertEqual(self.capture.status, "No star system is loaded yet.")
+        self.assertEqual(self.sounds, ["problem"])
 
-    def test_report_lists_labels_and_conflicts(self):
+    def test_label_that_cant_be_written(self):
+        blocker = Path(self._tmp.name) / "blocked"
+        blocker.write_text("not a folder")
+        self._patch("CAPTURE_DIR", blocker)
+        self._patch("CAPTURE_FILE", blocker / "systems.jsonl")
+        self.capture.exotic_squid()
+        with self.assertLogs("TradeDepotCapture", "WARNING"):
+            self.capture.on_frame()
+        self.assertEqual(self.sounds, ["problem"])
+
+    def test_report_keeps_the_last_label_per_system_and_session(self):
         for press in (self.capture.exotic_squid, self.capture.exotic_not_squid):
             press()
             self.capture.on_frame()
         lines = report.label_lines(report.read_captures([mod.CAPTURE_FILE]))
         text = "\n".join(lines)
+        self.assertIn(
+            "Exotic sightings labelled: 1 (not a squid 1); 1 earlier label(s) replaced by a later one "
+            "for the same system and session",
+            text,
+        )
+        self.assertIn("03E9F3545C3E galaxy 1 Shown-Name: not a squid (8000000000000001)", text)
+        self.assertNotIn(": squid (", text)
+        self.assertNotIn("both ways", text)
+
+    def test_report_lists_labels_that_disagree_across_sessions(self):
+        self.capture.exotic_squid()
+        self.capture.on_frame()
+        later = mod.TradeDepotCapture()  # a new session
+        later.exotic_not_squid()
+        later.on_frame()
+        text = "\n".join(report.label_lines(report.read_captures([mod.CAPTURE_FILE])))
         self.assertIn("Exotic sightings labelled: 2 (squid 1, not a squid 1)", text)
         self.assertIn("03E9F3545C3E galaxy 1 Shown-Name: squid (8000000000000001)", text)
-        self.assertIn("labelled both ways: 8000000000000001", text)
+        self.assertIn("labelled both ways in different sessions: 8000000000000001", text)
 
 
 class DiagnosticsTests(CaptureTestCase):
@@ -768,6 +872,7 @@ class PollingTests(CaptureTestCase):
     def test_settled_system_is_recorded_once_with_its_shown_name(self):
         self.poll()
         self.assertEqual(self.lines(), [], "first sighting only starts the settling interval")
+        self.assertEqual(self.sounds, [])
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.poll()
         lines = self.lines()
@@ -778,6 +883,46 @@ class PollingTests(CaptureTestCase):
         self.assertIn("Recorded Shown-Name (03E9F3545C3E, galaxy 1)", "\n".join(logs.output))
         self.poll()
         self.assertEqual(len(self.lines()), 2)
+
+    def test_arrival_tone_plays_once_per_system(self):
+        other = (0x123 << 40) | (1 << 32) | 0x01020304
+        visits = [
+            (UA, 1),
+            (UA | (5 << 52), 1),  # the same system, with a planet digit in its address
+            (other, 2),
+            (UA, 2),  # back again
+        ]
+        for ua, tones in visits:
+            with self.subTest(ua=f"{ua:016X}"):
+                self.game.set_address(ua)
+                self.game.fill(ua, "Somewhere")
+                self.poll()
+                self.poll()
+                self.assertEqual(self.sounds, ["recorded"] * tones)
+
+    def test_arrival_tone_waits_for_a_generated_system_to_settle(self):
+        self.game.generate(self.capture)
+        self.assertEqual(self.sounds, [])
+        self.poll()
+        self.poll()
+        self.assertEqual(self.sounds, ["recorded"])
+
+    def test_arrival_tone_can_be_turned_off(self):
+        self._patch("CHIME_ON_ARRIVAL", False)
+        self.poll()
+        self.poll()
+        self.assertEqual(len(self.lines()), 2)
+        self.assertEqual(self.sounds, [])
+
+    def test_no_arrival_tone_without_a_record(self):
+        blocker = Path(self._tmp.name) / "blocked"
+        blocker.write_text("not a folder")
+        self._patch("CAPTURE_DIR", blocker)
+        self._patch("CAPTURE_FILE", blocker / "systems.jsonl")
+        with self.assertLogs("TradeDepotCapture", "WARNING"):
+            self.poll()
+            self.poll()
+        self.assertEqual(self.sounds, [])
 
     def test_poll_adds_the_name_to_a_generated_system(self):
         self.game.generate(self.capture)
@@ -831,18 +976,108 @@ class PollingTests(CaptureTestCase):
         self.capture.on_frame()
         lines = self.lines()
         self.assertEqual(lines[1]["via"], "btn")
+        self.assertEqual(self.sounds, ["recorded"])
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.capture.record_now()
             self.capture.on_frame()
         self.assertEqual(len(self.lines()), 2)
         self.assertIn("Already recorded this session", "\n".join(logs.output))
         self.assertEqual(self.capture.status, "Already recorded; nothing has changed.")
+        self.assertEqual(self.sounds, ["recorded", "recorded"], "in the file either way")
+        self.poll()
+        self.poll()
+        self.assertEqual(self.sounds, ["recorded", "recorded"], "no arrival tone after a manual record")
+
+    def test_record_key_records_like_the_button(self):
+        self.capture.record_key()
+        self.assertEqual(self.capture.status, "Recording the current system...")
+        self.capture.on_frame()
+        self.assertEqual(self.lines()[1]["via"], "btn")
+        self.assertEqual(self.sounds, ["recorded"])
 
     def test_record_button_without_a_system(self):
         self.game.loaded = False
         self.capture.record_now()
         self.capture.on_frame()
         self.assertEqual(self.capture.status, "No star system is loaded yet.")
+        self.assertEqual(self.sounds, ["problem"])
+
+    def test_record_button_when_the_record_cant_be_written(self):
+        blocker = Path(self._tmp.name) / "blocked"
+        blocker.write_text("not a folder")
+        self._patch("CAPTURE_DIR", blocker)
+        self._patch("CAPTURE_FILE", blocker / "systems.jsonl")
+        self.capture.record_now()
+        with self.assertLogs("TradeDepotCapture", "WARNING"):
+            self.capture.on_frame()
+        self.assertEqual(self.sounds, ["problem"])
+
+
+class SoundTests(unittest.TestCase):
+    def fake_winsound(self, play):
+        return types.SimpleNamespace(SND_MEMORY=4, SND_NODEFAULT=2, PlaySound=play)
+
+    def test_tone_is_a_wav_of_the_notes(self):
+        data = mod.tone([(440.0, 0.1), (0.0, 0.05), (880.0, 0.1)], volume=0.5, rate=8000)
+        with wave.open(io.BytesIO(data)) as wav:
+            self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 8000))
+            samples = array.array("h", wav.readframes(wav.getnframes()))
+        if sys.byteorder == "big":
+            samples.byteswap()
+        self.assertEqual(len(samples), 800 + 400 + 800)
+        self.assertEqual((samples[0], samples[799], samples[1200], samples[-1]), (0, 0, 0, 0), "faded")
+        self.assertEqual(set(samples[800:1200]), {0}, "the rest is silent")
+        self.assertLessEqual(max(map(abs, samples)), round(32767 * 0.5))
+        self.assertGreater(max(map(abs, samples[:800])), 32767 * 0.5 * 0.7)
+
+    def test_every_sound_is_a_short_wav(self):
+        self.assertLessEqual({"recorded", "squid", "not a squid", "problem"}, set(mod.SOUNDS))
+        self.assertNotEqual(mod.SOUNDS["squid"], mod.SOUNDS["not a squid"])
+        for name, notes in mod.SOUNDS.items():
+            with self.subTest(name=name):
+                data = mod.tone(notes)
+                self.assertEqual((data[:4], data[8:12]), (b"RIFF", b"WAVE"))
+                self.assertLess(sum(seconds for _, seconds in notes), 0.5)
+
+    def test_sounds_are_built_at_startup_unless_turned_off(self):
+        with mock.patch.object(mod, "_sound_cache", {}):
+            mod.prepare_sounds()
+            self.assertEqual(set(mod._sound_cache), set(mod.SOUNDS))
+        with mock.patch.object(mod, "_sound_cache", {}), mock.patch.object(mod, "PLAY_SOUNDS", False):
+            mod.prepare_sounds()
+            self.assertEqual(mod._sound_cache, {})
+
+    def test_sounds_play_from_memory_on_their_own_thread(self):
+        calls = []
+
+        def play(data, flags):
+            calls.append((bytes(data[:4]), flags, threading.current_thread().name))
+
+        with mock.patch.dict(sys.modules, {"winsound": self.fake_winsound(play)}):
+            thread = mod.play_sound("squid")
+            thread.join(5)
+        self.assertEqual(calls, [(b"RIFF", 4 | 2, "TradeDepotSound")])
+
+    def test_sound_failures_are_logged_once_per_sound(self):
+        def play(data, flags):
+            raise RuntimeError("Failed to play sound")
+
+        with mock.patch.object(mod, "_sound_failed", set()):
+            with mock.patch.dict(sys.modules, {"winsound": self.fake_winsound(play)}):
+                with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+                    for _ in range(2):
+                        mod.play_sound("problem").join(5)
+        self.assertEqual(sum("Couldn't play the 'problem' sound." in line for line in logs.output), 1)
+
+    def test_no_sound_when_turned_off_unknown_or_unavailable(self):
+        play = mock.Mock()
+        with mock.patch.dict(sys.modules, {"winsound": self.fake_winsound(play)}):
+            with mock.patch.object(mod, "PLAY_SOUNDS", False):
+                self.assertIsNone(mod.play_sound("squid"))
+            self.assertIsNone(mod.play_sound("no such sound"))
+        with mock.patch.dict(sys.modules, {"winsound": None}):  # importing it fails, as off Windows
+            self.assertIsNone(mod.play_sound("squid"))
+        play.assert_not_called()
 
 
 class HelperTests(unittest.TestCase):

@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 has recorded systems in the game, with NMS.py 180383.0. Versions 0.2 and 0.3 add hooks on the game's system generator and name generator; those haven't run in the game yet. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 has recorded systems in the game, with NMS.py 180383.0. Later versions add hooks on the game's system generator and name generator (0.2 and 0.3), and hotkeys and sounds (0.4); none of that has run in the game yet. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -38,7 +38,7 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
    ```
 
    This starts the game through Steam with the mod attached. Two extra windows open: a log console and the pyMHF panel, which has a **TradeDepotCapture** tab.
-3. Load your save and play as usual. Each time you arrive in a system, the log shows a line like:
+3. Load your save and play as usual. A few seconds after you arrive in a system, the mod plays two short rising notes, and the log shows a line like:
 
    ```text
    Recorded <system name> (<portal code>, galaxy <number>): 50 ships (Freighter 21, Fighter 9, Shuttle 6, ...)
@@ -48,9 +48,23 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
 
 The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to `system_capture.py`. Each session adds to the same file.
 
-If no line appears after you arrive somewhere, press **Record the current system now** on the TradeDepotCapture tab. If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
+If you arrive somewhere and don't hear the notes, press F6 (see below). If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
 
-When you see an exotic land in a system, press **Exotic seen here: squid** or **Exotic seen here: not a squid** while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. Those pairs are what decoding a ship's appearance from its seed will be built and checked on. Only label exotics flown by the game, not other players' ships.
+When you see an exotic land in a system, press F7 if it's a squid or F8 if it isn't, while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. Those pairs are what decoding a ship's appearance from its seed will be built and checked on. Only label exotics flown by the game, not other players' ships. If you press the wrong key, press the right one: the report keeps your last label for each system in a session.
+
+## Hotkeys and sounds
+
+You don't need to switch away from the game. While its window has focus, these keys do what the buttons on the TradeDepotCapture tab do, and a short tone tells you how it went:
+
+| Key | What it does | Tone when it worked |
+|---|---|---|
+| F6 | Record the current system now | Two rising notes |
+| F7 | Note that the exotic you just saw here is a squid | Three rising notes |
+| F8 | Note that the exotic you just saw here isn't a squid | Three falling notes |
+
+Two low notes mean it didn't work: no system was loaded yet, the system couldn't be read or written, or for F7 and F8, the system's ship list has no exotic to pair the label with. The log says which.
+
+The keys act when you let go of them. The game's default controls don't appear to use F6 to F8. If one clashes with your own key bindings or another program, change `HOTKEYS` near the top of `system_capture.py`; pyMHF can bind single keys only, not combinations like Ctrl+F6. In the same place, `PLAY_SOUNDS`, `CHIME_ON_ARRIVAL` (the notes after you arrive) and `SOUND_VOLUME` turn the tones off or change their volume.
 
 ## Send captures
 
@@ -58,13 +72,15 @@ Zip `captures\systems.jsonl` and attach it to an [issue](https://github.com/Armo
 
 A capture file holds the address of every system you recorded and when you got there, so anyone you share it with can see where you've been. It holds nothing else about you: no player name, account or save data, and nothing about other players. The first line of each session names the game's executable by its SHA-1 hash and Steam build ID, says which of the mod's hooks attached, and lists the NMS.py, pyMHF and Python versions.
 
+For the hotkeys, pyMHF watches the keyboard while the game runs. The mod reacts only to its three keys, and only while the game has focus; it records nothing you type.
+
 ## What a record holds
 
 One JSON object per line. A `"t": "session"` line starts each run of the game and carries the column names for the compact rows below and the game's enum names, since game updates can renumber enums. Each `"t": "sys"` line is one system:
 
 | Field | Meaning |
 |---|---|
-| `via` | What triggered the record: `gen` (the game generated the system), `poll` (the mod noticed it while you were there), `btn` (the button) |
+| `via` | What triggered the record: `gen` (the game generated the system), `poll` (the mod noticed it while you were there), `btn` (you asked, with F6 or the button) |
 | `at` | Unix time, in seconds |
 | `ua` | Universal address, 16 hex digits; the portal code and galaxy are packed into it. Still zero while the game is generating the system, so `gen` records have `ua` 0 |
 | `seed` | The system seed, which holds the same value as the universal address |
@@ -83,7 +99,7 @@ Three other kinds of line:
 
 - `"t": "query"`: a lookup, a system the game described without loading it. It has the system's seed, the random-number states around the lookup and whatever the lookup filled in. Each seed is recorded once per session.
 - `"t": "name"`: a planet or region name the game generated, with the seed it was generated from (`kind`, `seed`, `name`; `local` if the shown text differs), and the system you were in at the time. Each seed is recorded once per session.
-- `"t": "label"`: an exotic sighting you labelled with the buttons, with the system and its exotic's seed.
+- `"t": "label"`: an exotic sighting you labelled with F7, F8 or the buttons, with the system and its exotic's seed.
 
 [`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts and lists the exotic labels. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated.
 
