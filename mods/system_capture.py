@@ -40,6 +40,7 @@ import logging
 import math
 import os
 import platform
+import struct
 import sys
 import threading
 import time
@@ -57,7 +58,7 @@ from nmspy.decorators import main_loop
 from pymhf import Mod
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.1.0"
+MOD_VERSION = "0.1.1"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 FORMAT_VERSION = 1
 
@@ -749,7 +750,33 @@ class TradeDepotCapture(Mod):
         logger.warning(message, *args, exc_info=with_traceback)
 
 
+PYTHON_DOWNLOAD = "https://www.python.org/downloads/release/python-31316/"
+
+
+def launcher_problems(
+    executable: str = sys.executable,
+    prefixes: tuple[str, ...] = (sys.base_prefix, sys.prefix),
+    pointer_size: int = struct.calcsize("P"),
+) -> list[str]:
+    """Reasons pyMHF won't be able to load this Python into the game, caught before it tries."""
+    problems = []
+    if pointer_size != 8:
+        problems.append(f"This is 32-bit Python. The game needs 64-bit Python 3.13: {PYTHON_DOWNLOAD}")
+    if any("\\windowsapps\\" in path.replace("/", "\\").lower() for path in (executable, *prefixes) if path):
+        problems.append(
+            "This is the Microsoft Store version of Python, which the game can't load (pyMHF stops "
+            'with "DLL load failed ... Access is denied"). Uninstall it, install Python 3.13 from '
+            f'{PYTHON_DOWNLOAD}, run "py -3.13 -m pip install nmspy" again, then start the mod again.'
+        )
+    return problems
+
+
 if __name__ == "__main__":
+    if problems := launcher_problems():
+        lines = ["The Trade Depot capture mod can't start:", *(f"- {p}" for p in problems)]
+        print("\n".join(lines), file=sys.stderr)
+        raise SystemExit(1)
+
     from pymhf import load_mod_file
 
     load_mod_file(__file__)
