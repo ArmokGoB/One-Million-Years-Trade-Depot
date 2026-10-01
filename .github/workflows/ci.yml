@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Bump deliberately, after checking what changed upstream.
+  NMS_NAMEGEN_COMMIT: 52ad48affaa4089c8f487a470a888dc9b7a650aa
+
 jobs:
   test:
     name: Type-check, test and build
@@ -26,9 +30,6 @@ jobs:
   parity:
     name: Parity with the Python reference (nms_namegen)
     runs-on: ubuntu-latest
-    env:
-      # Bump deliberately, after checking what changed upstream.
-      NMS_NAMEGEN_COMMIT: 52ad48affaa4089c8f487a470a888dc9b7a650aa
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -54,3 +55,24 @@ jobs:
       - run: npm ci
       - name: Compare the TypeScript port against them
         run: CROSSCHECK_FILE=crosscheck.jsonl npx vitest run tests/crosscheck.test.ts
+
+  capture-mod:
+    name: Capture mod and capture report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install NMS.py and pyMHF without their Windows-only dependencies
+        # Pinned because mods/tests/harness.py stubs pyMHF internals. Bump deliberately.
+        run: |
+          python -m pip install -q --no-deps "nmspy==180132.0" "pymhf==0.2.4"
+          python -m pip install -q typing_extensions packaging tomlkit "numpy~=2.4"
+      - name: Fetch nms_namegen at the pinned commit
+        run: |
+          git init -q nms_namegen
+          git -C nms_namegen fetch -q --depth 1 https://github.com/hadsh/nms_namegen "$NMS_NAMEGEN_COMMIT"
+          git -C nms_namegen checkout -q FETCH_HEAD
+      - name: Run the tests
+        run: NMS_NAMEGEN=nms_namegen python -m unittest discover -s mods/tests -v

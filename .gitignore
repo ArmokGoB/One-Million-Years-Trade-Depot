@@ -7,3 +7,7 @@ __pycache__/
 *.pyc
 # Large differential-test output from tools/crosscheck/generate.py
 *.jsonl
+# What the capture mod and pyMHF write next to the mod when it runs
+mods/captures/
+mods/logs/
+mods/.*.cache/
