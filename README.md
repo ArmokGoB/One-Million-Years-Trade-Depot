@@ -32,7 +32,7 @@ System, region and planet names, the order of bodies, and the outlaw flag aren't
 
 1. **System lookup.** Done: this site.
 2. **Capture mod.** In progress: [`mods/system_capture.py`](mods/system_capture.py), an [NMS.py](https://github.com/monkeyman192/NMS.py) mod that records, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Needs a Windows PC; [how to run it](mods/README.md).
-3. **Address → ship pool.** Work out how the game derives those ships from the address, using the captures as ground truth, and publish the measured accuracy.
+3. **Address → ship pool.** Work out how the game derives those ships from the address, using the captures as ground truth, and publish the measured accuracy. Found so far, in the first 10 captured systems: each has a 50-slot ship list with the same layout, including exactly one exotic. Every ship seed is made from the next two draws of the game's random-number generator seeded with the system's address, with the crashed Sentinel ship's seed drawn between slots 41 and 42. Still unknown: how many draws the generator makes before the ships (197 to 1,489 in those systems).
 4. **Seed → appearance.** Decode each ship seed into parts and colours, starting with squid versus ball-cockpit exotics, then every ship type.
 5. **Multi-tools and freighters**, then pictures.
 

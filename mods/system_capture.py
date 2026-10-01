@@ -33,6 +33,7 @@ Run it with ``py -3.13 system_capture.py``. See README.md in this folder.
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import hashlib
 import json
@@ -40,10 +41,12 @@ import logging
 import math
 import os
 import platform
+import re
 import struct
 import sys
 import threading
 import time
+import zlib
 from collections import Counter
 from importlib import metadata
 from pathlib import Path
@@ -58,9 +61,12 @@ from nmspy.decorators import main_loop
 from pymhf import Mod
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.1.1"
+MOD_VERSION = "0.3.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
-FORMAT_VERSION = 1
+# 2: generation traces, raw system data, display names and query records.
+# (0.3.0 only adds fields and record types, so it keeps format 2.)
+FORMAT_VERSION = 2
+STEAM_APP_ID = 275850
 
 CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
 CAPTURE_FILE = CAPTURE_DIR / "systems.jsonl"
@@ -68,6 +74,12 @@ CAPTURE_FILE = CAPTURE_DIR / "systems.jsonl"
 # How often the main loop looks at the current system. The Generate hook
 # records systems as they are made; polling catches anything filled in later.
 POLL_SECONDS = 2.0
+# Query records (systems the game describes without loading them) are queued
+# and written from the main loop at most this often.
+FLUSH_SECONDS = 1.0
+MAX_QUERY_RECORDS = 5_000
+MAX_NAME_RECORDS = 20_000
+NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
 MAX_READ = 1 << 20
 MASK64 = (1 << 64) - 1
@@ -141,9 +153,16 @@ class Layout:
     def __init__(self) -> None:
         system = nms.cGcSolarSystem
         data = nmse.cGcSolarSystemData
+        generator = nms.cGcSolarSystemGenerator
         self.data = system.mSolarSystemData.offset
+        self.data_size = ctypes.sizeof(data)
         self.ua = system.mUA.offset
         self.attributes = system.mGalaxyAttributes.offset
+        self.attributes_size = ctypes.sizeof(nms.cGcGalaxyAttributesAtAddress)
+        self.key_attributes_size = ctypes.sizeof(nms.cGcGalaxyAttributeGenerator.StarSystemKeyAttributes)
+        self.generator = system.mSolarSystemGenerator.offset
+        self.rng = generator.mRNG.offset
+        self.metadata = generator.GenerationData.mMetaData.offset
         self.head = max(
             self.data + ctypes.sizeof(data),
             self.ua + 8,
@@ -424,8 +443,6 @@ def unusual_values(record: dict) -> list[str]:
         value = record.get(key)
         if value is not None and not 0 <= value <= top:
             unusual.append(key)
-    if record.get("ua") == ZERO_SEED:
-        unusual.append("ua")
     return unusual
 
 
@@ -462,6 +479,110 @@ def snapshot(address: int) -> dict:
     unusual = unusual_values(record)
     if unusual:
         record["unusual"] = unusual
+    if problems:
+        record["errors"] = problems
+    return record
+
+
+def rng_state(generator: int) -> str | None:
+    """The solar system generator's random-number state (cTkPersonalRNG), as 16 hex digits."""
+    return None if (value := read_u64(generator + LAYOUT.rng)) is None else hex64(value)
+
+
+def packed(raw: bytes | None) -> str | None:
+    return None if raw is None else base64.b64encode(zlib.compress(raw, 9)).decode("ascii")
+
+
+def raw_data(address: int) -> str | None:
+    """The whole generated cGcSolarSystemData, compressed, for offline analysis."""
+    return packed(read_memory(address + LAYOUT.data, LAYOUT.data_size))
+
+
+def raw_galaxy(address: int) -> str | None:
+    """The system's whole cGcGalaxyAttributesAtAddress, compressed."""
+    return packed(read_memory(address + LAYOUT.attributes, LAYOUT.attributes_size))
+
+
+def read_text(address: int, size: int) -> str | None:
+    raw = read_memory(address, size)
+    return None if raw is None else raw.split(b"\0", 1)[0].decode("utf-8", errors="backslashreplace")
+
+
+def key_attributes(address: int) -> dict | None:
+    """The galaxy generator's summary of a system (StarSystemKeyAttributes) that generation starts from."""
+    raw = read_memory(address, LAYOUT.key_attributes_size)
+    if raw is None:
+        return None
+    keys = nms.cGcGalaxyAttributeGenerator.StarSystemKeyAttributes.from_buffer_copy(raw)
+    return {
+        "trade": as_int(keys.meTradingClass),
+        "wealth": as_int(keys.meWealthClass),
+        "conflict": as_int(keys.meConflictLevel),
+        "race": as_int(keys.meRace),
+        "star": as_int(keys.meType),
+        "tag": as_int(keys.meTag),
+        "anomaly": f"{as_int(keys.meAnomaly):08X}",  # four bytes, not yet understood
+        "planets": as_int(keys.muPlanetCount),
+        "safeStart": as_int(keys.muSafeStartPlanet),
+        "abandoned": bool(keys.mbAbandonedSystem),
+        "pirate": bool(keys.mbIsPirateSystem),
+        "prime": as_int(keys.muPrimePlanetCount),
+        "raw": raw.hex().upper(),
+    }
+
+
+def steam_build(binary_path: str | None) -> str | None:
+    """Steam's build ID for the installed game, from the library's app manifest."""
+    if not binary_path:
+        return None
+    for folder in Path(binary_path).parents:
+        if folder.name.lower() == "steamapps":
+            manifest = folder / f"appmanifest_{STEAM_APP_ID}.acf"
+            match = re.search(r'"buildid"\s+"(\d+)"', manifest.read_text(encoding="utf-8", errors="replace"))
+            return match.group(1) if match else None
+    return None
+
+
+def hook_status(mod: Mod) -> dict[str, str]:
+    """Whether each of the mod's detours is attached to the game ("enabled") or not."""
+    from pymhf.core.hooking import hook_manager
+
+    status = {hook.__name__: "not found" for hook in mod.hooks}
+    for function in list(hook_manager.hooks.values()):
+        attached = [
+            *function._before_detours,
+            *function._after_detours,
+            *function._after_detours_with_results,
+        ]
+        for detours, state in (
+            (attached, function.state or "registered"),
+            (function._disabled_detours, "disabled"),
+        ):
+            for detour in detours:
+                if getattr(detour, "__self__", None) is mod:
+                    status[detour.__name__] = state
+    return status
+
+
+def system_display_name(address: int) -> str | None:
+    """The name the game shows for the loaded system. Main thread only: this calls the game."""
+    buffer = basic.cTkFixedString0x80()
+    nms.cGcSolarSystem.from_address(address).GetName(ctypes.byref(buffer))
+    return text(buffer) or None
+
+
+def query_metadata(generation_data: int) -> dict:
+    """What GenerateQueryInfo wrote into its cGcSolarSystemData."""
+    pointer = read_u64(generation_data + LAYOUT.metadata) if generation_data else None
+    raw = read_memory(pointer, LAYOUT.data_size) if pointer else None
+    if raw is None:
+        raise CaptureError("the query's system data couldn't be read")
+    data = nmse.cGcSolarSystemData.from_buffer_copy(raw)
+    problems: list[str] = []
+    record = _attempt(problems, "system", system_fields, data) or {}
+    ships = _attempt(problems, "ships", ship_rows, data)
+    if ships:
+        record["ships"] = ships
     if problems:
         record["errors"] = problems
     return record
@@ -523,13 +644,22 @@ def package_version(name: str) -> str | None:
         return None
 
 
-def session_header() -> dict:
+def _guarded(read, *args):
+    try:
+        return read(*args)
+    except Exception as exc:  # diagnostics must never stop a record being written
+        return f"error: {exc}"
+
+
+def session_header(mod: Mod | None = None) -> dict:
     return {
         "t": "session",
         "format": FORMAT_VERSION,
         "mod": MOD_VERSION,
         "at": int(time.time()),
         "exe": str(getattr(pymhf_internal, "BINARY_HASH", "") or "") or None,
+        "steamBuild": _guarded(steam_build, getattr(pymhf_internal, "BINARY_PATH", None)),
+        "hooks": _guarded(hook_status, mod) if mod is not None else None,
         "nmspy": package_version("nmspy"),
         "pymhf": package_version("pymhf"),
         "python": platform.python_version(),
@@ -551,9 +681,11 @@ def dumps(obj: dict) -> str:
 
 def describe(record: dict) -> str:
     """One log line: name, address and ship pool."""
-    ua = int(record["ua"], 16)
+    # While a system is being generated its address isn't set yet, but its
+    # seed is the same universal address.
+    ua = int(record["ua"], 16) or int(record.get("seed", "0"), 16)
     where = f"{portal_code(ua)}, galaxy {galaxy_of(ua)}"
-    name = record.get("name") or "Unnamed system"
+    name = record.get("displayName") or record.get("name") or "Unnamed system"
     ships = record.get("ships")
     if ships is None:
         pool = "ship list unreadable"
@@ -576,6 +708,8 @@ class TradeDepotCapture(Mod):
     _status = "Waiting for a star system to load."
     _last = "None yet."
     _count = 0
+    _query_count = 0
+    _name_count = 0
 
     def __init__(self):
         super().__init__()
@@ -584,9 +718,20 @@ class TradeDepotCapture(Mod):
         self._session_started = False
         self._reported: set[str] = set()
         self._record_requested = False
+        self._label_requested: str | None = None
         self._next_poll = 0.0
         self._last_seen: tuple | None = None
         self._last_polled: tuple | None = None
+        # Random-number states at each generation step, keyed by generator address.
+        self._traces: dict[int, list] = {}
+        # Key attributes each generation started from, keyed by generator address.
+        self._keys: dict[int, dict] = {}
+        # GenerateQueryInfo calls outside a full generation, keyed by generator address.
+        self._queries: dict[int, dict] = {}
+        self._query_seeds: set[str] = set()
+        self._name_seeds: set[tuple[str, int]] = set()
+        self._pending: list[dict] = []
+        self._next_flush = 0.0
         logger.info("Trade Depot capture %s is recording to %s", MOD_VERSION, CAPTURE_FILE)
 
     # --- GUI (read on the GUI thread, so these only return cached values) ---
@@ -600,6 +745,16 @@ class TradeDepotCapture(Mod):
     @STRING("Systems recorded this session")
     def recorded(self):
         return str(self._count)
+
+    @property
+    @STRING("Lookups recorded (systems described, not visited)")
+    def lookups(self):
+        return str(self._query_count)
+
+    @property
+    @STRING("Planet and region names recorded")
+    def names(self):
+        return str(self._name_count)
 
     @property
     @STRING("Last system")
@@ -617,6 +772,19 @@ class TradeDepotCapture(Mod):
         self._record_requested = True
         self._status = "Recording the current system..."
 
+    @gui_button("Exotic seen here: squid")
+    def exotic_squid(self):
+        self._request_label("squid")
+
+    @gui_button("Exotic seen here: not a squid")
+    def exotic_not_squid(self):
+        self._request_label("not a squid")
+
+    def _request_label(self, label: str) -> None:
+        # Read on the game thread, on its next frame, like the record button.
+        self._label_requested = label
+        self._status = f"Noting that the exotic here is {label}..."
+
     @gui_button("Open the captures folder")
     def open_folder(self):
         try:
@@ -626,19 +794,82 @@ class TradeDepotCapture(Mod):
             logger.warning("Couldn't open %s", CAPTURE_DIR, exc_info=True)
 
     # --- Game hooks ---
+    # pyMHF treats a value returned by a "before" detour as replacement
+    # arguments, and one returned by an "after" detour as the function's
+    # result, so every detour here deliberately returns nothing.
+
+    @nms.cGcSolarSystem.Generate.before
+    def before_generate(self, this, lbUseSettingsFile, lSeed):
+        try:
+            generator = address_of(this) + LAYOUT.generator
+            self._traces[generator] = [["generate>", rng_state(generator)]]
+        except Exception:
+            self._report_once("trace", "Couldn't trace a system's generation.")
 
     @nms.cGcSolarSystem.Generate.after
     def after_generate(self, this, lbUseSettingsFile, lSeed):
-        # An "after" detour that returns anything but None replaces the
-        # game's return value, so this deliberately returns nothing.
         try:
             self._record_generated(this, lbUseSettingsFile, lSeed)
         except Exception:
             self._report_once("generate", "Couldn't record a newly generated system.")
 
+    @nms.cGcSolarSystemGenerator.GenerateBasics.before
+    def before_basics(self, this, lSeed, lAttributes, lStarKeyAttributes, lData):
+        self._trace(this, "basics>")
+
+    @nms.cGcSolarSystemGenerator.GenerateBasics.after
+    def after_basics(self, this, lSeed, lAttributes, lStarKeyAttributes, lData):
+        self._trace(this, "basics<")
+        try:
+            generator = address_of(this)
+            if generator in self._traces:
+                self._keys[generator] = key_attributes(address_of(lStarKeyAttributes))
+        except Exception:
+            self._report_once("keys", "Couldn't read a system's key attributes.")
+
+    @nms.cGcSolarSystemGenerator.GeneratePlanetPositions.before
+    def before_positions(self, this, lAttributes, lData, lpGeometry):
+        self._trace(this, "positions>")
+
+    @nms.cGcSolarSystemGenerator.GeneratePlanetPositions.after
+    def after_positions(self, this, lAttributes, lData, lpGeometry):
+        self._trace(this, "positions<")
+
+    @nms.cGcSolarSystemGenerator.GeneratePlanetBiomes.before
+    def before_biomes(self, this, lAttributes, lData, lStarKeyAttributes):
+        self._trace(this, "biomes>")
+
+    @nms.cGcSolarSystemGenerator.GeneratePlanetBiomes.after
+    def after_biomes(self, this, lAttributes, lData, lStarKeyAttributes):
+        self._trace(this, "biomes<")
+
+    @nms.cGcSolarSystemGenerator.GenerateQueryInfo.before
+    def before_query(self, this, lSeed, lAttributes, lData):
+        try:
+            self._query_started(this, lSeed)
+        except Exception:
+            self._report_once("query", "Couldn't record a system lookup.")
+
+    @nms.cGcSolarSystemGenerator.GenerateQueryInfo.after
+    def after_query(self, this, lSeed, lAttributes, lData):
+        try:
+            self._query_finished(this, lData)
+        except Exception:
+            self._report_once("query", "Couldn't record a system lookup.")
+
+    @nms.cGcNameGenerator.GeneratePlanetName.after
+    def after_planet_name(self, this, lu64Seed, lResult, lLocResult):
+        self._named("planet", lu64Seed, lResult, lLocResult)
+
+    @nms.cGcNameGenerator.GenerateGalacticRegionName.after
+    def after_region_name(self, this, lu64Seed, lResult, lLocResult):
+        self._named("region", lu64Seed, lResult, lLocResult)
+
     @main_loop.after
     def on_frame(self):
         try:
+            self._flush_pending()
+            self._apply_label()
             self._poll()
         except Exception:
             self._status = "Couldn't read the current system. See the log."
@@ -646,10 +877,134 @@ class TradeDepotCapture(Mod):
 
     # --- Internals ---
 
+    def _trace(self, generator_pointer, label: str) -> None:
+        try:
+            generator = address_of(generator_pointer)
+            trace = self._traces.get(generator)
+            if trace is not None and len(trace) < 64:
+                trace.append([label, rng_state(generator)])
+        except Exception:
+            self._report_once("trace", "Couldn't trace a system's generation.")
+
+    def _query_started(self, generator_pointer, seed_pointer) -> None:
+        generator = address_of(generator_pointer)
+        if generator in self._traces:  # part of generating the system being loaded
+            self._trace(generator_pointer, "query>")
+            return
+        raw_seed = read_memory(address_of(seed_pointer), ctypes.sizeof(basic.GcSeed))
+        if raw_seed is None:
+            return
+        self._queries[generator] = {
+            "seed": hex64(basic.GcSeed.from_buffer_copy(raw_seed).Seed),
+            "trace": [["query>", rng_state(generator)]],
+        }
+
+    def _query_finished(self, generator_pointer, data_pointer) -> None:
+        generator = address_of(generator_pointer)
+        if generator in self._traces:
+            self._trace(generator_pointer, "query<")
+            return
+        query = self._queries.pop(generator, None)
+        if query is None:
+            return
+        with self._lock:
+            if query["seed"] in self._query_seeds or len(self._query_seeds) >= MAX_QUERY_RECORDS:
+                return
+            self._query_seeds.add(query["seed"])
+        query["trace"].append(["query<", rng_state(generator)])
+        entry = {"t": "query", "at": int(time.time()), "seed": query["seed"], "trace": query["trace"]}
+        try:
+            entry.update(query_metadata(address_of(data_pointer)))
+        except CaptureError as exc:
+            entry["errors"] = [str(exc)]
+        with self._lock:
+            self._pending.append(entry)
+
+    def _named(self, kind: str, seed: int, result_pointer, local_pointer) -> None:
+        """A name the game just generated, with the seed it generated it from."""
+        try:
+            seed = as_int(seed) & MASK64
+            with self._lock:
+                if (kind, seed) in self._name_seeds or len(self._name_seeds) >= MAX_NAME_RECORDS:
+                    return
+                self._name_seeds.add((kind, seed))
+            name = read_text(address_of(result_pointer), NAME_LENGTH)
+            if not name:
+                return
+            entry = {"t": "name", "kind": kind, "at": int(time.time()), "seed": hex64(seed), "name": name}
+            local = read_text(address_of(local_pointer), NAME_LENGTH)
+            if local and local != name:
+                entry["local"] = local
+            active = active_system()
+            if active is not None and (ua := read_u64(active[0] + LAYOUT.ua)):
+                entry["system"] = hex64(ua)  # the loaded system when the name was made
+            with self._lock:
+                self._pending.append(entry)
+        except Exception:
+            self._report_once("name-hook", "Couldn't record a planet or region name.")
+
+    def _flush_pending(self) -> None:
+        """Write queued lookups and names (their hooks may run on any thread)."""
+        now = time.monotonic()
+        if not self._pending or now < self._next_flush:
+            return
+        self._next_flush = now + FLUSH_SECONDS
+        with self._lock:
+            pending, self._pending = self._pending, []
+            try:
+                self._append(*pending)
+            except Exception:
+                self._status = "Couldn't write the capture file. See the log."
+                raise
+            kinds = Counter(entry["t"] for entry in pending)
+            self._query_count += kinds["query"]
+            self._name_count += kinds["name"]
+
+    def _apply_label(self) -> None:
+        label, self._label_requested = self._label_requested, None
+        if label is None:
+            return
+        active = active_system()
+        if active is None:
+            self._status = "No star system is loaded yet."
+            return
+        record = snapshot(active[0])
+        record.update(self._where(None, active[0]))
+        classes = ENUM_TABLES.get("shipClass", [])
+        exotic = [
+            row[0]
+            for row in record.get("ships") or []
+            if 0 <= row[2] < len(classes) and classes[row[2]] == "Royal"
+        ]
+        entry = {
+            "t": "label",
+            "at": int(time.time()),
+            "ua": record["ua"],
+            "seed": record.get("seed"),
+            "label": label,
+            "exotic": exotic,
+        }
+        if record.get("displayName"):
+            entry["displayName"] = record["displayName"]
+        with self._lock:
+            self._append(entry)
+        where = describe(record).split("):")[0] + ")"
+        if exotic:
+            logger.info("Noted: the exotic in %s (seed %s) is %s.", where, ", ".join(exotic), label)
+            self._status = f"Noted: the exotic here is {label}."
+        else:
+            logger.info("Noted, but %s has no exotic in its ship list.", where)
+            self._status = "Noted, but this system's ship list has no exotic."
+
     def _record_generated(self, this, use_settings_file, seed_pointer) -> None:
         address = address_of(this)
         if not address:
             return
+        generator = address + LAYOUT.generator
+        trace = self._traces.pop(generator, None)
+        keys = self._keys.pop(generator, None)
+        if trace is not None:
+            trace.append(["generate<", rng_state(generator)])
         context: dict = {}
         raw_seed = read_memory(address_of(seed_pointer), ctypes.sizeof(basic.GcSeed))
         if raw_seed is not None:
@@ -660,6 +1015,14 @@ class TradeDepotCapture(Mod):
         if active is not None:
             context["active"] = active[0] == address
             context.update(self._where(active[1]))
+        if trace is not None:
+            context["trace"] = trace
+        if keys is not None:
+            context["keyAttributes"] = keys
+        if (raw := raw_data(address)) is not None:
+            context["raw"] = raw
+        if (raw := raw_galaxy(address)) is not None:
+            context["rawGalaxy"] = raw
         self._record(address, "gen", context)
 
     def _poll(self) -> None:
@@ -678,30 +1041,38 @@ class TradeDepotCapture(Mod):
         address, current_ua = active
         seen = fingerprint(address)
         if requested:
-            self._record(address, "btn", self._where(current_ua), announce=True)
+            self._record(address, "btn", self._where(current_ua, address), announce=True)
             self._last_polled = seen
         elif seen is not None and seen == self._last_seen and seen != self._last_polled:
             # Unchanged for a whole interval: settled enough to read in full.
-            self._record(address, "poll", self._where(current_ua))
+            self._record(address, "poll", self._where(current_ua, address))
             self._last_polled = seen
         self._last_seen = seen
 
-    def _where(self, current_ua: int | None) -> dict:
+    def _where(self, current_ua: int | None, named_system: int | None = None) -> dict:
+        """Cross-checks for a record; with ``named_system``, also the name the game shows for it."""
         context: dict = {}
         if current_ua:
             context["sim"] = hex64(current_ua)
         location = player_location()
         if location is not None:
             context["loc"] = location
+        if named_system:
+            try:
+                if name := system_display_name(named_system):
+                    context["displayName"] = name
+            except Exception:
+                self._report_once("name", "Couldn't get the system's name from the game.")
         return context
 
     def _record(self, address: int, via: str, context: dict, announce: bool = False) -> bool:
         record = snapshot(address)
-        key = hashlib.sha1(json.dumps(record, sort_keys=True).encode()).hexdigest()
+        keyed = dict(record, displayName=context.get("displayName"))
+        key = hashlib.sha1(json.dumps(keyed, sort_keys=True).encode()).hexdigest()
         entry = {"t": "sys", "via": via, "at": int(time.time()), "ua": record["ua"]}
         entry.update(context)
         entry.update(record)
-        summary = describe(record)
+        summary = describe(entry)
         with self._lock:
             if key in self._recorded_keys:
                 if announce:
@@ -735,9 +1106,9 @@ class TradeDepotCapture(Mod):
             )
         return True
 
-    def _append(self, entry: dict) -> None:
-        lines = [] if self._session_started else [dumps(session_header())]
-        lines.append(dumps(entry))
+    def _append(self, *entries: dict) -> None:
+        lines = [] if self._session_started else [dumps(session_header(self))]
+        lines.extend(dumps(entry) for entry in entries)
         CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
         with CAPTURE_FILE.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write("\n".join(lines) + "\n")
