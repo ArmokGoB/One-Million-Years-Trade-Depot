@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 has recorded systems in the game, with NMS.py 180383.0. Version 0.2 adds hooks on the steps of the game's system generator; those haven't run in the game yet. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 has recorded systems in the game, with NMS.py 180383.0. Versions 0.2 and 0.3 add hooks on the game's system generator and name generator; those haven't run in the game yet. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -50,11 +50,13 @@ The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to
 
 If no line appears after you arrive somewhere, press **Record the current system now** on the TradeDepotCapture tab. If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
 
+When you see an exotic land in a system, press **Exotic seen here: squid** or **Exotic seen here: not a squid** while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. Those pairs are what decoding a ship's appearance from its seed will be built and checked on. Only label exotics flown by the game, not other players' ships.
+
 ## Send captures
 
 Zip `captures\systems.jsonl` and attach it to an [issue](https://github.com/ArmokGoB/One-Million-Years-Trade-Depot/issues). If something went wrong, attach the newest file in `logs\` too.
 
-A capture file holds the address of every system you recorded and when you got there, so anyone you share it with can see where you've been. It holds nothing else about you: no player name, account or save data. The first line of each session names the game's executable by its SHA-1 hash and lists the NMS.py, pyMHF and Python versions.
+A capture file holds the address of every system you recorded and when you got there, so anyone you share it with can see where you've been. It holds nothing else about you: no player name, account or save data, and nothing about other players. The first line of each session names the game's executable by its SHA-1 hash and Steam build ID, says which of the mod's hooks attached, and lists the NMS.py, pyMHF and Python versions.
 
 ## What a record holds
 
@@ -72,13 +74,18 @@ One JSON object per line. A `"t": "session"` line starts each run of the game an
 | `bodies` | Planet generation inputs: seed, biome, size, resources and flags per planet |
 | `galaxy` | The galaxy generator's view of the same system: planet seeds, star attributes and region data |
 | `trace` | `gen` records: the generator's random-number state at the start and end of each generation step |
-| `raw` | `gen` records: all of the generated system data, zlib-compressed and base64-encoded, for offline analysis |
+| `keyAttributes` | `gen` records: the galaxy generator's summary that generation starts from: planet counts, the safe start planet, flags, and four bytes (`anomaly`) not yet understood |
+| `raw`, `rawGalaxy` | `gen` records: all of the generated system data and of the galaxy attributes, zlib-compressed and base64-encoded, for offline analysis |
 | `arg`, `active`, `sim`, `loc` | Cross-checks: the seed the game passed in, whether the system was the loaded one, the simulation's address and the player's location |
 | `errors`, `unusual` | Present only when part of the system couldn't be read or looked implausible |
 
-A `"t": "query"` line is a lookup: a system the game described without loading it, with its seed, the random-number states around the lookup and whatever the lookup filled in. Each seed is recorded once per session.
+Three other kinds of line:
 
-[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed and turns the traces into draw counts. Given a clone of nms_namegen, it scores the site's generator against the game.
+- `"t": "query"`: a lookup, a system the game described without loading it. It has the system's seed, the random-number states around the lookup and whatever the lookup filled in. Each seed is recorded once per session.
+- `"t": "name"`: a planet or region name the game generated, with the seed it was generated from (`kind`, `seed`, `name`; `local` if the shown text differs), and the system you were in at the time. Each seed is recorded once per session.
+- `"t": "label"`: an exotic sighting you labelled with the buttons, with the system and its exotic's seed.
+
+[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts and lists the exotic labels. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated.
 
 ```sh
 python3 tools/captures/report.py mods/captures/systems.jsonl

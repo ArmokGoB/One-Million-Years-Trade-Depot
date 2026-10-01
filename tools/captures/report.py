@@ -183,6 +183,8 @@ class Captures:
     sessions: list[Session] = field(default_factory=list)
     records: list[SystemRecord] = field(default_factory=list)
     queries: list[dict] = field(default_factory=list)
+    names: list[dict] = field(default_factory=list)
+    labels: list[dict] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -243,6 +245,10 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                         captures.records.append(SystemRecord(obj, session, number))
                 elif kind == "query":
                     captures.queries.append(obj)
+                elif kind == "name":
+                    captures.names.append(obj)
+                elif kind == "label":
+                    captures.labels.append(obj)
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -291,13 +297,26 @@ def summary_lines(captures: Captures) -> list[str]:
     files = sorted({s.source for s in captures.sessions})
     lines = [
         f"{len(files)} file(s), {len(captures.sessions)} session(s), "
-        f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s)"
+        f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s), "
+        f"{len(captures.names)} name(s), {len(captures.labels)} exotic label(s)"
     ]
     builds = Counter(
-        (s.header.get("exe") or "unknown", s.header.get("nmspy") or "?") for s in captures.sessions
+        (s.header.get("exe") or "unknown", s.header.get("steamBuild") or "?", s.header.get("nmspy") or "?")
+        for s in captures.sessions
     )
-    for (exe, nmspy), count in builds.most_common():
-        lines.append(f"  game exe {exe[:12]} with NMS.py {nmspy}: {count} session(s)")
+    for (exe, build, nmspy), count in builds.most_common():
+        lines.append(f"  game exe {exe[:12]} (Steam build {build}) with NMS.py {nmspy}: {count} session(s)")
+    unattached = Counter(
+        f"{hook} {state}"
+        for s in captures.sessions
+        if isinstance(s.header.get("hooks"), dict)
+        for hook, state in s.header["hooks"].items()
+        if state != "enabled"
+    )
+    if unattached:
+        lines.append(
+            "  hooks not attached: " + ", ".join(f"{k} ({n} session(s))" for k, n in unattached.items())
+        )
     galaxies = Counter(r.galaxy for r in systems.values())
     if galaxies:
         lines.append("  galaxies: " + ", ".join(f"{g} x{n}" for g, n in sorted(galaxies.items())))
@@ -556,6 +575,123 @@ def lookup_lines(captures: Captures) -> list[str]:
     ]
 
 
+def _portal_label(ua: int) -> str:
+    return f"{(ua >> 52) & 0xF:X}{(ua >> 40) & 0xFFF:03X}{ua & MASK32:08X} galaxy {(ua >> 32) & 0xFF}"
+
+
+def label_lines(captures: Captures) -> list[str]:
+    """Exotic sightings the player labelled, against each system's one exotic seed."""
+    if not captures.labels:
+        return []
+    counts = Counter(label.get("label") for label in captures.labels)
+    lines = [
+        "",
+        f"Exotic sightings labelled: {len(captures.labels)} ("
+        + ", ".join(f"{k} {n}" for k, n in counts.most_common())
+        + ")",
+    ]
+    by_seed: dict[str, set[str]] = {}
+    for label in captures.labels:
+        ua = int(label.get("ua") or "0", 16) or int(label.get("seed") or "0", 16)
+        exotic = label.get("exotic") or []
+        name = label.get("displayName") or "(unnamed)"
+        lines.append(
+            f"  {_portal_label(ua)} {name}: {label.get('label')} "
+            f"({', '.join(exotic) if exotic else 'no exotic in the ship list'})"
+        )
+        for seed in exotic:
+            by_seed.setdefault(seed, set()).add(label.get("label"))
+    conflicts = sorted(seed for seed, labels in by_seed.items() if len(labels) > 1)
+    if conflicts:
+        lines.append("  labelled both ways: " + ", ".join(conflicts))
+    return lines
+
+
+def _region_name_candidates(seed: int) -> dict[str, str | None]:
+    """The region name nms_namegen would make if the game's seed were each stage of its regionName()."""
+    from nms_namegen.generator import generateName
+    from nms_namegen.prng import PRNG
+    from nms_namegen.region import region_name_adornments
+
+    def named(prng_seed: int) -> str | None:
+        try:
+            rng = PRNG(prng_seed)
+            max_length = rng.random(4) + 6
+            name = generateName(rng, 0, 6, max_length).capitalize()
+            if rng.random(0x64) < 0x50:
+                name = region_name_adornments[rng.random(0x14)].format(name)
+            return name
+        except Exception:  # some seeds make the generator raise
+            return None
+
+    def generator_seed(register: int) -> int:
+        low = register & MASK32
+        high = (_swap16(low) ^ low ^ (register >> 32)) & MASK32
+        return ((high or 1) << 32) | low
+
+    register = (seed * MIX_A) & MASK64
+    register = (((register >> 33) ^ register) * MIX_B) & MASK64
+    register ^= register >> 33
+    return {
+        "before mixing": named(generator_seed(register)),
+        "after mixing": named(generator_seed(seed)),
+        "as the generator's seed": named(seed),
+    }
+
+
+def name_lines(captures: Captures, namegen: Path, examples: int) -> list[str]:
+    """Planet and region names the game generated, against nms_namegen for the same seeds."""
+    if not captures.names:
+        return []
+    sys.path.insert(0, str(namegen.resolve()))
+    from nms_namegen.planet import planetName
+    from nms_namegen.region import regionName
+
+    systems = captures.representative_by_system()
+    t = {
+        "planet": Tally("planet name = generator's name for the same seed"),
+        "planet seed": Tally("planet name seeds that are the loaded system's planet seeds"),
+    }
+    stages = ["before mixing", "after mixing", "as the generator's seed"]
+    for stage in stages:
+        t[stage] = Tally(f"region name = generator's, taking the seed {stage}")
+    t["region here"] = Tally("region names that are the loaded system's region")
+
+    for entry in captures.names:
+        seed, name = int(entry["seed"], 16), entry.get("name")
+        system = int(entry.get("system") or "0", 16) & ~PLANET_BITS
+
+        def miss(predicted, entry=entry):
+            return lambda: f"seed {entry['seed']}: game {entry.get('name')!r}, generator {predicted!r}"
+
+        if entry.get("kind") == "planet":
+            try:
+                predicted = planetName(seed)
+            except Exception as exc:
+                predicted = f"error: {type(exc).__name__}"
+            t["planet"].add(name == predicted, miss(predicted))
+            record = systems.get(system)
+            seeds = (record.data.get("galaxy") or {}).get("seeds") if record else None
+            if seeds:
+                t["planet seed"].add(
+                    entry["seed"] in seeds, lambda: f"seed {entry['seed']} isn't one of {seeds}"
+                )
+        elif entry.get("kind") == "region":
+            for stage, predicted in _region_name_candidates(seed).items():
+                t[stage].add(name == predicted, miss(predicted))
+            if system:
+                code = (((system >> 40) & 0xFFF) << 32) | (system & MASK32)
+                predicted = regionName(code, (system >> 32) & 0xFF)
+                t["region here"].add(name == predicted, miss(predicted))
+    counts = Counter(entry.get("kind") for entry in captures.names)
+    return [
+        "",
+        "Names the game generated ("
+        + ", ".join(f"{k} {n}" for k, n in counts.most_common())
+        + "; names for places other than where you were count as misses on the 'loaded system' lines)",
+    ] + tally_lines(list(t.values()), examples)
+
+
 def _namegen_anomaly(va: dict, system_id: int) -> int:
     """0 none, 1 Atlas Interface, 2 black hole: src/core/system.ts systemAttributesDetailed()."""
     system_id -= 1
@@ -597,6 +733,11 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
         "seeds": Tally("planet seeds, every body in order"),
         "anomaly": Tally("black hole / Atlas Interface"),
         "voxel": Tally("region attributes (guide stars, renegades, anomalies)"),
+        "key planets": Tally("key attributes: planet count"),
+        "key prime": Tally("key attributes: prime planet count"),
+        "key safe start": Tally("key attributes: safe start planet"),
+        "key abandoned": Tally("key attributes: abandoned"),
+        "key pirate": Tally("key attributes: outlaw (pirate)"),
     }
     for r in captures.representative_by_system().values():
         d = r.data
@@ -618,6 +759,17 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
 
         if r.display_name:
             t["name"].add(r.display_name == name, miss(r.display_name, name))
+        keys = d.get("keyAttributes")
+        if isinstance(keys, dict):
+            for tally, key, predicted in (
+                ("key planets", "planets", attrs["planet_count"]),
+                ("key prime", "prime", attrs["prime_planet_count"]),
+                ("key safe start", "safeStart", attrs["safe_start_planet"]),
+                ("key abandoned", "abandoned", attrs["abandoned"]),
+                ("key pirate", "pirate", attrs["pirate"]),
+            ):
+                if key in keys:
+                    t[tally].add(keys[key] == predicted, miss(keys[key], predicted))
         star = NAMEGEN_STAR.get(r.name("star", "star") or "")
         t["star"].add(None if star is None else star == attrs["star_type"], miss(star, attrs["star_type"]))
         race_name = r.name("race", "race")
@@ -699,9 +851,11 @@ def main(argv: list[str] | None = None) -> int:
         + ship_stream_lines(captures)
         + trace_lines(captures)
         + lookup_lines(captures)
+        + label_lines(captures)
     )
     if args.namegen:
         lines += namegen_lines(captures, args.namegen, args.examples)
+        lines += name_lines(captures, args.namegen, args.examples)
     print("\n".join(lines))
     return 0
 

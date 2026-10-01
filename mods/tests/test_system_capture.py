@@ -17,6 +17,7 @@ import math
 import os
 import sys
 import tempfile
+import types
 import unittest
 import zlib
 from pathlib import Path
@@ -77,6 +78,7 @@ class Game:
         self.simulation = self._alloc(nms.cGcSimulation)
         self.player_state = self._alloc(nms.cGcPlayerState)
         self.seed = self._alloc(basic.GcSeed)
+        self.keys = self._alloc(nms.cGcGalaxyAttributeGenerator.StarSystemKeyAttributes)
         self.loaded = True
         self.display_name = "Shown-Name"
         self.simulation.mpSolarSystem = ctypes.cast(self.address, ctypes.POINTER(nms.cGcSolarSystem))
@@ -164,6 +166,12 @@ class Game:
             body.CommonSubstance.value = b"LAND1"
             body.RareSubstance.value = b"" if i == 0 else b"COLD1"
 
+        keys = self.keys
+        keys.meTradingClass, keys.meWealthClass, keys.meConflictLevel = 5, 2, 0
+        keys.meRace, keys.meType, keys.meTag, keys.meAnomaly = 2, 1, 7, 0x01020304
+        keys.muPlanetCount, keys.muSafeStartPlanet, keys.muPrimePlanetCount = 3, 2, 1
+        keys.mbAbandonedSystem, keys.mbIsPirateSystem = False, True
+
         attributes = self.system.mGalaxyAttributes
         attributes.mbValid = True
         voxel = attributes.mVoxel
@@ -226,7 +234,7 @@ class Game:
                 self.set_rng(next(states))
                 args = (ctypes.pointer(self.seed), None, None) if "query" in name else (None, None, None)
                 if "basics" in name:
-                    args = (ctypes.pointer(self.seed), None, None, None)
+                    args = (ctypes.pointer(self.seed), None, ctypes.pointer(self.keys), None)
                 self.assertIsNone(getattr(capture, name)(self.generator_pointer(), *args))
         self.set_rng(next(states))
         self.assertIsNone(self.generate(capture))
@@ -313,10 +321,11 @@ class WiringTests(CaptureTestCase):
         self.assertEqual(callback._hook_time, DetourTime.AFTER)
 
     def test_mod_registers_hooks_callback_and_gui(self):
-        expected = {"before_generate", "after_generate"} | {name for pair in STEPS for name in pair}
+        expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
+        expected |= {name for pair in STEPS for name in pair}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 7)
+        self.assertEqual(len(self.capture._gui_widgets), 10)
 
     def test_layout_reads_inside_the_structs(self):
         self.assertEqual(mod.LAYOUT.ua, nms.cGcSolarSystem.mUA.offset)
@@ -520,8 +529,41 @@ class TraceTests(CaptureTestCase):
         self.capture.before_basics(
             self.game.generator_pointer(), ctypes.pointer(self.game.seed), None, None, None
         )
+        self.capture.after_basics(
+            self.game.generator_pointer(),
+            ctypes.pointer(self.game.seed),
+            None,
+            ctypes.pointer(self.game.keys),
+            None,
+        )
         self.game.generate(self.capture)
         self.assertNotIn("trace", self.lines()[1])
+        self.assertNotIn("keyAttributes", self.lines()[1])
+
+    def test_key_attributes_and_raw_galaxy_attributes_are_kept(self):
+        self.game.generate_traced(self.capture, list(range(10)))
+        record = self.lines()[1]
+        keys = record["keyAttributes"]
+        self.assertEqual(
+            {k: v for k, v in keys.items() if k != "raw"},
+            {
+                "trade": 5,
+                "wealth": 2,
+                "conflict": 0,
+                "race": 2,
+                "star": 1,
+                "tag": 7,
+                "anomaly": "01020304",
+                "planets": 3,
+                "safeStart": 2,
+                "abandoned": False,
+                "pirate": True,
+                "prime": 1,
+            },
+        )
+        self.assertEqual(bytes.fromhex(keys["raw"]), bytes(self.game.keys))
+        raw = zlib.decompress(base64.b64decode(record["rawGalaxy"]))
+        self.assertEqual(raw, bytes(self.game.system.mGalaxyAttributes))
 
     def test_trace_states_map_to_draw_counts(self):
         states = report.stream_states(UA, 2000)
@@ -534,6 +576,142 @@ class TraceTests(CaptureTestCase):
             "query>881 query<1001 generate<1501",
             "\n".join(lines),
         )
+
+
+class NameTests(CaptureTestCase):
+    def name(self, kind: str, seed: int, name: str, local: str | None = None):
+        """Call a name-generator detour the way pyMHF does."""
+        result = self.game._alloc(basic.cTkFixedString[0x7F])
+        result.value = name.encode()
+        localised = self.game._alloc(basic.cTkFixedString[0x7F])
+        localised.value = (name if local is None else local).encode()
+        hook = self.capture.after_planet_name if kind == "planet" else self.capture.after_region_name
+        self.assertIsNone(hook(None, seed, ctypes.pointer(result), ctypes.pointer(localised)))
+
+    def test_names_are_recorded_once_per_seed_with_the_loaded_system(self):
+        self.name("planet", 0xAAAA000000000001, "Tupori")
+        self.name("planet", 0xAAAA000000000001, "Tupori")
+        self.name("region", 0x0123456789ABCDEF, "Yihelli Quadrant", local="Quadrant Yihelli")
+        self.name("planet", 0xAAAA000000000002, "")  # nothing generated
+        self.poll()
+        names = [line for line in self.lines() if line["t"] == "name"]
+        self.assertEqual(
+            [{k: v for k, v in n.items() if k != "at"} for n in names],
+            [
+                {
+                    "t": "name",
+                    "kind": "planet",
+                    "seed": "AAAA000000000001",
+                    "name": "Tupori",
+                    "system": f"{UA:016X}",
+                },
+                {
+                    "t": "name",
+                    "kind": "region",
+                    "seed": "0123456789ABCDEF",
+                    "name": "Yihelli Quadrant",
+                    "local": "Quadrant Yihelli",
+                    "system": f"{UA:016X}",
+                },
+            ],
+        )
+        self.assertEqual(self.capture.names, "2")
+
+    def test_names_without_a_loaded_system(self):
+        self.game.loaded = False
+        self.name("planet", 0xAAAA000000000001, "Tupori")
+        self.poll()
+        (name,) = [line for line in self.lines() if line["t"] == "name"]
+        self.assertNotIn("system", name)
+
+
+class LabelTests(CaptureTestCase):
+    def test_squid_label_names_the_systems_exotic_seed(self):
+        self.capture.exotic_squid()
+        self.assertEqual(self.capture.status, "Noting that the exotic here is squid...")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture.on_frame()
+        (label,) = [line for line in self.lines() if line["t"] == "label"]
+        self.assertEqual(
+            {k: v for k, v in label.items() if k != "at"},
+            {
+                "t": "label",
+                "ua": f"{UA:016X}",
+                "seed": f"{UA:016X}",
+                "label": "squid",
+                "exotic": ["8000000000000001"],
+                "displayName": "Shown-Name",
+            },
+        )
+        self.assertIn(
+            "Noted: the exotic in Shown-Name (03E9F3545C3E, galaxy 1) (seed 8000000000000001) is squid.",
+            "\n".join(logs.output),
+        )
+        self.assertEqual(self.capture.status, "Noted: the exotic here is squid.")
+
+    def test_label_without_an_exotic_in_the_list(self):
+        self.game.set_ships(SHIPS[:2])
+        self.capture.exotic_not_squid()
+        self.capture.on_frame()
+        (label,) = [line for line in self.lines() if line["t"] == "label"]
+        self.assertEqual((label["label"], label["exotic"]), ("not a squid", []))
+        self.assertEqual(self.capture.status, "Noted, but this system's ship list has no exotic.")
+
+    def test_label_without_a_system(self):
+        self.game.loaded = False
+        self.capture.exotic_squid()
+        self.capture.on_frame()
+        self.assertEqual(self.lines(), [])
+        self.assertEqual(self.capture.status, "No star system is loaded yet.")
+
+    def test_report_lists_labels_and_conflicts(self):
+        for press in (self.capture.exotic_squid, self.capture.exotic_not_squid):
+            press()
+            self.capture.on_frame()
+        lines = report.label_lines(report.read_captures([mod.CAPTURE_FILE]))
+        text = "\n".join(lines)
+        self.assertIn("Exotic sightings labelled: 2 (squid 1, not a squid 1)", text)
+        self.assertIn("03E9F3545C3E galaxy 1 Shown-Name: squid (8000000000000001)", text)
+        self.assertIn("labelled both ways: 8000000000000001", text)
+
+
+class DiagnosticsTests(CaptureTestCase):
+    def test_steam_build_comes_from_the_app_manifest(self):
+        library = Path(self._tmp.name) / "SteamLibrary" / "steamapps"
+        exe = library / "common" / "No Man's Sky" / "Binaries" / "NMS.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_bytes(b"")
+        (library / "appmanifest_275850.acf").write_text(
+            '"AppState"\n{\n\t"appid"\t\t"275850"\n\t"buildid"\t\t"19876543"\n}\n'
+        )
+        self.assertEqual(mod.steam_build(str(exe)), "19876543")
+        self.assertIsNone(mod.steam_build(str(Path(self._tmp.name) / "elsewhere" / "NMS.exe")))
+        self.assertIsNone(mod.steam_build(None))
+
+    def test_hook_status_reports_attached_disabled_and_missing_hooks(self):
+        from pymhf.core.hooking import hook_manager
+
+        fake = types.SimpleNamespace(
+            _before_detours=[self.capture.before_generate],
+            _after_detours=[self.capture.after_generate],
+            _after_detours_with_results=[],
+            _disabled_detours={self.capture.after_planet_name},
+            state="enabled",
+        )
+        hook_manager.hooks["test"] = fake
+        self.addCleanup(hook_manager.hooks.pop, "test")
+        status = mod.hook_status(self.capture)
+        self.assertEqual(status["before_generate"], "enabled")
+        self.assertEqual(status["after_generate"], "enabled")
+        self.assertEqual(status["after_planet_name"], "disabled")
+        self.assertEqual(status["after_region_name"], "not found")
+        self.assertEqual(set(status), {hook.__name__ for hook in self.capture.hooks})
+
+    def test_session_header_carries_the_diagnostics(self):
+        self.game.generate(self.capture)
+        header = self.lines()[0]
+        self.assertIsNone(header["steamBuild"], "no game binary in the tests")
+        self.assertEqual(set(header["hooks"]), {hook.__name__ for hook in self.capture.hooks})
 
 
 class LookupTests(CaptureTestCase):
@@ -867,15 +1045,48 @@ class NamegenComparisonTests(CaptureTestCase):
             voxel.GuideStarMinimumCount = va["guide_star_count"]
             voxel.GuideStarRenegadeCount = va["guide_star_renegade_count"]
             voxel.InsideGoalGap = bool(va["inside_gap"])
-            self.game.generate(self.capture)
+            keys = self.game.keys
+            keys.muPlanetCount = attrs["planet_count"]
+            keys.muPrimePlanetCount = attrs["prime_planet_count"]
+            keys.muSafeStartPlanet = attrs["safe_start_planet"]
+            keys.mbAbandonedSystem = attrs["abandoned"]
+            keys.mbIsPirateSystem = attrs["pirate"]
+            self.game.generate_traced(self.capture, list(range(10)))
 
         captures = report.read_captures([mod.CAPTURE_FILE])
         self.assertEqual(len(captures.representative_by_system()), len(self.ADDRESSES))
         lines = report.namegen_lines(captures, Path(os.environ["NMS_NAMEGEN"]), examples=5)
         scored = [line for line in lines[2:] if "/" in line]
-        self.assertTrue(scored)
+        self.assertTrue(any("key attributes: safe start planet" in line for line in scored))
         for line in scored:
             self.assertIn("100.0%", line)
+
+    def test_names_are_scored_against_the_generator(self):
+        sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
+        from nms_namegen.planet import planetName
+        from nms_namegen.region import regionName
+
+        code, galaxy = 0x03E9F3545C3E, 1  # the fake system: UA's region and galaxy
+        names = NameTests.name.__get__(self)  # reuse the detour driver
+        planet_seed = 0xAAAA000000000001  # one of the fake system's planet seeds
+        names("planet", planet_seed, planetName(planet_seed))
+        names("planet", 0x1234, "Not-The-Generators-Name")
+        # The seed the game passes for a region, if it is the value before nms_namegen's mixing.
+        raw = (galaxy >> 1) ^ ((galaxy << 32) | (code & 0xFFFFFFFF))
+        names("region", raw, regionName(code, galaxy))
+        self.game.generate(self.capture)
+        self.poll()
+
+        lines = report.name_lines(
+            report.read_captures([mod.CAPTURE_FILE]), Path(os.environ["NMS_NAMEGEN"]), 5
+        )
+        text = "\n".join(lines)
+        self.assertIn("planet name = generator's name for the same seed", text)
+        self.assertRegex(text, r"planet name = generator's name for the same seed\s+1/2 ")
+        self.assertRegex(text, r"planet name seeds that are the loaded system's planet seeds\s+1/2 ")
+        self.assertRegex(text, r"taking the seed before mixing\s+1/1\s+100.0%")
+        self.assertRegex(text, r"taking the seed after mixing\s+0/1 ")
+        self.assertRegex(text, r"region names that are the loaded system's region\s+1/1\s+100.0%")
 
 
 if __name__ == "__main__":
