@@ -31,7 +31,7 @@ System, region and planet names, the order of bodies, and the outlaw flag aren't
 ## Roadmap
 
 1. **System lookup.** Done: this site.
-2. **Capture mod.** An [NMS.py](https://github.com/monkeyman192/NMS.py) mod that logs, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Needs a Windows PC.
+2. **Capture mod.** In progress: [`mods/system_capture.py`](mods/system_capture.py), an [NMS.py](https://github.com/monkeyman192/NMS.py) mod that records, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Needs a Windows PC; [how to run it](mods/README.md).
 3. **Address → ship pool.** Work out how the game derives those ships from the address, using the captures as ground truth, and publish the measured accuracy.
 4. **Seed → appearance.** Decode each ship seed into parts and colours, starting with squid versus ball-cockpit exotics, then every ship type.
 5. **Multi-tools and freighters**, then pictures.
@@ -66,6 +66,8 @@ python3 tools/convert_golden_vectors.py --namegen ../nms_namegen
 python3 tools/crosscheck/generate.py --namegen ../nms_namegen --count 20000 > crosscheck.jsonl
 CROSSCHECK_FILE=crosscheck.jsonl npm test
 ```
+
+The capture mod has its own Python tests, which run on any OS; see [mods/README.md](mods/README.md#development).
 
 Pushes to `main` deploy the site through GitHub Actions.
 

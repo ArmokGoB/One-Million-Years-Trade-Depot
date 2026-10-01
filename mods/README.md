@@ -1,0 +1,86 @@
+# Capture mod
+
+`system_capture.py` records every star system you visit in No Man's Sky, together with `SystemShips`: the list of ships the game prepares for that system (each ship's seed, type, role and faction). The project uses these records to work out how the game picks a system's ships from its address, the next step on the [roadmap](../README.md#roadmap).
+
+The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
+
+**Status:** first version. It has been tested against fake game memory built from NMS.py's own struct definitions, not yet against the running game. If it misbehaves, the log file (see below) is the most useful thing to send.
+
+## What you need
+
+- A Windows PC with No Man's Sky on Steam.
+- Python 3.13, 64-bit, from [python.org](https://www.python.org/downloads/windows/). NMS.py doesn't support Python 3.14 yet, and its author advises against the Microsoft Store build.
+- NMS.py for your game version. After a game update the mod stops working until NMS.py catches up; update it with `py -3.13 -m pip install --upgrade nmspy`.
+
+## Install (once)
+
+In a terminal (Windows Terminal or Command Prompt):
+
+```bat
+py -3.13 -m pip install nmspy
+```
+
+Then download [`system_capture.py`](system_capture.py) into a folder of its own, or clone this repository.
+
+## Record systems
+
+1. Start Steam and close No Man's Sky.
+2. In a terminal, in the folder with the mod:
+
+   ```bat
+   py -3.13 system_capture.py
+   ```
+
+   This starts the game through Steam with the mod attached. Two extra windows open: a log console and the pyMHF panel, which has a **TradeDepotCapture** tab.
+3. Load your save and play as usual. Each time you arrive in a system, the log shows a line like:
+
+   ```text
+   Recorded Abarof-Dulin (03E9F3545C3E, galaxy 0): 18 ships (Fighter 6, Hauler 4, Explorer 3, Shuttle 3, Solar 1, Exotic 1)
+   ```
+
+4. Save and quit the game normally when you're done. Pressing Ctrl+C in the terminal closes the game too.
+
+The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to `system_capture.py`. Each session adds to the same file.
+
+If no line appears after you arrive somewhere, press **Record the current system now** on the TradeDepotCapture tab. If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
+
+## Send captures
+
+Zip `captures\systems.jsonl` and attach it to an [issue](https://github.com/ArmokGoB/One-Million-Years-Trade-Depot/issues). If something went wrong, attach the newest file in `logs\` too.
+
+A capture file holds the address of every system you recorded and when you got there, so anyone you share it with can see where you've been. It holds nothing else about you: no player name, account or save data. The first line of each session names the game's executable by its SHA-1 hash and lists the NMS.py, pyMHF and Python versions.
+
+## What a record holds
+
+One JSON object per line. A `"t": "session"` line starts each run of the game and carries the column names for the compact rows below and the game's enum names, since game updates can renumber enums. Each `"t": "sys"` line is one system:
+
+| Field | Meaning |
+|---|---|
+| `via` | What triggered the record: `gen` (the game generated the system), `poll` (the mod noticed it while you were there), `btn` (the button) |
+| `at` | Unix time, in seconds |
+| `ua` | Universal address, 16 hex digits; the portal code and galaxy are packed into it |
+| `seed` | The system seed |
+| `name`, `star`, `race`, `trade`, `wealth`, `conflict`, `planets`, `prime` | The game's own description of the system |
+| `ships` | `SystemShips`, one row per ship: seed, use-seed flag, class, role, faction, frigate class, texture hint |
+| `bodies` | Planet generation inputs: seed, biome, size, resources and flags per planet |
+| `galaxy` | The galaxy generator's view of the same system: planet seeds, star attributes and region data |
+| `arg`, `active`, `sim`, `loc` | Cross-checks: the seed the game passed in, whether the system was the loaded one, the simulation's address and the player's location |
+| `errors`, `unusual` | Present only when part of the system couldn't be read or looked implausible |
+
+[`tools/captures/report.py`](../tools/captures/report.py) reads these files: it summarises the ship pools, checks the game's data against itself and, given a clone of nms_namegen, scores the site's generator against the game.
+
+```sh
+python3 tools/captures/report.py mods/captures/systems.jsonl
+python3 tools/captures/report.py --namegen ../nms_namegen mods/captures/systems.jsonl
+```
+
+## Development
+
+The tests run anywhere, not only on Windows: [`tests/harness.py`](tests/harness.py) stubs the Windows-only packages so NMS.py's real struct definitions and pyMHF's hook decorators load, and the tests build fake game memory from those structs.
+
+```sh
+python3 -m pip install --no-deps nmspy==180132.0 pymhf==0.2.4
+python3 -m pip install typing_extensions packaging tomlkit
+python3 -m unittest discover -s mods/tests -v
+NMS_NAMEGEN=../nms_namegen python3 -m unittest discover -s mods/tests -v   # plus the generator comparison (needs numpy)
+```
