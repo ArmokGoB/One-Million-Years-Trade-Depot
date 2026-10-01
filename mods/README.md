@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** first version. It has been tested against fake game memory built from NMS.py's own struct definitions, not yet against the running game. If it misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 has recorded systems in the game, with NMS.py 180383.0. Version 0.2 adds hooks on the steps of the game's system generator; those haven't run in the game yet. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -41,7 +41,7 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
 3. Load your save and play as usual. Each time you arrive in a system, the log shows a line like:
 
    ```text
-   Recorded Abarof-Dulin (03E9F3545C3E, galaxy 0): 18 ships (Fighter 6, Hauler 4, Explorer 3, Shuttle 3, Solar 1, Exotic 1)
+   Recorded <system name> (<portal code>, galaxy <number>): 50 ships (Freighter 21, Fighter 9, Shuttle 6, ...)
    ```
 
 4. Save and quit the game normally when you're done. Pressing Ctrl+C in the terminal closes the game too.
@@ -64,16 +64,21 @@ One JSON object per line. A `"t": "session"` line starts each run of the game an
 |---|---|
 | `via` | What triggered the record: `gen` (the game generated the system), `poll` (the mod noticed it while you were there), `btn` (the button) |
 | `at` | Unix time, in seconds |
-| `ua` | Universal address, 16 hex digits; the portal code and galaxy are packed into it |
-| `seed` | The system seed |
+| `ua` | Universal address, 16 hex digits; the portal code and galaxy are packed into it. Still zero while the game is generating the system, so `gen` records have `ua` 0 |
+| `seed` | The system seed, which holds the same value as the universal address |
+| `displayName` | The name the game shows for the system (`poll` and `btn` records) |
 | `name`, `star`, `race`, `trade`, `wealth`, `conflict`, `planets`, `prime` | The game's own description of the system |
 | `ships` | `SystemShips`, one row per ship: seed, use-seed flag, class, role, faction, frigate class, texture hint |
 | `bodies` | Planet generation inputs: seed, biome, size, resources and flags per planet |
 | `galaxy` | The galaxy generator's view of the same system: planet seeds, star attributes and region data |
+| `trace` | `gen` records: the generator's random-number state at the start and end of each generation step |
+| `raw` | `gen` records: all of the generated system data, zlib-compressed and base64-encoded, for offline analysis |
 | `arg`, `active`, `sim`, `loc` | Cross-checks: the seed the game passed in, whether the system was the loaded one, the simulation's address and the player's location |
 | `errors`, `unusual` | Present only when part of the system couldn't be read or looked implausible |
 
-[`tools/captures/report.py`](../tools/captures/report.py) reads these files: it summarises the ship pools, checks the game's data against itself and, given a clone of nms_namegen, scores the site's generator against the game.
+A `"t": "query"` line is a lookup: a system the game described without loading it, with its seed, the random-number states around the lookup and whatever the lookup filled in. Each seed is recorded once per session.
+
+[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed and turns the traces into draw counts. Given a clone of nms_namegen, it scores the site's generator against the game.
 
 ```sh
 python3 tools/captures/report.py mods/captures/systems.jsonl
@@ -85,7 +90,7 @@ python3 tools/captures/report.py --namegen ../nms_namegen mods/captures/systems.
 The tests run anywhere, not only on Windows: [`tests/harness.py`](tests/harness.py) stubs the Windows-only packages so NMS.py's real struct definitions and pyMHF's hook decorators load, and the tests build fake game memory from those structs.
 
 ```sh
-python3 -m pip install --no-deps nmspy==180132.0 pymhf==0.2.4
+python3 -m pip install --no-deps nmspy==180383.0 pymhf==0.2.4
 python3 -m pip install typing_extensions packaging tomlkit
 python3 -m unittest discover -s mods/tests -v
 NMS_NAMEGEN=../nms_namegen python3 -m unittest discover -s mods/tests -v   # plus the generator comparison (needs numpy)

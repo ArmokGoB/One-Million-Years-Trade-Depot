@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Summarise capture files written by mods/system_capture.py.
 
-Prints what was recorded (systems, ship pools, exotics), checks the game's
-data against itself (a struct layout that doesn't match the game shows up
-here first), and, given a path to nms_namegen, measures how often the
-generator behind the site agrees with the game.
+Prints what was recorded (systems, ship pools, exotics); checks the game's
+data against itself, which is where a struct layout that no longer matches
+the game shows up first; and finds each system's ship seeds in the game's
+random-number stream seeded by the system seed. Given a path to
+nms_namegen, it also measures how often the generator behind the site
+agrees with the game.
 
 Usage:
     python3 tools/captures/report.py mods/captures/systems.jsonl
@@ -25,9 +27,22 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SUPPORTED_FORMATS = {1}
+SUPPORTED_FORMATS = {1, 2}
 ZERO_SEED = "0" * 16
 MASK32 = 0xFFFFFFFF
+MASK64 = (1 << 64) - 1
+PLANET_BITS = 0xF << 52
+
+# The game's multiply-with-carry random-number generator and the mixer that
+# turns two of its 32-bit draws into a 64-bit seed (nms_namegen prng.py and
+# system.py _bodySeed).
+MULTIPLIER = 0x5A76F899
+MIX_A = 0x64DD81482CBD31D7
+MIX_B = 0xE36AA5C613612997
+_MIX_A_INVERSE = pow(MIX_A, -1, 1 << 64)
+_MIX_B_INVERSE = pow(MIX_B, -1, 1 << 64)
+# How far into a system's stream to look for its ships.
+STREAM_LIMIT = 100_000
 
 SHIP_LABELS = {
     "Freighter": "Freighter",
@@ -65,6 +80,51 @@ class CaptureFormatError(ValueError):
     pass
 
 
+# --- The game's random-number stream ---
+
+
+def mix(value: int) -> int:
+    value = (((value >> 33) ^ value) * MIX_A) & MASK64
+    value = (((value >> 33) ^ value) * MIX_B) & MASK64
+    return (value >> 33) ^ value
+
+
+def unmix(value: int) -> int:
+    """Inverse of mix(): the two 32-bit draws (high << 32 | low) behind a seed."""
+    value ^= value >> 33
+    value = (value * _MIX_B_INVERSE) & MASK64
+    value ^= value >> 33
+    value = (value * _MIX_A_INVERSE) & MASK64
+    return value ^ (value >> 33)
+
+
+def _swap16(value: int) -> int:
+    return ((value & 0xFFFF0000) >> 16) | ((value & 0x0000FFFF) << 16)
+
+
+def seeded_state(seed: int) -> int:
+    """Generator state the game builds from a 64-bit seed (as nms_namegen's planetSeeds does)."""
+    low = seed & MASK32
+    high = (_swap16(low) ^ low ^ (seed >> 32)) & MASK32
+    return ((high or 1) << 32) | low
+
+
+def step(state: int) -> int:
+    return (state & MASK32) * MULTIPLIER + (state >> 32)
+
+
+def stream_states(seed: int, count: int) -> list[int]:
+    """Generator state after each of the first ``count`` draws; a draw's output is the low 32 bits."""
+    state, states = seeded_state(seed), []
+    for _ in range(count):
+        state = step(state)
+        states.append(state)
+    return states
+
+
+# --- Records ---
+
+
 @dataclass
 class Session:
     header: dict
@@ -85,7 +145,12 @@ class SystemRecord:
 
     @property
     def ua(self) -> int:
-        return int(self.data["ua"], 16)
+        """The universal address. While a system is being generated its address isn't set
+        yet, but its seed holds the same value (observed in every capture so far)."""
+        value = int(self.data["ua"], 16)
+        if value == 0 and isinstance(self.data.get("seed"), str):
+            value = int(self.data["seed"], 16)
+        return value
 
     @property
     def portal(self) -> str:
@@ -101,8 +166,12 @@ class SystemRecord:
     def galaxy(self) -> int:
         return (self.ua >> 32) & 0xFF
 
+    @property
+    def display_name(self) -> str:
+        return self.data.get("displayName") or self.data.get("name") or ""
+
     def label(self) -> str:
-        return f"{self.portal} galaxy {self.galaxy} {self.data.get('name') or '(unnamed)'}"
+        return f"{self.portal} galaxy {self.galaxy} {self.display_name or '(unnamed)'}"
 
     def name(self, enum: str, key: str, source: dict | None = None) -> str | None:
         value = (self.data if source is None else source).get(key)
@@ -113,21 +182,30 @@ class SystemRecord:
 class Captures:
     sessions: list[Session] = field(default_factory=list)
     records: list[SystemRecord] = field(default_factory=list)
+    queries: list[dict] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
         grouped: dict[int, list[SystemRecord]] = {}
         for record in self.records:
-            grouped.setdefault(record.ua & ~(0xF << 52), []).append(record)
+            grouped.setdefault(record.ua & ~PLANET_BITS, []).append(record)
         return grouped
 
     def representative_by_system(self) -> dict[int, SystemRecord]:
         """One record per system: the first with a ship list, which is closest to what the
-        generator produced, or else the last record."""
+        generator produced, or else the last record. A name the game only showed later is
+        carried over."""
         chosen: dict[int, SystemRecord] = {}
         for key, records in self.by_system().items():
             with_ships = [r for r in records if r.data.get("ships")]
-            chosen[key] = with_ships[0] if with_ships else records[-1]
+            best = with_ships[0] if with_ships else records[-1]
+            if not best.data.get("displayName"):
+                named = next((r for r in records if r.data.get("displayName")), None)
+                if named is not None:
+                    best = SystemRecord(
+                        dict(best.data, displayName=named.data["displayName"]), best.session, best.line
+                    )
+            chosen[key] = best
         return chosen
 
 
@@ -156,13 +234,15 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                         )
                     session = Session(obj, str(path))
                     captures.sessions.append(session)
+                elif session is None:
+                    captures.skipped.append(f"{where}: record before any session header")
                 elif kind == "sys":
-                    if session is None:
-                        captures.skipped.append(f"{where}: system record before any session header")
-                    elif not isinstance(obj.get("ua"), str):
+                    if not isinstance(obj.get("ua"), str):
                         captures.skipped.append(f"{where}: system record without an address")
                     else:
                         captures.records.append(SystemRecord(obj, session, number))
+                elif kind == "query":
+                    captures.queries.append(obj)
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -203,12 +283,15 @@ def tally_lines(tallies: list[Tally], examples: int) -> list[str]:
     return lines
 
 
+# --- Report sections ---
+
+
 def summary_lines(captures: Captures) -> list[str]:
     systems = captures.representative_by_system()
     files = sorted({s.source for s in captures.sessions})
     lines = [
         f"{len(files)} file(s), {len(captures.sessions)} session(s), "
-        f"{len(captures.records)} record(s), {len(systems)} system(s)"
+        f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s)"
     ]
     builds = Counter(
         (s.header.get("exe") or "unknown", s.header.get("nmspy") or "?") for s in captures.sessions
@@ -273,7 +356,7 @@ def summary_lines(captures: Captures) -> list[str]:
 
 def _location_matches(record: SystemRecord) -> bool | None:
     loc = record.data.get("loc")
-    if not isinstance(loc, list) or len(loc) < 5:
+    if not isinstance(loc, list) or len(loc) < 5 or int(record.data["ua"], 16) == 0:
         return None
     galaxy, x, y, z, system = loc[:5]
     ua = record.ua
@@ -295,14 +378,14 @@ def consistency_lines(captures: Captures, examples: int) -> list[str]:
     t = {
         "arg": Tally("Generate's seed argument = system seed"),
         "active": Tally("generated system is the loaded one"),
-        "sim": Tally("address = simulation's current address"),
+        "seed": Tally("system seed = universal address"),
         "loc": Tally("address = player's location"),
         "star": Tally("star type = galaxy attributes"),
         "race": Tally("race = galaxy attributes"),
         "trade": Tally("economy = galaxy attributes"),
         "wealth": Tally("wealth = galaxy attributes"),
         "conflict": Tally("conflict = galaxy attributes"),
-        "planets": Tally("planet count = galaxy attributes"),
+        "planets": Tally("planet count = galaxy attributes' planets + prime planets"),
         "prime": Tally("prime planet count = galaxy attributes"),
         "bodies": Tally("planet input seeds = galaxy attribute seeds"),
     }
@@ -313,15 +396,22 @@ def consistency_lines(captures: Captures, examples: int) -> list[str]:
             t["arg"].add(d["arg"] == d["seed"], lambda: f"{r.label()}: {d['arg']} vs {d['seed']}")
         if "active" in d:
             t["active"].add(bool(d["active"]), lambda: r.label())
-        if "sim" in d:
-            t["sim"].add(
-                int(d["sim"], 16) & ~(0xF << 52) == r.ua & ~(0xF << 52), lambda: f"{r.label()}: {d['sim']}"
+        if "seed" in d and int(d["ua"], 16):
+            t["seed"].add(
+                int(d["seed"], 16) & ~PLANET_BITS == int(d["ua"], 16) & ~PLANET_BITS,
+                lambda: f"{r.label()}: seed {d['seed']}, address {d['ua']}",
             )
         t["loc"].add(_location_matches(r), lambda: f"{r.label()}: {d.get('loc')}")
         if ga:
-            for key in ("star", "race", "trade", "wealth", "conflict", "planets", "prime"):
+            for key in ("star", "race", "trade", "wealth", "conflict", "prime"):
                 if key in d and key in ga:
                     t[key].add(d[key] == ga[key], lambda k=key: f"{r.label()}: {d[k]} vs {ga[k]}")
+            if "planets" in d and "planets" in ga and "prime" in ga:
+                expected = ga["planets"] + (ga["prime"] if d.get("primeInCount") else 0)
+                t["planets"].add(
+                    d["planets"] == expected,
+                    lambda: f"{r.label()}: {d['planets']} vs {ga['planets']}+{ga['prime']}",
+                )
             if "bodies" in d and "seeds" in ga:
                 body_seeds = [row[0] for row in d["bodies"] if row[0] != ZERO_SEED]
                 t["bodies"].add(
@@ -329,6 +419,141 @@ def consistency_lines(captures: Captures, examples: int) -> list[str]:
                     lambda: f"{r.label()}: {body_seeds} vs {ga['seeds']}",
                 )
     return ["", "Self-consistency of the game's data"] + tally_lines(list(t.values()), examples)
+
+
+@dataclass
+class ShipStream:
+    """Where a system's ship seeds sit in the stream seeded by its system seed."""
+
+    offset: int | None  # draws made before slot 0's first draw
+    found: int = 0  # ship seeds found in sequence
+    layout: list[str] = field(default_factory=list)
+
+
+def locate_ship_stream(seed: int, ship_seeds: list[str], crash_seed: str | None, limit: int) -> ShipStream:
+    outputs = [state & MASK32 for state in stream_states(seed, limit)]
+
+    def pair(seed_hex: str) -> tuple[int, int]:
+        draws = unmix(int(seed_hex, 16))
+        return draws & MASK32, draws >> 32
+
+    def at(position: int, words: tuple[int, int]) -> bool:
+        return position + 1 < len(outputs) and (outputs[position], outputs[position + 1]) == words
+
+    pairs = [pair(s) for s in ship_seeds]
+    crash = pair(crash_seed) if crash_seed and crash_seed != ZERO_SEED else None
+    offset = next((i for i in range(len(outputs) - 1) if at(i, pairs[0])), None) if pairs else None
+    result = ShipStream(offset)
+    if offset is None:
+        return result
+
+    position, run_start = offset, 0
+
+    def close_run(end: int) -> None:
+        if end >= run_start:
+            result.layout.append(f"ships {run_start}-{end}" if end > run_start else f"ship {run_start}")
+
+    for slot, words in enumerate(pairs):
+        if at(position, words):
+            result.found += 1
+            position += 2
+            continue
+        close_run(slot - 1)
+        run_start = slot
+        if crash is not None and at(position, crash):
+            result.layout.append("crash ship")
+            position += 2
+        else:
+            skip = next((k for k in range(1, 65) if at(position + k, words)), None)
+            if skip is None:
+                result.layout.append("lost")
+                return result
+            result.layout.append(f"{skip} other draw{'s' if skip > 1 else ''}")
+            position += skip
+        if not at(position, words):
+            result.layout.append("lost")
+            return result
+        result.found += 1
+        position += 2
+    close_run(len(pairs) - 1)
+    if crash is not None and "crash ship" not in result.layout and at(position, crash):
+        result.layout.append("crash ship")
+    return result
+
+
+def ship_stream_lines(captures: Captures, limit: int = STREAM_LIMIT) -> list[str]:
+    lines = ["", "Ship seeds in the system seed's random-number stream"]
+    layouts: Counter[str] = Counter()
+    offsets = []
+    for r in sorted(captures.representative_by_system().values(), key=lambda r: (r.galaxy, r.portal)):
+        ships = r.data.get("ships")
+        if not ships or "seed" not in r.data:
+            continue
+        found = locate_ship_stream(
+            int(r.data["seed"], 16), [row[0] for row in ships], r.data.get("crashShip"), limit
+        )
+        if found.offset is None:
+            lines.append(f"  {r.label()}: not in the first {limit:,} draws")
+            continue
+        layout = ", ".join(found.layout)
+        layouts[layout] += 1
+        offsets.append(found.offset)
+        lines.append(
+            f"  {r.label()}: after {found.offset} draws; {found.found}/{len(ships)} in sequence: {layout}"
+        )
+    if offsets:
+        lines.append(
+            f"  {len(offsets)} system(s); ships begin after {min(offsets)}-{max(offsets)} draws; "
+            f"{layouts.most_common(1)[0][1]} share the layout: {layouts.most_common(1)[0][0]}"
+        )
+    return lines
+
+
+def _draw_index(states: dict[int, int], seed: int, value: str | None) -> str:
+    """How many draws the generator had made when it held ``value``."""
+    if value is None:
+        return "?"
+    state = int(value, 16)
+    if state == seeded_state(seed):
+        return "0"
+    for candidate, note in ((state, ""), (((state & MASK32) << 32) | (state >> 32), " (halves swapped)")):
+        if candidate in states:
+            return f"{states[candidate] + 1}{note}"
+    return "-"
+
+
+def trace_lines(captures: Captures, limit: int = STREAM_LIMIT) -> list[str]:
+    """Generator state at each traced step, as a count of draws from the system seed."""
+    traced = [r for r in captures.records if r.data.get("trace") and "seed" in r.data]
+    traced_queries = [q for q in captures.queries if q.get("trace") and q.get("seed")]
+    if not traced and not traced_queries:
+        return []
+    lines = ["", "Generation traces (draws made from the system seed at each step; - = not in this stream)"]
+    for r in traced:
+        seed = int(r.data["seed"], 16)
+        states = {state: i for i, state in enumerate(stream_states(seed, limit))}
+        steps = " ".join(f"{label}{_draw_index(states, seed, value)}" for label, value in r.data["trace"])
+        lines.append(f"  {r.label()}: {steps}")
+    for q in traced_queries[:20]:
+        seed = int(q["seed"], 16)
+        states = {state: i for i, state in enumerate(stream_states(seed, limit))}
+        steps = " ".join(f"{label}{_draw_index(states, seed, value)}" for label, value in q["trace"])
+        lines.append(f"  lookup {q['seed']}: {steps}")
+    if len(traced_queries) > 20:
+        lines.append(f"  ... {len(traced_queries) - 20} more lookups")
+    return lines
+
+
+def lookup_lines(captures: Captures) -> list[str]:
+    if not captures.queries:
+        return []
+    with_ships = sum(1 for q in captures.queries if q.get("ships"))
+    errors = sum(1 for q in captures.queries if q.get("errors"))
+    return [
+        "",
+        f"Lookups (systems the game described without loading them): {len(captures.queries)}",
+        f"  with a ship list: {with_ships}; with read errors: {errors}",
+    ]
 
 
 def _namegen_anomaly(va: dict, system_id: int) -> int:
@@ -354,13 +579,10 @@ def _game_anomaly(name: str | None) -> int | None:
 def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]:
     """How often nms_namegen (and so the site) predicts what the game generated."""
     sys.path.insert(0, str(namegen.resolve()))
-    from nms_namegen.iprng import indexPrimedPRNG
     from nms_namegen.region import voxelAttributes
     from nms_namegen.system import planetSeeds, systemAttributes, systemName
 
     t = {
-        "seed": Tally("system seed (index-primed PRNG, low 32 bits)"),
-        "seed64": Tally("system seed (all 64 bits)"),
         "name": Tally("system name"),
         "star": Tally("star colour"),
         "race": Tally("dominant race / uncharted"),
@@ -385,8 +607,6 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
             attrs = systemAttributes(code, galaxy)
             name = systemName(code, galaxy)
             seeds = planetSeeds(code, galaxy)
-            ua = ((((code >> 32) & 0xFFF) << 8 | galaxy) << 32) | (code & MASK32)
-            prng = indexPrimedPRNG(ua)
             va = voxelAttributes(code)
         except Exception as exc:  # the generator raises on some addresses; count it as a miss
             for tally in t.values():
@@ -396,12 +616,8 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
         def miss(game, predicted):
             return lambda: f"{r.label()}: game {game!r}, generator {predicted!r}"
 
-        if "seed" in d:
-            game_seed = int(d["seed"], 16)
-            t["seed"].add(game_seed & MASK32 == prng & MASK32, miss(d["seed"], f"{prng:016X}"))
-            t["seed64"].add(game_seed == prng, miss(d["seed"], f"{prng:016X}"))
-        if d.get("name"):
-            t["name"].add(d["name"] == name, miss(d["name"], name))
+        if r.display_name:
+            t["name"].add(r.display_name == name, miss(r.display_name, name))
         star = NAMEGEN_STAR.get(r.name("star", "star") or "")
         t["star"].add(None if star is None else star == attrs["star_type"], miss(star, attrs["star_type"]))
         race_name = r.name("race", "race")
@@ -439,7 +655,7 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
                     ga["prime"] == attrs["prime_planet_count"], miss(ga["prime"], attrs["prime_planet_count"])
                 )
             if "seeds" in ga:
-                predicted_seeds = [f"{s & 0xFFFFFFFFFFFFFFFF:016X}" for s in seeds["planet_seeds"]]
+                predicted_seeds = [f"{s & MASK64:016X}" for s in seeds["planet_seeds"]]
                 t["seeds"].add(ga["seeds"] == predicted_seeds, miss(ga["seeds"], predicted_seeds))
             game_anomaly = _game_anomaly(r.name("anomaly", "anomaly", ga))
             predicted_anomaly = _namegen_anomaly(va, (code >> 32) & 0xFFF)
@@ -477,7 +693,13 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, CaptureFormatError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    lines = summary_lines(captures) + consistency_lines(captures, args.examples)
+    lines = (
+        summary_lines(captures)
+        + consistency_lines(captures, args.examples)
+        + ship_stream_lines(captures)
+        + trace_lines(captures)
+        + lookup_lines(captures)
+    )
     if args.namegen:
         lines += namegen_lines(captures, args.namegen, args.examples)
     print("\n".join(lines))
