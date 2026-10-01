@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 has recorded systems in the game, with NMS.py 180383.0. Later versions add hooks on the game's system generator and name generator (0.2 and 0.3), and hotkeys and sounds (0.4); none of that has run in the game yet. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Version 0.4.0 has run in the game too: all of its hooks, including the ones on the game's system generator and name generator, attached, and it recorded systems with no errors. Not yet confirmed in the game: the hotkeys and sounds, and the data those generator hooks record. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 

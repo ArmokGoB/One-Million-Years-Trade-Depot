@@ -717,8 +717,11 @@ class LabelTests(CaptureTestCase):
         self.assertEqual(self.sounds, ["squid"])
 
     def test_hotkeys_label_like_the_buttons(self):
-        for key, label in ((self.capture.squid_key, "squid"), (self.capture.not_squid_key, "not a squid")):
-            key()
+        keys = ((self.capture.squid_key, "squid", "F7"), (self.capture.not_squid_key, "not a squid", "F8"))
+        for key, label, name in keys:
+            with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+                key()
+            self.assertEqual(logs.output, [f"INFO:TradeDepotCapture:{name} pressed."])
             self.assertEqual(self.capture.status, f"Noting that the exotic here is {label}...")
             self.capture.on_frame()
         self.assertEqual([line["label"] for line in self.lines() if line["t"] == "label"],
@@ -737,7 +740,9 @@ class LabelTests(CaptureTestCase):
     def test_label_without_a_system(self):
         self.game.loaded = False
         self.capture.exotic_squid()
-        self.capture.on_frame()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture.on_frame()
+        self.assertIn("Couldn't note the exotic: no star system is loaded yet.", "\n".join(logs.output))
         self.assertEqual(self.lines(), [])
         self.assertEqual(self.capture.status, "No star system is loaded yet.")
         self.assertEqual(self.sounds, ["problem"])
@@ -989,7 +994,9 @@ class PollingTests(CaptureTestCase):
         self.assertEqual(self.sounds, ["recorded", "recorded"], "no arrival tone after a manual record")
 
     def test_record_key_records_like_the_button(self):
-        self.capture.record_key()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture.record_key()
+        self.assertEqual(logs.output, ["INFO:TradeDepotCapture:F6 pressed."])
         self.assertEqual(self.capture.status, "Recording the current system...")
         self.capture.on_frame()
         self.assertEqual(self.lines()[1]["via"], "btn")
@@ -998,7 +1005,10 @@ class PollingTests(CaptureTestCase):
     def test_record_button_without_a_system(self):
         self.game.loaded = False
         self.capture.record_now()
-        self.capture.on_frame()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture.on_frame()
+        expected = "INFO:TradeDepotCapture:Couldn't record: no star system is loaded yet."
+        self.assertEqual(logs.output, [expected])
         self.assertEqual(self.capture.status, "No star system is loaded yet.")
         self.assertEqual(self.sounds, ["problem"])
 
@@ -1076,8 +1086,20 @@ class SoundTests(unittest.TestCase):
                 self.assertIsNone(mod.play_sound("squid"))
             self.assertIsNone(mod.play_sound("no such sound"))
         with mock.patch.dict(sys.modules, {"winsound": None}):  # importing it fails, as off Windows
-            self.assertIsNone(mod.play_sound("squid"))
+            with mock.patch.object(mod.sys, "platform", "linux"), self.assertNoLogs("TradeDepotCapture"):
+                self.assertIsNone(mod.play_sound("squid"))
         play.assert_not_called()
+
+    def test_missing_winsound_on_windows_is_logged_once(self):
+        with (
+            mock.patch.object(mod, "_sound_failed", set()),
+            mock.patch.dict(sys.modules, {"winsound": None}),
+            mock.patch.object(mod.sys, "platform", "win32"),
+            self.assertLogs("TradeDepotCapture", "WARNING") as logs,
+        ):
+            self.assertIsNone(mod.play_sound("squid"))
+            self.assertIsNone(mod.play_sound("problem"))
+        self.assertEqual(sum("winsound module couldn't be loaded" in line for line in logs.output), 1)
 
 
 class HelperTests(unittest.TestCase):

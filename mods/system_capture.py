@@ -68,7 +68,7 @@ from pymhf import Mod
 from pymhf.core.hooking import on_key_release
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.4.0"
+MOD_VERSION = "0.4.1"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
 # (0.3.0 and 0.4.0 only add fields, record types and controls, so they keep format 2.)
@@ -781,7 +781,10 @@ def play_sound(name: str) -> threading.Thread | None:
         return None
     try:
         import winsound
-    except ImportError:  # not Windows
+    except ImportError:
+        if sys.platform == "win32" and "winsound" not in _sound_failed:  # only expected off Windows
+            _sound_failed.add("winsound")
+            logger.warning("No sounds: Python's winsound module couldn't be loaded.", exc_info=True)
         return None
 
     def run() -> None:
@@ -918,14 +921,17 @@ class TradeDepotCapture(Mod):
 
     @on_key_release(HOTKEYS["record"])
     def record_key(self):
+        logger.info("%s pressed.", key_name("record"))
         self.record_now()
 
     @on_key_release(HOTKEYS["squid"])
     def squid_key(self):
+        logger.info("%s pressed.", key_name("squid"))
         self.exotic_squid()
 
     @on_key_release(HOTKEYS["not a squid"])
     def not_squid_key(self):
+        logger.info("%s pressed.", key_name("not a squid"))
         self.exotic_not_squid()
 
     # --- Game hooks ---
@@ -1110,6 +1116,7 @@ class TradeDepotCapture(Mod):
         """Write a label line for the loaded system. True if its ship list has an exotic to pair with."""
         active = active_system()
         if active is None:
+            logger.info("Couldn't note the exotic: no star system is loaded yet.")
             self._status = "No star system is loaded yet."
             return False
         record = snapshot(active[0])
@@ -1181,6 +1188,7 @@ class TradeDepotCapture(Mod):
         if active is None:
             self._last_seen = None
             if requested:
+                logger.info("Couldn't record: no star system is loaded yet.")
                 self._status = "No star system is loaded yet."
                 play_sound("problem")
             return
