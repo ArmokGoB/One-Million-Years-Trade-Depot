@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Type-check, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  parity:
+    name: Parity with the Python reference (nms_namegen)
+    runs-on: ubuntu-latest
+    env:
+      # Bump deliberately, after checking what changed upstream.
+      NMS_NAMEGEN_COMMIT: 52ad48affaa4089c8f487a470a888dc9b7a650aa
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Fetch nms_namegen at the pinned commit
+        run: |
+          git init -q nms_namegen
+          git -C nms_namegen fetch -q --depth 1 https://github.com/hadsh/nms_namegen "$NMS_NAMEGEN_COMMIT"
+          git -C nms_namegen checkout -q FETCH_HEAD
+          python -m pip install -q "numpy~=2.4"
+      - name: Check the generated data files are up to date
+        run: |
+          python tools/build_name_tables.py --namegen nms_namegen
+          python tools/convert_golden_vectors.py --namegen nms_namegen
+          git diff --exit-code -- src/core/data tests/fixtures
+      - name: Generate 20,000 reference cases
+        run: python tools/crosscheck/generate.py --namegen nms_namegen --count 20000 > crosscheck.jsonl
+      - run: npm ci
+      - name: Compare the TypeScript port against them
+        run: CROSSCHECK_FILE=crosscheck.jsonl npx vitest run tests/crosscheck.test.ts

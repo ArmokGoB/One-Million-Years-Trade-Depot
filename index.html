@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>One Million Years Trade Depot</title>
+    <meta
+      name="description"
+      content="Look up any No Man's Sky star system from its portal address: name, region, star colour, faction, economy, conflict and planets. Free and open source."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#12163a" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2312163a'/%3E%3Cpath d='M16 4l3 9 9 3-9 3-3 9-3-9-9-3 9-3z' fill='%23f4c542'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div class="page">
+      <header class="masthead">
+        <p class="masthead__name">One Million Years Trade Depot</p>
+        <h1 class="masthead__lede">Look up any No Man's Sky star system from its portal address.</h1>
+        <p class="masthead__sub">
+          Everything is worked out in your browser from the address alone, the same way the game generates it.
+          Ships and multi-tools are next.
+        </p>
+      </header>
+
+      <main>
+        <form class="lookup" id="lookup" novalidate>
+          <div class="lookup__field lookup__field--address">
+            <label class="lookup__label" for="address">Portal address or signal-booster coordinates</label>
+            <input
+              class="lookup__input lookup__input--address"
+              id="address"
+              name="address"
+              type="text"
+              inputmode="text"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+              placeholder="003DF8F87945"
+              aria-describedby="address-hint lookup-error"
+              required
+            />
+            <p class="lookup__hint" id="address-hint">12 hex digits, or X:Y:Z:system like 025B:0082:03FF:004A.</p>
+          </div>
+          <div class="lookup__field lookup__field--galaxy">
+            <label class="lookup__label" for="galaxy">Galaxy</label>
+            <input
+              class="lookup__input lookup__input--galaxy"
+              id="galaxy"
+              name="galaxy"
+              type="number"
+              inputmode="numeric"
+              min="0"
+              max="255"
+              step="1"
+              value="0"
+              aria-describedby="galaxy-hint lookup-error"
+              required
+            />
+            <p class="lookup__hint" id="galaxy-hint">0 is Euclid.</p>
+          </div>
+          <button class="lookup__submit" type="submit">Look up system</button>
+          <p class="lookup__error" id="lookup-error" role="alert" hidden></p>
+        </form>
+
+        <section class="result" id="result" aria-live="polite" hidden></section>
+      </main>
+
+      <footer class="colophon">
+        <p>
+          Fan-made and not affiliated with Hello Games. System data comes from a TypeScript port of
+          <a href="https://github.com/hadsh/nms_namegen">nms_namegen</a> by Stuart Coyle, had.sh and GoodGuysFree (MIT).
+        </p>
+        <p>
+          Free software under the GNU AGPL v3 or later.
+          <a href="https://github.com/ArmokGoB/One-Million-Years-Trade-Depot">Read or change the source code</a>.
+        </p>
+      </footer>
+    </div>
+    <script type="module" src="/src/web/main.ts"></script>
+  </body>
+</html>

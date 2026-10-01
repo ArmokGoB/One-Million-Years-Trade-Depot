@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+__pycache__/
+*.pyc
+# Large differential-test output from tools/crosscheck/generate.py
+*.jsonl

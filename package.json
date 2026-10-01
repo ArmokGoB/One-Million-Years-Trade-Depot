@@ -1,0 +1,28 @@
+{
+  "name": "one-million-years-trade-depot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Free, open-source No Man's Sky lookup: what a star system holds, computed from its portal address.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
+    "@fontsource/big-shoulders-stencil-display": "^5.3.0"
+  }
+}
