@@ -476,6 +476,35 @@ class HelperTests(unittest.TestCase):
         )
 
 
+class LauncherTests(unittest.TestCase):
+    """The checks run by ``py -3.13 system_capture.py`` before pyMHF starts the game."""
+
+    PYTHON_ORG = r"C:\Users\player\AppData\Local\Programs\Python\Python313"
+    # Paths from a real failed run with the Microsoft Store build.
+    STORE_ALIAS = (
+        r"C:\Users\player\AppData\Local\Microsoft\WindowsApps"
+        r"\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe"
+    )
+    STORE_PREFIX = (
+        r"C:\Program Files\WindowsApps"
+        r"\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0"
+    )
+
+    def test_python_org_install_passes(self):
+        problems = mod.launcher_problems(self.PYTHON_ORG + r"\python.exe", (self.PYTHON_ORG,), 8)
+        self.assertEqual(problems, [])
+
+    def test_microsoft_store_python_is_stopped_with_a_fix(self):
+        for executable in (self.STORE_ALIAS, self.PYTHON_ORG + r"\python.exe"):
+            (problem,) = mod.launcher_problems(executable, (self.STORE_PREFIX,), 8)
+            self.assertIn("Microsoft Store version of Python", problem)
+            self.assertIn("python.org", problem)
+
+    def test_32_bit_python_is_stopped(self):
+        (problem,) = mod.launcher_problems(self.PYTHON_ORG + r"\python.exe", (self.PYTHON_ORG,), 4)
+        self.assertIn("32-bit", problem)
+
+
 class ReportTests(CaptureTestCase):
     def capture_systems(self) -> list:
         self.game.generate(self.capture)

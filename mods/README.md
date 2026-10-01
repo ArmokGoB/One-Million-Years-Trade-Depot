@@ -9,16 +9,22 @@ The mod only reads. It changes nothing in the game or your save, and it runs on 
 ## What you need
 
 - A Windows PC with No Man's Sky on Steam.
-- Python 3.13, 64-bit, from [python.org](https://www.python.org/downloads/windows/). NMS.py doesn't support Python 3.14 yet, and its author advises against the Microsoft Store build.
+- Python 3.13, 64-bit, from python.org: the [3.13.16 release page](https://www.python.org/downloads/release/python-31316/) has a "Windows installer (64-bit)". NMS.py doesn't support Python 3.14 yet.
+- **Not** the Microsoft Store version of Python. The game can't load it; pyMHF stops with `DLL load failed while importing _socket: Access is denied`, and the mod refuses to start with it.
 - NMS.py for your game version. After a game update the mod stops working until NMS.py catches up; update it with `py -3.13 -m pip install --upgrade nmspy`.
 
 ## Install (once)
 
-In a terminal (Windows Terminal or Command Prompt):
+1. If you have Python 3.13 from the Microsoft Store, uninstall it first: Settings → Apps → Installed apps → Python 3.13 → Uninstall.
+2. Run the python.org installer with its default options, which include the `py` launcher.
+3. In a terminal (Windows Terminal or Command Prompt):
 
-```bat
-py -3.13 -m pip install nmspy
-```
+   ```bat
+   py -0p
+   py -3.13 -m pip install nmspy
+   ```
+
+   `py -0p` lists the Pythons the launcher can see. The 3.13 entry should point to a folder like `AppData\Local\Programs\Python\Python313`, not to anything under `WindowsApps`.
 
 Then download [`system_capture.py`](system_capture.py) into a folder of its own, or clone this repository.
 
