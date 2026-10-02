@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Version 0.4.0 has run in the game too: all of its hooks attached, the generation traces and names it recorded check out, and its arrival tone plays. Not yet tried in the game: the hotkeys, what 0.5.0 adds (locators, and generation steps inside lookups), and 0.5.1's fix for attaching to a game that's already running. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0 and 0.5.0 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Not yet tried in the game: the hotkeys, and 0.5.1's fix for attaching to a game that's already running. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -94,7 +94,7 @@ One JSON object per line. A `"t": "session"` line starts each run of the game an
 | `bodies` | Planet generation inputs: seed, biome, size, resources and flags per planet |
 | `galaxy` | The galaxy generator's view of the same system: planet seeds, star attributes and region data |
 | `trace` | `gen` records: the generator's random-number state at the start and end of each generation step |
-| `keyAttributes` | The galaxy generator's summary that generation starts from: planet counts, the safe start planet, flags, and four bytes (`anomaly`) not yet understood. Only when the game runs that step for the system, which it didn't for any system generated in the 0.4.0 capture |
+| `keyAttributes` | The galaxy generator's summary that generation starts from: planet counts, the safe start planet, flags, and four bytes (`anomaly`) not yet understood. Only when the game runs that step for the system, which it hasn't for any generated or looked-up system so far |
 | `locators` | `gen` records: the system's locators, spawn points the generator places: `count`, and the whole array, compressed and base64-encoded, in `raw`. Most of the random numbers drawn between the planet biomes and the ships seem to go to these |
 | `raw`, `rawGalaxy` | `gen` records: all of the generated system data and of the galaxy attributes, zlib-compressed and base64-encoded, for offline analysis |
 | `arg`, `active`, `sim`, `loc` | Cross-checks: the seed the game passed in, whether the system was the loaded one, the simulation's address and the player's location |
@@ -106,7 +106,7 @@ Three other kinds of line:
 - `"t": "name"`: a planet or region name the game generated, with the seed it was generated from (`kind`, `seed`, `name`; `local` if the shown text differs), and the system you were in at the time. Each seed is recorded once per session.
 - `"t": "label"`: an exotic sighting you labelled with F7, F8 or the buttons, with the system and its exotic's seed.
 
-[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts and lists the exotic labels. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated.
+[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts and lists the exotic labels. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated, and checks the ship seeds that [`ship_model.py`](../tools/captures/ship_model.py) predicts from each system's address.
 
 ```sh
 python3 tools/captures/report.py mods/captures/systems.jsonl

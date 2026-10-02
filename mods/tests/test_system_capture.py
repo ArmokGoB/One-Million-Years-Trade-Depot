@@ -40,6 +40,8 @@ _spec = importlib.util.spec_from_file_location("capture_report", ROOT / "tools" 
 report = importlib.util.module_from_spec(_spec)
 sys.modules["capture_report"] = report
 _spec.loader.exec_module(report)
+import game_rng  # noqa: E402  (tools/captures is on the path once report.py is loaded)
+import ship_model  # noqa: E402
 
 # Portal 03E9F3545C3E in galaxy 1 (Hilbert Dimension), planet digit 0. In the
 # game a system's seed is its universal address.
@@ -1448,6 +1450,60 @@ class ReportTests(CaptureTestCase):
         self.assertIn("Ship seeds in the system seed's random-number stream", text)
 
 
+class ShipModelTests(unittest.TestCase):
+    """tools/captures/ship_model.py; the report checks it against real captures."""
+
+    Body = ship_model.Body
+
+    def test_ship_seeds_follow_the_layout_the_report_finds(self):
+        seeds, crash = ship_model.ship_seeds(UA, 123)
+        found = report.locate_ship_stream(UA, [f"{s:016X}" for s in seeds], f"{crash:016X}", 1000)
+        self.assertEqual(
+            (found.offset, found.found, found.layout), (123, 50, ["ships 0-41", "crash ship", "ships 42-49"])
+        )
+
+    def test_prime_planets_have_no_attractors(self):
+        system = [self.Body(0, -1, True), self.Body(3, 0, True), self.Body(2, -1, True)]
+        self.assertEqual(ship_model.ships_start(UA, system), 38 + 3)
+
+    def test_attractor_draws_around_a_lone_planet(self):
+        # Written out step by step: four draws per attempt, and a fifth unless the distance
+        # draw puts the attractor within 500 of the planet.
+        draws = game_rng.Stream(UA)
+        for _ in range(38):
+            draws.word()
+        expected = 38 + 1
+        for _ in range(30 + draws.below(36)):
+            draws.unit(), draws.unit()
+            too_close = draws.unit() * 40000 < 500
+            draws.word()
+            expected += 4
+            if not too_close:
+                draws.word()
+                expected += 1
+        self.assertEqual(ship_model.ships_start(UA, [self.Body(1, -1, False)]), expected + 3)
+
+    def test_draw_count_for_a_planet_with_a_moon_is_pinned(self):
+        Body = self.Body
+        system = [Body(1, -1, False), Body(0, -1, False), Body(3, 1, False), Body(2, -1, True)]
+        self.assertEqual(ship_model.ships_start(UA, system), 676)
+
+    def test_moon_positions(self):
+        planet, moon = self.Body(0, -1, False), self.Body(3, 0, False)
+        self.assertEqual(ship_model.moon_offsets([planet, moon]), {1: (225792.0, 0.0, 0.0)})
+        pair = ship_model.moon_offsets([planet, moon, moon])
+        for offset in pair.values():
+            self.assertAlmostEqual(math.dist((0, 0, 0), offset), 225792.0, places=3)
+        self.assertAlmostEqual(pair[1][1], 112896.0, places=3)
+        self.assertAlmostEqual(pair[2][1], -112896.0, places=3)
+
+    def test_two_moon_planets_are_flagged_unless_all_prime(self):
+        two = [self.Body(0, -1, False), self.Body(3, 0, False), self.Body(3, 0, False)]
+        self.assertIn("two moons", ship_model.uncertainty(two))
+        self.assertIsNone(ship_model.uncertainty([b._replace(prime=True) for b in two]))
+        self.assertIsNone(ship_model.uncertainty(two[:2]))
+
+
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")
 class NamegenComparisonTests(CaptureTestCase):
     """Systems built from nms_namegen's own predictions must score 100% in the report."""
@@ -1536,6 +1592,35 @@ class NamegenComparisonTests(CaptureTestCase):
         self.assertRegex(text, r"taking the seed before mixing\s+1/1\s+100.0%")
         self.assertRegex(text, r"taking the seed after mixing\s+0/1 ")
         self.assertRegex(text, r"region names that are the loaded system's region\s+1/1\s+100.0%")
+
+    def test_bodies_follow_the_generator(self):
+        sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
+        from nms_namegen.system import planetSeeds
+
+        for code, galaxy in self.ADDRESSES:
+            ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
+            system = ship_model.bodies(ua)  # raises if its draws stray from planetSeeds'
+            self.assertEqual(len(system), len(planetSeeds(code, galaxy)["planet_seeds"]))
+            for body in system:
+                self.assertIn(body.size, ship_model.BASE_RADIUS)
+                if body.parent >= 0:  # moons orbit large planets
+                    self.assertEqual((body.size, system[body.parent].size), (3, 0))
+
+    def test_predicted_ships_are_scored(self):
+        prediction = ship_model.predict(UA)
+        self.game.set_ships([(seed, FIGHTER, 0, 1, 0, "") for seed in prediction.ships])
+        self.game.system.mSolarSystemData.SentinelCrashSiteShipSeed.Seed = prediction.crash
+        self.game.generate(self.capture)
+        other = (0x079 << 40) | (0x00F3545C3E)
+        self.game.set_address(other)
+        self.game.fill(other, "Elsewhere")  # keeps the 50 ships, which aren't this system's
+        self.game.generate(mod.TradeDepotCapture())
+        text = "\n".join(
+            report.ship_model_lines(report.read_captures([mod.CAPTURE_FILE]), Path(os.environ["NMS_NAMEGEN"]))
+        )
+        self.assertIn("03E9F3545C3E galaxy 1 Abarof-Dulin: all 50 ships and the crashed ship match", text)
+        self.assertIn("079F3545C3E galaxy 0 Elsewhere: 0/50 ships match", text)
+        self.assertIn("1 of 2 systems: every ship seed and the crashed ship's match", text)
 
 
 if __name__ == "__main__":
