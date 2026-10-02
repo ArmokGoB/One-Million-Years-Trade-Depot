@@ -86,7 +86,8 @@
     "8E7111657DE0369F",
     "0955F3C7C31F8076"
    ],
-   "crash": "22BBDAEA3B23DE3C"
+   "crash": "22BBDAEA3B23DE3C",
+   "others": []
   },
   {
    "what": "Korvax, a planet with one moon",
@@ -178,7 +179,8 @@
     "F9921348C31AEEDF",
     "0CED447FB67327A7"
    ],
-   "crash": "6D9652F9E94336D2"
+   "crash": "6D9652F9E94336D2",
+   "others": []
   },
   {
    "what": "Vy'keen, a planet with two moons",
@@ -217,7 +219,7 @@
     ]
    ],
    "start": 1172,
-   "uncertain": "a planet with two moons, whose layout isn't known yet",
+   "uncertain": "a planet with two moons, which the game arranges in one of two ways",
    "ships": [
     "4070AA1B6B08AF43",
     "8C79BE4D399FC990",
@@ -270,7 +272,14 @@
     "E6C7809B3FA9F1EB",
     "E4837D78662F00F9"
    ],
-   "crash": "4398B1975CA42AA8"
+   "crash": "4398B1975CA42AA8",
+   "others": [
+    {
+     "start": 1188,
+     "exotic": "3DD25F00226F19D0",
+     "crash": "E4837D78662F00F9"
+    }
+   ]
   },
   {
    "what": "uncharted",
@@ -304,7 +313,7 @@
     ]
    ],
    "start": 954,
-   "uncertain": "a planet with two moons, whose layout isn't known yet",
+   "uncertain": "a planet with two moons, which the game arranges in one of two ways",
    "ships": [
     "950CF231B4EF3706",
     "31D42DD977009D17",
@@ -357,7 +366,14 @@
     "9F05F2A30C77FDE8",
     "C81B8E010990BA42"
    ],
-   "crash": "C16060EA5D5BFC9E"
+   "crash": "C16060EA5D5BFC9E",
+   "others": [
+    {
+     "start": 896,
+     "exotic": "73A88478F298B71F",
+     "crash": "A9BD26A12CB6B87A"
+    }
+   ]
   },
   {
    "what": "abandoned",
@@ -429,7 +445,8 @@
     "6DF87C4743CAE43F",
     "ED9D23B7647CC5FD"
    ],
-   "crash": "FDB3F7E075CFB0CA"
+   "crash": "FDB3F7E075CFB0CA",
+   "others": []
   },
   {
    "what": "a prime planet with moons",
@@ -511,7 +528,8 @@
     "DE8DE58C235672CD",
     "25EC6ECFA1FCB156"
    ],
-   "crash": "BD09131C4238380B"
+   "crash": "BD09131C4238380B",
+   "others": []
   },
   {
    "what": "six bodies",
@@ -603,7 +621,8 @@
     "C4A0622B1991C847",
     "B1415893EDC134A3"
    ],
-   "crash": "ED8CD079324DDDA6"
+   "crash": "ED8CD079324DDDA6",
+   "others": []
   },
   {
    "what": "purple star",
@@ -680,13 +699,70 @@
     "EEC17CE56CAC5FB9",
     "AF979A95AA78F9E4"
    ],
-   "crash": "D9B1FB1C229E802D"
+   "crash": "D9B1FB1C229E802D",
+   "others": []
   },
   {
    "what": "gas giant layout",
    "code": "03F4A398F6A8",
    "galaxy": 0,
-   "ships": null
+   "bodies": [],
+   "start": 41,
+   "uncertain": null,
+   "ships": [
+    "42C0455DE34C1EF2",
+    "C19B431D4EF930E0",
+    "2FDFC9F0EAE6B03B",
+    "E6DD9E2762C80D78",
+    "FE59B119BCC9589A",
+    "B7993A84B28E5D74",
+    "D21347734E93944F",
+    "40B47193581021EA",
+    "392F43B45D5DD11B",
+    "8D488614CAB35381",
+    "1BD2D431DABF205C",
+    "201BA996344D0F8E",
+    "BF387C5E0567FB53",
+    "CA19584EDAEF9EAD",
+    "8B7F26E9BB06995B",
+    "69A49C84B1B8E8C2",
+    "FB1269A9F4B1C734",
+    "CA712BC69D1AD5A0",
+    "BC81A0D734A2C35C",
+    "880D850627FDD475",
+    "D50C9DCC9E5B2827",
+    "60DD14239484FD75",
+    "AF7478BB0844D8A7",
+    "752132E6F3EA902E",
+    "434C708312306096",
+    "81B0129188080848",
+    "8B66CA50C66E575C",
+    "B74B2FAA85FB853B",
+    "0E4CD25D6425B052",
+    "B3D947340ACC3D3F",
+    "CBF322EBA8E6213B",
+    "AF761332954A5582",
+    "62C84A59334CED8E",
+    "3AF537D3AC624DA0",
+    "2272DAF2BA0C923B",
+    "C9882ACA06D760D6",
+    "2FD7232EFB0878E0",
+    "BB73B830A9C7C0EC",
+    "453B3BD0A2802C83",
+    "1D04F7C115BE9D6A",
+    "0BA4805F456DCD08",
+    "E66CC2E409AF982D",
+    "5E2BFFA6CD743636",
+    "250485245423312D",
+    "B139368A52491459",
+    "90905C768A96D86B",
+    "80E6B810A828E853",
+    "0171E73AFC0FCB67",
+    "C9BCA37FAF0903CF",
+    "1F5BD721E68ABAD2"
+   ],
+   "crash": "6659EB20C29FD9E4",
+   "others": []
   },
   {
    "what": "another galaxy, with a planet digit",
@@ -773,7 +849,117 @@
     "70C4D661D87A610E",
     "0325D2780472AB24"
    ],
-   "crash": "9F6559FBFFCD6F7F"
+   "crash": "9F6559FBFFCD6F7F",
+   "others": []
+  },
+  {
+   "what": "two planets with two moons each",
+   "code": "02C1F025FEE6",
+   "galaxy": 8,
+   "bodies": [
+    [
+     0,
+     -1,
+     false
+    ],
+    [
+     3,
+     0,
+     false
+    ],
+    [
+     3,
+     0,
+     false
+    ],
+    [
+     0,
+     -1,
+     false
+    ],
+    [
+     3,
+     3,
+     false
+    ],
+    [
+     3,
+     3,
+     false
+    ]
+   ],
+   "start": 1406,
+   "uncertain": "two planets with two moons each, which the game arranges in one of two ways",
+   "ships": [
+    "3A5C86C6958476D2",
+    "1C21818A00B9C012",
+    "1BD9266104070A60",
+    "DDD4BE9736E03F70",
+    "DF004EA9C7A94806",
+    "395CF9B38FE2BA0B",
+    "8C3B0A484F0B804B",
+    "00590E1980CB7A87",
+    "8CCBA92D6EAEA11C",
+    "BCED315C132507AA",
+    "F4939EA7753B6C8B",
+    "3C0F2921CB6953E6",
+    "35D91CB9613BD289",
+    "8B707ADA45E7D0C7",
+    "017E0683407F1FC5",
+    "70666AA372978096",
+    "6E43DC4A934DA6CA",
+    "9500122E9ABE5B02",
+    "DEE0A88C0CA3CB4A",
+    "597BE480F1A5A1FC",
+    "AA5DF360DBB3A87E",
+    "51F999432B0B7187",
+    "E2696B7D2C631837",
+    "02132013CB9A8560",
+    "680869D3B29CC85B",
+    "F61D035873BE0641",
+    "6153309CD31CEABE",
+    "84645868FB9C15DE",
+    "9C51DB18AFB1C641",
+    "B3364F71A2293555",
+    "4F7455955916F1E8",
+    "5F4C6819C150BC1F",
+    "F43586830E8272A8",
+    "52D2957A856F6F80",
+    "B02998097A7EDE77",
+    "5AF912F393E9AAF5",
+    "36C0CB2ABDC31ED8",
+    "DFC1DF2D00F90969",
+    "B0A01991D50639CA",
+    "1A423E280523F149",
+    "F8D22555F6E92656",
+    "4AF7104BFBBF3D62",
+    "7F516BBED2A175E4",
+    "2BEC9351E4198AF5",
+    "D9467080884D70C4",
+    "0675458AB0E05852",
+    "D29B34C36D5E2076",
+    "0F697317C835DDF0",
+    "646F1BD16113B9EA",
+    "FFC943C9D1019B82"
+   ],
+   "crash": "A9DB785EBAC885B2",
+   "others": [
+    {
+     "start": 1553,
+     "exotic": "7B3B0C1597D32BED",
+     "crash": "469FBA3673D0F54F"
+    },
+    {
+     "start": 1368,
+     "exotic": "1C21818A00B9C012",
+     "crash": "02132013CB9A8560"
+    },
+    {
+     "start": 1100,
+     "exotic": "7D147003C6A80EED",
+     "crash": "6A1E1FC9BC8DC51A"
+    }
+   ]
   }
  ]
 }

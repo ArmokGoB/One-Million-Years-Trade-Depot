@@ -16,6 +16,8 @@ export {
   shipSeeds,
   shipUncertainty,
   slotTypes,
+  twoMoonPlanets,
+  type Alternative,
   type Ship,
   type ShipGroup,
   type ShipPool,

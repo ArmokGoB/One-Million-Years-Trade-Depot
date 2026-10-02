@@ -39,8 +39,8 @@ interface Case {
   moon_count?: number;
   sizes?: number[];
   body_names?: string[];
-  /** tools/captures/ship_model.py's prediction; null for a gas giant layout. */
-  ships?: Maybe<ShipCase | null>;
+  /** tools/captures/ship_model.py's prediction. */
+  ships?: Maybe<ShipCase>;
 }
 interface ShipCase {
   bodies: [number, number, boolean][];
@@ -50,12 +50,13 @@ interface ShipCase {
   exotic: string;
   crash: string;
   last: string;
+  /** [start, exotic, crash] for each other arrangement of a two-moon planet's moons. */
+  others: [number, string, string][];
 }
 
 /** The port's ship pool in the shape generate.py writes, key order included. */
-function shipCase(code: bigint, galaxy: number): ShipCase | null {
+function shipCase(code: bigint, galaxy: number): ShipCase {
   const pool = shipPool(code, galaxy);
-  if (!pool) return null;
   return {
     bodies: planetSeeds(withPlanet(code, 0), galaxy).bodies.map((b) => [b.size, b.parent, b.prime]),
     start: pool.drawsBeforeShips,
@@ -64,6 +65,7 @@ function shipCase(code: bigint, galaxy: number): ShipCase | null {
     exotic: hex64(pool.exotic),
     crash: hex64(pool.crashSite),
     last: hex64(pool.ships[49]!.seed),
+    others: pool.alternatives.map((a) => [a.drawsBeforeShips, hex64(a.exotic), hex64(a.crashSite)]),
   };
 }
 
@@ -104,7 +106,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
       }
       if (c.ships !== undefined) {
         same(c.ships, () => shipCase(code, c.galaxy), `${tag} ships`, mismatches);
-        if (c.ships !== null && !isErr(c.ships)) shipPools += 1;
+        if (!isErr(c.ships)) shipPools += 1;
       }
     }
     expect(lines.length).toBeGreaterThan(0);

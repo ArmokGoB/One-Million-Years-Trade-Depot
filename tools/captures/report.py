@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import sys
 from collections import Counter
@@ -862,24 +863,27 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
     import ship_model
 
     lines = ["", "Ship seeds predicted from the address alone (tools/captures/ship_model.py)"]
-    matched = checked = 0
+    matched = other = checked = 0
     misses: Counter[str] = Counter()
     for r in sorted(captures.representative_by_system().values(), key=lambda r: (r.galaxy, r.portal)):
         ships, crash = r.data.get("ships"), r.data.get("crashShip")
         if not ships or not crash:
             continue
-        prediction = ship_model.predict(r.ua & ~PLANET_BITS)
-        if prediction is None:
-            lines.append(f"  {r.label()}: not modelled (gas giant layout)")
-            continue
         checked += 1
         game = [int(row[0], 16) for row in ships]
-        same = sum(a == b for a, b in zip(prediction.ships, game))
-        if same == len(game) == len(prediction.ships) and prediction.crash == int(crash, 16):
+        predictions = ship_model.predictions(r.ua & ~PLANET_BITS)
+        hits = [i for i, p in enumerate(predictions) if p.ships == game and p.crash == int(crash, 16)]
+        prediction = predictions[0]
+        if hits == [0]:
             matched += 1
             note = f" (flagged: {prediction.uncertain})" if prediction.uncertain else ""
             lines.append(f"  {r.label()}: all {len(game)} ships and the crashed ship match{note}")
             continue
+        if hits:
+            other += 1
+            lines.append(f"  {r.label()}: all {len(game)} ships and the crashed ship match the other moon arrangement")
+            continue
+        same = sum(a == b for a, b in zip(prediction.ships, game))
         found = locate_ship_stream(r.ua, [row[0] for row in ships], crash, STREAM_LIMIT)
         where = f"after {found.offset} draws" if found.offset is not None else "elsewhere"
         reason = prediction.uncertain or "not explained by the model"
@@ -889,10 +893,46 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
             f"draws, the game drew them {where} ({reason})"
         )
     if checked:
-        summary = f"  {matched} of {checked} systems: every ship seed and the crashed ship's match"
+        summary = f"  {matched} of {checked} systems: every ship seed and the crashed ship's match the model's first guess"
+        if other:
+            summary += f"; {other} more match the other way of arranging a planet's two moons"
         if misses:
             summary += "; misses: " + ", ".join(f"{n} with {reason}" for reason, n in misses.most_common())
         lines.append(summary)
+    return lines
+
+
+def moon_layout_lines(captures: Captures, namegen: Path, examples: int) -> list[str]:
+    """Which way round each two-moon planet's moons are, wherever a record holds the bodies' positions."""
+    sys.path.insert(0, str(namegen.resolve()))
+    import ship_model
+
+    sources = [(r.ua & ~PLANET_BITS, r.data.get("positions")) for r in captures.records]
+    sources += [(int(q["seed"], 16) & ~PLANET_BITS, q.get("positions")) for q in captures.queries if q.get("seed")]
+    ways: Counter[str] = Counter()
+    odd: list[str] = []
+    seen: set[int] = set()
+    for ua, positions in sources:
+        if not positions or ua in seen:
+            continue
+        seen.add(ua)
+        system = ship_model.bodies(ua)
+        if not system or len(positions) < len(system):
+            continue
+        for planet in ship_model.two_moon_planets(system):
+            first = next(k for k, body in enumerate(system) if body.parent == planet)
+            x, _, z = (a - b for a, b in zip(positions[first], positions[planet]))
+            azimuth = math.degrees(math.atan2(z, x)) % 360
+            if min(azimuth, 360 - azimuth) < 1:
+                ways["first moon at azimuth 0 (the model's first guess)"] += 1
+            elif abs(azimuth - math.degrees(ship_model.GOLDEN_ANGLE)) < 1:
+                ways["first moon at 137.5 degrees"] += 1
+            else:
+                ways["neither"] += 1
+                odd.append(f"{ua:016X} planet {planet}: first moon at azimuth {azimuth:.2f}")
+    lines = ["", f"Two-moon planets whose moons' positions were recorded: {sum(ways.values())}"]
+    lines += [f"  {way}: {n}" for way, n in ways.most_common()]
+    lines += [f"    {line}" for line in odd[:examples]]
     return lines
 
 
@@ -924,6 +964,7 @@ def main(argv: list[str] | None = None) -> int:
         lines += namegen_lines(captures, args.namegen, args.examples)
         lines += name_lines(captures, args.namegen, args.examples)
         lines += ship_model_lines(captures, args.namegen)
+        lines += moon_layout_lines(captures, args.namegen, args.examples)
     print("\n".join(lines))
     return 0
 

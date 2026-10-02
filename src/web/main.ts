@@ -17,6 +17,7 @@ import {
   parseAnyAddress,
   parseGalaxy,
   SHIP_ACCURACY,
+  SOLAR_COUNTS,
   type ShipGroup,
   type ShipsInfo,
   type SystemDescription,
@@ -103,37 +104,34 @@ function shipTable(ships: ShipsInfo): HTMLTableElement {
   return table;
 }
 
+/** A seed in the key, with the seeds it would be if the system's two-moon planets were arranged otherwise. */
+function keySeed(seed: string, others: string[]): HTMLElement {
+  const dd = el("dd", "seed", seed);
+  if (others.length) dd.append(el("span", "manifest__note", `or ${others.join(" or ")}, with the moons the other way round`));
+  return dd;
+}
+
 function shipsSection(d: SystemDescription): HTMLElement {
-  const heading = el("h3", "result__heading", "Ships");
-  if (!d.ships) {
-    return el(
-      "section",
-      "result__section",
-      heading,
-      el(
-        "p",
-        "result__aside",
-        "Not predicted for gas giant systems yet: the model doesn't cover how the game lays out " +
-          "their planets, which decides where the ship seeds fall in its random numbers.",
-      ),
-    );
-  }
   const ships = d.ships;
+  const { matched, recorded } = SHIP_ACCURACY;
   const intro = el(
     "p",
     "result__aside",
     `Predicted from the address alone, by a model of the game's generator worked out from ` +
-      `${SHIP_ACCURACY.recorded} systems recorded in game. It gets every ship's seed right in ` +
-      `${SHIP_ACCURACY.matched} of them.`,
+      `${recorded} systems recorded in game. It gets every ship's seed right in ${matched} of them. ` +
+      `The other ${count(recorded - matched)} each have a planet with two moons, which the game arranges in one ` +
+      `of two ways, and match once they're the other way round.`,
   );
-  const { matched, recorded } = SHIP_ACCURACY.twoMoons;
+  const { firstGuess, recorded: twoMoonSystems } = SHIP_ACCURACY.twoMoons;
   const warning = ships.uncertain
     ? [
         el(
           "p",
           "result__warning",
-          `Less certain here: this system has ${ships.uncertain}. ` +
-            `Of the ${count(recorded)} recorded systems with one, the model gets ${count(matched)} right.`,
+          `Less certain here: this system has ${ships.uncertain}, and every seed depends on which. ` +
+            `The model can't tell yet. The list assumes the way that was right in ${count(firstGuess)} of the ` +
+            `${count(twoMoonSystems)} such systems recorded; the exotic and crash-site seeds for ` +
+            `${ships.alternatives.length > 1 ? "the other ways" : "the other way"} are given too.`,
         ),
       ]
     : [];
@@ -141,11 +139,25 @@ function shipsSection(d: SystemDescription): HTMLElement {
   const key = el("dl", "manifest manifest--ships");
   key.append(
     el("dt", undefined, "Exotic"),
-    el("dd", "seed", ships.exotic),
+    keySeed(
+      ships.exotic,
+      ships.alternatives.map((a) => a.exotic),
+    ),
     el("dt", undefined, "Sentinel crash-site ship"),
-    el("dd", "seed", ships.crashSite),
+    keySeed(
+      ships.crashSite,
+      ships.alternatives.map((a) => a.crashSite),
+    ),
   );
 
+  const [shuttleSolar, shuttleSlots] = SOLAR_COUNTS.shuttle;
+  const [outlawSolar, outlawSlots] = SOLAR_COUNTS.outlawShuttle;
+  const [otherSolar, otherSlots] = SOLAR_COUNTS.outlawOther;
+  const solar = d.pirate
+    ? `In outlaw systems like this one, ${outlawSolar} of the ${outlawSlots} shuttle slots recorded held a solar ` +
+      `ship, and so did ${otherSolar} of the ${otherSlots} other civilian slots.`
+    : `Outside outlaw systems, ${shuttleSolar} of the ${shuttleSlots} shuttle slots recorded held a solar ship, ` +
+      `and no other slot did.`;
   const all = el(
     "details",
     "ships-all",
@@ -157,12 +169,13 @@ function shipsSection(d: SystemDescription): HTMLElement {
         "Not every slot is a ship you can meet there: it holds a frigate of every type, including types " +
         "whose only known frigates are expedition rewards. " +
         "Only the civilian slots vary: how many haulers, fighters and explorers depends on the dominant race, " +
-        "and the game picks between a shuttle and a solar ship in a way not worked out yet.",
+        "and the game makes some of them solar ships in a way not worked out yet. " +
+        solar,
     ),
     shipTable(ships),
   );
 
-  return el("section", "result__section", heading, intro, ...warning, key, all);
+  return el("section", "result__section", el("h3", "result__heading", "Ships"), intro, ...warning, key, all);
 }
 
 function render(d: SystemDescription): void {

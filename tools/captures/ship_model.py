@@ -18,14 +18,19 @@ ships:
 4. The ships: each seed mixes the next two draws, 50 ships with the crashed
    Sentinel ship's seed drawn between ships 41 and 42.
 
-The planets' sizes, moons and prime flags come from nms_namegen. A moon sits
-225,792 from its parent; a lone moon along +x. Where a planet has two moons
-the layout varies in ways not worked out yet: predictions for those systems
-use the one layout seen so far and are flagged as uncertain.
+The planets' sizes, moons and prime flags come from nms_namegen. Every body
+of a purple system is a prime planet or moon, gas giant layouts included, so
+none of them has attractors. A moon sits 225,792 from its parent; a lone
+moon along +x. A planet's two moons sit at +30 and -30 degrees of elevation,
+the first above, at azimuths 0 and 137.5 degrees (the golden angle), but
+which of them gets which azimuth varies in a way not worked out yet. So a
+system whose planets aren't prime and have two moons can come out one of
+two ways per such planet: predictions() gives them all, first moon at 0 first.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 from typing import NamedTuple
 
@@ -121,21 +126,21 @@ def bodies(ua: int) -> list[Body] | None:
     return found
 
 
-def moon_offsets(system: list[Body]) -> dict[int, tuple[float, float, float]]:
-    """Each moon's position relative to its parent."""
+def moon_offsets(system: list[Body], swapped: frozenset[int] = frozenset()) -> dict[int, tuple[float, float, float]]:
+    """Each moon's position relative to its parent. For the planets in ``swapped``, the two moons
+    take each other's azimuth."""
     moons: dict[int, list[int]] = {}
     for k, body in enumerate(system):
         if body.parent >= 0:
             moons.setdefault(body.parent, []).append(k)
     offsets = {}
-    for siblings in moons.values():
+    for parent, siblings in moons.items():
         if len(siblings) == 1:
             offsets[siblings[0]] = (MOON_DISTANCE, 0.0, 0.0)
             continue
-        # The one two-moon layout seen so far; another system's differed.
         for j, k in enumerate(siblings):
             elevation = math.radians(30.0 if j % 2 == 0 else -30.0)
-            azimuth = j * GOLDEN_ANGLE
+            azimuth = ((j + (parent in swapped)) % 2) * GOLDEN_ANGLE
             offsets[k] = (
                 MOON_DISTANCE * math.cos(elevation) * math.cos(azimuth),
                 MOON_DISTANCE * math.sin(elevation),
@@ -144,18 +149,25 @@ def moon_offsets(system: list[Body]) -> dict[int, tuple[float, float, float]]:
     return offsets
 
 
+def two_moon_planets(system: list[Body]) -> list[int]:
+    """The planets that aren't prime and have two moons, whose arrangement the model can't tell."""
+    return [k for k, body in enumerate(system) if not body.prime and [b.parent for b in system].count(k) == 2]
+
+
 def uncertainty(system: list[Body]) -> str | None:
     """Why a prediction for this system may be wrong, if a known gap in the model applies."""
-    for k, body in enumerate(system):
-        family = [k] + [j for j, other in enumerate(system) if other.parent == k]
-        if len(family) > 2 and not all(system[j].prime for j in family):
-            return "a planet with two moons, whose layout isn't known yet"
+    planets = len(two_moon_planets(system))  # at most two: a system has six bodies at most
+    if planets == 1:
+        return "a planet with two moons, which the game arranges in one of two ways"
+    if planets:
+        return "two planets with two moons each, which the game arranges in one of two ways"
     return None
 
 
-def ships_start(ua: int, system: list[Body]) -> int:
-    """How many draws the generator makes before the first ship's."""
-    offsets = moon_offsets(system)
+def ships_start(ua: int, system: list[Body], swapped: frozenset[int] = frozenset()) -> int:
+    """How many draws the generator makes before the first ship's, with the two moons of the
+    planets in ``swapped`` the other way round."""
+    offsets = moon_offsets(system, swapped)
 
     def obstacles(k: int) -> list[tuple[tuple[float, float, float], float]]:
         """Bodies near enough to planet k to block its attractors: (center relative to k, clearance)."""
@@ -199,11 +211,23 @@ def ship_seeds(ua: int, start: int) -> tuple[list[int], int]:
     return seeds, crash
 
 
-def predict(ua: int) -> Prediction | None:
-    """The ship seeds of the system at universal address ``ua``, or None if its layout isn't modelled."""
-    system = bodies(ua)
-    if system is None:
-        return None
-    start = ships_start(ua, system)
-    ships, crash = ship_seeds(ua, start)
-    return Prediction(start, ships, crash, uncertainty(system))
+def predictions(ua: int) -> list[Prediction]:
+    """Every way the ships of the system at universal address ``ua`` can come out: one per
+    arrangement of its two-moon planets' moons, first moon at azimuth 0 first."""
+    # nms_namegen doesn't lay out a gas giant system's bodies, but it only occurs in purple
+    # systems, whose bodies are all prime planets and moons: none has attractors.
+    system = bodies(ua) or []
+    planets = two_moon_planets(system)
+    found = []
+    for flips in itertools.product((False, True), repeat=len(planets)):
+        swapped = frozenset(k for k, flip in zip(planets, flips) if flip)
+        start = ships_start(ua, system, swapped)
+        ships, crash = ship_seeds(ua, start)
+        found.append(Prediction(start, ships, crash, uncertainty(system)))
+    return found
+
+
+def predict(ua: int) -> Prediction:
+    """The ship seeds of the system at universal address ``ua``, the model's first guess where
+    a planet has two moons."""
+    return predictions(ua)[0]
