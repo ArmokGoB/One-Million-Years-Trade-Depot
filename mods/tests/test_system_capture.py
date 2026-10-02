@@ -352,10 +352,10 @@ class WiringTests(CaptureTestCase):
     def test_mod_registers_hooks_callback_and_gui(self):
         expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
         expected |= {name for pair in STEPS for name in pair}
-        expected.add("before_add_resource")
+        expected |= {"before_add_resource", "before_item_update"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 11)
+        self.assertEqual(len(self.capture._gui_widgets), 12)
 
     def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
         hook = mod.TradeDepotCapture.before_add_resource
@@ -765,7 +765,9 @@ EXOTIC_MODEL = "MODELS/COMMON/SPACECRAFT/S-CLASS/S-CLASS_PROC.SCENE.MBIN"
 CRASH_SEED = 0x0102030405060708  # the system's SentinelCrashSiteShipSeed in Game.fill
 
 
-class ModelTests(CaptureTestCase):
+class ModelHelpers:
+    """Builds models through the AddResource detour; mixed into CaptureTestCase subclasses."""
+
     def descriptor(self, seed: int, parts: list[str], seed2: int = 0, count=None, pointer=None):
         """A cTkResourceDescriptor in fake memory, with ``parts`` as its part IDs."""
         descriptor = self.game._alloc(nms.cTkResourceDescriptor)
@@ -804,6 +806,8 @@ class ModelTests(CaptureTestCase):
         self.poll()
         return [line for line in self.lines() if line["t"] == "model"]
 
+
+class ModelTests(ModelHelpers, CaptureTestCase):
     def test_parts_of_the_systems_ships_are_recorded_once(self):
         self.game.generate(self.capture)  # the mod reads the system's ship list
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
@@ -1020,6 +1024,193 @@ class ModelTests(CaptureTestCase):
         self.assertIn("0 of 1 exotic seeds agree", text)
         disagrees = "disagrees: 03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001, first draw 0.853393"
         self.assertIn(disagrees, text)
+
+
+MULTITOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/MULTITOOL.SCENE.MBIN"
+TOOL_SEED = 0x7A11C0DE5EED0001  # a multi-tool the game offers
+OWN_TOOL_SEED = 0x0123456789ABCDEF  # one the player carries
+SPACE_STATION = 2  # EnvironmentLocation
+
+
+class ToolTests(ModelHelpers, CaptureTestCase):
+    def setUp(self):
+        super().setUp()
+        self.game.generate(self.capture)  # a system is loaded
+        self.place(SPACE_STATION, 1)
+
+    def place(self, where: int, planet: int) -> None:
+        """Where the player is, in the simulation's player environment."""
+        base = ctypes.addressof(self.game.simulation)
+        ctypes.c_uint32.from_address(base + mod.LAYOUT.player_where).value = where
+        ctypes.c_int32.from_address(base + mod.LAYOUT.player_planet).value = planet
+
+    def item(self, seeds=(), item_type=3, handle=77, offset=0x200, gift=False):
+        """A cGcPurchaseableItem in fake memory holding ``seeds`` from ``offset`` on, 16 bytes apart."""
+        item = self.game._alloc(nms.cGcPurchaseableItem)
+        item.mePurchaseState = 1
+        item.mItemType = item_type
+        item.mItemResource.miInternalHandle = handle
+        item.mbIsGift = gift
+        for i, seed in enumerate(seeds):
+            ctypes.memmove(ctypes.addressof(item) + offset + 16 * i, seed.to_bytes(8, "little"), 8)
+        return ctypes.pointer(item)
+
+    def items(self) -> list[dict]:
+        self.poll()
+        return [line for line in self.lines() if line["t"] == "item"]
+
+    def test_hook_watches_the_items_the_game_offers(self):
+        hook = mod.TradeDepotCapture.before_item_update
+        self.assertEqual(hook._hook_func_name, "cGcPurchaseableItem.Update")
+        self.assertEqual(hook._hook_time, DetourTime.BEFORE)
+        self.assertEqual(hook._hook_pattern, nms.cGcPurchaseableItem.Update._signature)
+        argtypes = hook._hook_func_def.argtypes
+        self.assertEqual(len(argtypes), 4)  # (this, time step) and two the function never reads
+        self.assertEqual(argtypes[0], ctypes.POINTER(nms.cGcPurchaseableItem))
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"])
+        self.assertIsNone(self.capture.before_item_update(self.item([TOOL_SEED]), 0.016, 0, 0))
+        self.assertEqual(len(self.items()), 1)
+
+    def test_an_offered_multi_tool_is_recorded_with_its_seed_parts_and_place(self):
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A", "_HANDLE_B"])
+            self.capture._item_updated(self.item([TOOL_SEED], gift=True), now=100.0)
+        (record,) = self.items()
+        self.assertTrue(record.pop("raw"), "the first item of its kind keeps its bytes")
+        self.assertEqual(
+            {k: v for k, v in record.items() if k != "at"},
+            {
+                "t": "item",
+                "system": f"{UA:016X}",
+                "where": SPACE_STATION,
+                "planet": 1,
+                "loc": mod.player_location(),
+                "itemType": 3,
+                "state": 1,
+                "free": 0,
+                "gift": 1,
+                "reward": 0,
+                "tools": [
+                    {
+                        "name": MULTITOOL_MODEL,
+                        "type": 1,
+                        "seed": "7A11C0DE5EED0001",
+                        "useSeed": 1,
+                        "parts": ["_GUN_A", "_HANDLE_B"],
+                        "offset": 0x200,
+                    }
+                ],
+            },
+        )
+        text = "\n".join(logs.output)
+        self.assertIn(f"Model {MULTITOOL_MODEL}: a multi-tool's (2 parts), recorded only when an item", text)
+        recorded = "Recorded a multi-tool the game offers (seed 7A11C0DE5EED0001): "
+        self.assertIn(f"{recorded}{MULTITOOL_MODEL}: _GUN_A, _HANDLE_B", text)
+        self.assertEqual(self.sounds.count("multi-tool"), 1)
+        self.assertEqual(self.capture.multitools, "1")
+        self.assertEqual(self.capture.status, "Recorded a multi-tool the game offers here.")
+
+    def test_each_item_is_looked_at_once_a_second_and_each_offer_recorded_once(self):
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"])
+        item = self.item([TOOL_SEED])
+        reads = []
+        read = mod.read_memory
+        self._patch("read_memory", lambda address, size: reads.append(size) or read(address, size))
+        self.capture._item_updated(item, now=100.0)
+        self.capture._item_updated(item, now=100.5)  # not due yet: not even read
+        self.assertEqual(reads.count(mod.LAYOUT.item_size), 1)
+        self.capture._item_updated(item, now=101.5)  # done with this one
+        self.capture._item_updated(self.item([TOOL_SEED], handle=78), now=102.0)  # offered again
+        self.assertEqual(len(self.items()), 1)
+        self.assertEqual(self.sounds.count("multi-tool"), 1)
+
+    def test_an_item_waits_for_the_model_of_the_multi_tool_it_holds(self):
+        item = self.item([TOOL_SEED])
+        self.capture._item_updated(item, now=100.0)
+        self.assertEqual(self.items(), [])
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"])
+        self.capture._item_updated(item, now=101.0)
+        (record,) = self.items()
+        self.assertEqual([t["seed"] for t in record["tools"]], ["7A11C0DE5EED0001"])
+
+    def test_items_without_a_known_multi_tool_keep_their_bytes_for_the_first_few_of_a_kind(self):
+        items = [self.item(item_type=5, handle=h) for h in range(mod.RAW_ITEMS_PER_TYPE + 1)]
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            for item in items:
+                self.capture._item_updated(item, now=100.0)
+            self.assertEqual(self.items(), [], "each waits for a multi-tool's model first")
+            for item in items:
+                self.capture._item_updated(item, now=100.0 + mod.ITEM_WAIT_SECONDS)
+        records = self.items()
+        self.assertEqual(len(records), mod.RAW_ITEMS_PER_TYPE)
+        for record in records:
+            self.assertEqual((record["itemType"], record["tools"]), (5, []))
+            self.assertEqual(len(zlib.decompress(base64.b64decode(record["raw"]))), mod.LAYOUT.item_size)
+        said = [line for line in logs.output if "held none of the multi-tool seeds" in line]
+        self.assertEqual(len(said), 1)
+
+    def test_multi_tools_no_item_holds_are_never_written(self):
+        # Like the multi-tool the player carries: the game builds it, but no item on offer holds its seed.
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.build(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"])
+            self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"])
+            self.capture._item_updated(self.item([TOOL_SEED]), now=100.0)
+        self.items()
+        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        self.assertIn("7A11C0DE5EED0001", recorded)
+        for where in (recorded, "\n".join(logs.output)):
+            self.assertNotIn(f"{OWN_TOOL_SEED:016X}", where)
+            self.assertNotIn("_GUN_C", where)
+
+    def test_only_multi_tool_models_pair_with_items(self):
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])  # a ship of the system's list
+        self.build(MULTITOOL_MODEL, 5, ["_GUN_A"])  # a seed too small to look for in an item's bytes
+        item = self.item([0x1111111111111111, 5])
+        self.capture._item_updated(item, now=100.0)
+        self.capture._item_updated(item, now=100.0 + mod.ITEM_WAIT_SECONDS)
+        self.assertEqual([record["tools"] for record in self.items()], [[]])
+        self.assertTrue(mod.is_multitool_model(MULTITOOL_MODEL))
+        self.assertTrue(mod.is_multitool_model("MODELS\\COMMON\\WEAPONS\\SOMETHING.SCENE.MBIN"))
+        self.assertFalse(mod.is_multitool_model(FIGHTER_MODEL))
+
+    def test_seeds_are_found_at_any_four_byte_boundary(self):
+        raw = bytes(4) + (0x1122334455667788).to_bytes(8, "little") + bytes(20) + (9).to_bytes(8, "little")
+        self.assertEqual(mod.seeds_in(raw, {0x1122334455667788, 9}), [(4, 0x1122334455667788), (32, 9)])
+        self.assertEqual(mod.seeds_in(raw[:11], {0x1122334455667788}), [])
+
+    def test_turning_multi_tools_off_leaves_the_function_alone(self):
+        source = harness.MOD_PATH.read_text(encoding="utf-8")
+        self.assertIn("\nRECORD_MULTITOOLS = True\n", source)
+        path = Path(self._tmp.name) / "system_capture_without_tools.py"
+        path.write_text(source.replace("\nRECORD_MULTITOOLS = True\n", "\nRECORD_MULTITOOLS = False\n"))
+        spec = importlib.util.spec_from_file_location("system_capture_without_tools", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        capture = module.TradeDepotCapture()
+        self.assertNotIn("before_item_update", {hook.__name__ for hook in capture.hooks})
+        self.assertIn("before_add_resource", {hook.__name__ for hook in capture.hooks})
+        self.assertEqual(capture.multitools, "Off (RECORD_MULTITOOLS is False)")
+
+    def test_report_lists_the_multi_tools_offered(self):
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A", "_HANDLE_B"])
+        self.capture._item_updated(self.item([TOOL_SEED]), now=100.0)
+        other = self.item(item_type=5, handle=9)
+        self.capture._item_updated(other, now=100.0)
+        self.capture._item_updated(other, now=100.0 + mod.ITEM_WAIT_SECONDS)
+        self.items()
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        self.assertIn("2 offered item(s)", report.summary_lines(captures)[0])
+        text = "\n".join(report.item_lines(captures))
+        self.assertIn("Items the game offered: 2, 1 of them with a multi-tool (item types: 3 x1, 5 x1)", text)
+        self.assertIn(
+            "03E9F3545C3E galaxy 1 Abarof-Dulin, SpaceStation, nearest planet 1, item type 3: "
+            "MULTITOOL 7A11C0DE5EED0001 (at byte 0x200 of the item): _GUN_A _HANDLE_B",
+            text,
+        )
+        self.assertIn("multi-tools: 1; offered in more than one system: 0", text)
+        self.assertIn("items without a multi-tool, kept as raw bytes: 1", text)
 
 
 class LabelTests(CaptureTestCase):
