@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Version 0.4.0 has run in the game too: all of its hooks attached, the generation traces and names it recorded check out, and its arrival tone plays. Not yet tried in the game: the hotkeys, and what 0.5.0 adds (locators, and generation steps inside lookups). If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Version 0.4.0 has run in the game too: all of its hooks attached, the generation traces and names it recorded check out, and its arrival tone plays. Not yet tried in the game: the hotkeys, what 0.5.0 adds (locators, and generation steps inside lookups), and 0.5.1's fix for attaching to a game that's already running. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -30,14 +30,16 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
 
 ## Record systems
 
-1. Start Steam and close No Man's Sky.
+1. Start Steam. No Man's Sky can be closed or already running.
 2. In a terminal, in the folder with the mod:
 
    ```bat
    py -3.13 system_capture.py
    ```
 
-   This starts the game through Steam with the mod attached. Two extra windows open: a log console and the pyMHF panel, which has a **TradeDepotCapture** tab.
+   This starts the game through Steam with the mod attached, or attaches the mod to the game if it's already running. Two extra windows open: a log console and the pyMHF panel, which has a **TradeDepotCapture** tab.
+
+   Starting the game this way is better: the mod then sees how the system you load into is generated. A system that was generated before the mod attached gets recorded without those details.
 3. Load your save and play as usual. A few seconds after you arrive in a system, the mod plays two short rising notes, and the log shows a line like:
 
    ```text
@@ -45,6 +47,8 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
    ```
 
 4. Save and quit the game normally when you're done. Pressing Ctrl+C in the terminal closes the game too.
+
+   If you close the terminal window instead while the game keeps running, pyMHF stays inside the game until you quit it, and the mod can't attach again until then. It says so if you try.
 
 The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to `system_capture.py`. Each session adds to the same file.
 

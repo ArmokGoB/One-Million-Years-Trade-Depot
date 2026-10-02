@@ -47,6 +47,7 @@ import math
 import os
 import platform
 import re
+import socket
 import struct
 import sys
 import threading
@@ -68,10 +69,10 @@ from pymhf import Mod
 from pymhf.core.hooking import on_key_release
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.5.0"
+MOD_VERSION = "0.5.1"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.5.0 only add fields, record types and controls, so they keep format 2.)
+# (0.3.0 to 0.5.1 only add fields, record types and controls, so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
@@ -965,6 +966,24 @@ class TradeDepotCapture(Mod):
     # arguments, and one returned by an "after" detour as the function's
     # result, so every detour here deliberately returns nothing.
 
+    @nms.cGcApplication.Update.before
+    def find_application(self, this):
+        """Keep NMS.py's pointer to the game's application object set.
+
+        NMS.py learns it from the first state change of the game's state
+        machine after it loads. When the mod is attached to a game that is
+        already running, that may not happen for a long time, and until it
+        does the mod can't see the loaded system. The main loop runs on the
+        application object every frame, so take it from there.
+        """
+        try:
+            address = address_of(this)
+            current = gameData.GcApplication
+            if address and (current is None or ctypes.addressof(current) != address):
+                gameData.GcApplication = nms.cGcApplication.from_address(address)
+        except Exception:
+            self._report_once("application", "Couldn't find the game's application object.")
+
     @nms.cGcSolarSystem.Generate.before
     def before_generate(self, this, lbUseSettingsFile, lSeed):
         try:
@@ -1353,11 +1372,61 @@ def launcher_problems(
     return problems
 
 
+GAME_EXE = "NMS.exe"
+PYMHF_PORT = 6770  # pyMHF's code inside the game listens here for the launcher
+
+
+def port_taken(port: int = PYMHF_PORT) -> bool:
+    """True if a program on this computer is already listening on ``port``."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return True
+    return False
+
+
+def game_running(exe: str = GAME_EXE) -> bool:
+    try:
+        import psutil  # installed with pyMHF
+    except ImportError:
+        return False
+    try:
+        return any((p.info.get("name") or "").lower() == exe.lower() for p in psutil.process_iter(["name"]))
+    except Exception:  # a process vanishing mid-scan, access denied...
+        return False
+
+
+def attach_problems(running: bool, taken: bool) -> list[str]:
+    """Reasons attaching to the game now would go wrong, caught before pyMHF tries.
+
+    pyMHF attaches to a game that is already running, but it can't be inside
+    the game twice: a second copy loads the mod again alongside the first,
+    can't open its connection to the launcher, and the launcher waits for it
+    forever.
+    """
+    if not taken:
+        return []
+    if running:
+        return [
+            "pyMHF from an earlier run of the mod is already inside No Man's Sky. If that run's "
+            "terminal window is still open, keep using it. If you closed it, pyMHF stayed in the "
+            "game: save, quit the game, then start the mod again."
+        ]
+    return [
+        f"Another program is using port {PYMHF_PORT}, which pyMHF needs. Close any other pyMHF tool, "
+        "then start the mod again."
+    ]
+
+
 if __name__ == "__main__":
-    if problems := launcher_problems():
+    running = game_running()
+    if problems := launcher_problems() + attach_problems(running, port_taken()):
         lines = ["The Trade Depot capture mod can't start:", *(f"- {p}" for p in problems)]
         print("\n".join(lines), file=sys.stderr)
         raise SystemExit(1)
+    if running:
+        print("No Man's Sky is already running, so the mod will attach to it.")
 
     from pymhf import load_mod_file
 

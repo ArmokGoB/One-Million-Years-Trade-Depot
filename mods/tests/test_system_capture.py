@@ -17,6 +17,7 @@ import io
 import json
 import math
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -345,10 +346,16 @@ class WiringTests(CaptureTestCase):
 
     def test_mod_registers_hooks_callback_and_gui(self):
         expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
-        expected |= {name for pair in STEPS for name in pair}
+        expected |= {name for pair in STEPS for name in pair} | {"find_application"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
         self.assertEqual(len(self.capture._gui_widgets), 10)
+
+    def test_application_hook_targets_the_main_loop(self):
+        hook = mod.TradeDepotCapture.find_application
+        self.assertEqual(hook._hook_func_name, "cGcApplication.Update")
+        self.assertEqual(hook._hook_time, DetourTime.BEFORE)
+        self.assertEqual(hook._hook_pattern, nms.cGcApplication.Update._signature)
 
     def test_hotkeys_are_registered_on_key_release(self):
         keys = {f.__name__: (f._hotkey, f._hotkey_press) for f in self.capture._hotkey_funcs}
@@ -1102,6 +1109,55 @@ class PollingTests(CaptureTestCase):
         self.assertEqual(self.sounds, ["problem"])
 
 
+class ApplicationTests(CaptureTestCase):
+    """Attached to a game that was already running, NMS.py hasn't found the application object."""
+
+    def setUp(self):
+        super().setUp()
+        from nmspy.common import GameData
+
+        self.data = GameData()
+        self._patch("gameData", self.data)
+
+    def application(self):
+        app = self.game._alloc(nms.cGcApplication)
+        return app, ctypes.cast(ctypes.addressof(app), ctypes.POINTER(nms.cGcApplication))
+
+    def test_the_main_loop_supplies_the_application(self):
+        app, pointer = self.application()
+        self.assertIsNone(self.data.GcApplication)
+        self.assertIsNone(self.capture.find_application(pointer))
+        self.assertEqual(ctypes.addressof(self.data.GcApplication), ctypes.addressof(app))
+
+    def test_a_different_pointer_is_replaced_and_the_right_one_kept(self):
+        wrong, _ = self.application()
+        self.data.GcApplication = wrong
+        app, pointer = self.application()
+        self.capture.find_application(pointer)
+        kept = self.data.GcApplication
+        self.assertEqual(ctypes.addressof(kept), ctypes.addressof(app))
+        self.capture.find_application(pointer)
+        self.assertIs(self.data.GcApplication, kept)
+        self.capture.find_application(None)
+        self.assertIs(self.data.GcApplication, kept)
+
+    def test_the_loaded_system_is_seen_through_it(self):
+        self.poll()
+        self.poll()
+        self.assertEqual(self.lines(), [], "no application yet: no system")
+        data = self.game._alloc(nms.cGcApplication.Data)
+        data.mSimulation.mpSolarSystem = ctypes.cast(self.game.address, ctypes.POINTER(nms.cGcSolarSystem))
+        data.mSimulation.mCurrentUA = UA
+        app, pointer = self.application()
+        app.mpData = ctypes.pointer(data)
+        self.capture.find_application(pointer)
+        self.poll()
+        self.poll()
+        (record,) = [line for line in self.lines() if line["t"] == "sys"]
+        self.assertEqual((record["via"], record["ua"], record["sim"]), ("poll", f"{UA:016X}", f"{UA:016X}"))
+        self.assertEqual(self.sounds, ["recorded"])
+
+
 class SoundTests(unittest.TestCase):
     def fake_winsound(self, play):
         return types.SimpleNamespace(SND_MEMORY=4, SND_NODEFAULT=2, PlaySound=play)
@@ -1227,6 +1283,44 @@ class LauncherTests(unittest.TestCase):
     def test_32_bit_python_is_stopped(self):
         (problem,) = mod.launcher_problems(self.PYTHON_ORG + r"\python.exe", (self.PYTHON_ORG,), 4)
         self.assertIn("32-bit", problem)
+
+    def test_attaching_to_a_running_game_is_allowed(self):
+        self.assertEqual(mod.attach_problems(running=True, taken=False), [])
+        self.assertEqual(mod.attach_problems(running=False, taken=False), [])
+
+    def test_pymhf_left_inside_the_game_is_stopped_with_a_fix(self):
+        (problem,) = mod.attach_problems(running=True, taken=True)
+        self.assertIn("already inside No Man's Sky", problem)
+        self.assertIn("quit the game", problem)
+        (problem,) = mod.attach_problems(running=False, taken=True)
+        self.assertIn(f"port {mod.PYMHF_PORT}", problem)
+
+    def test_port_taken_sees_a_listening_program(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen()
+            port = server.getsockname()[1]
+            self.assertTrue(mod.port_taken(port))
+        self.assertFalse(mod.port_taken(port))
+
+    def test_game_running_looks_for_the_game_process(self):
+        def processes(*names):
+            listing = [types.SimpleNamespace(info={"name": name}) for name in names]
+            return types.SimpleNamespace(process_iter=lambda attrs: iter(listing))
+
+        def broken(attrs):
+            raise RuntimeError("access denied")
+
+        cases = [
+            (processes("steam.exe", "NMS.exe"), True),
+            (processes("steam.exe", "nms.exe"), True),
+            (processes("steam.exe", None), False),
+            (types.SimpleNamespace(process_iter=broken), False),
+            (None, False),  # psutil can't be imported
+        ]
+        for psutil, expected in cases:
+            with self.subTest(psutil=psutil), mock.patch.dict(sys.modules, {"psutil": psutil}):
+                self.assertIs(mod.game_running(), expected)
 
 
 class ReportTests(CaptureTestCase):
