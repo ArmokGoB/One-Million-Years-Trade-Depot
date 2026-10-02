@@ -1,6 +1,6 @@
 # Capture mod
 
-`system_capture.py` records every star system you visit in No Man's Sky, together with `SystemShips`: the list of ships the game prepares for that system (each ship's seed, type, role and faction). The project uses these records to work out how the game picks a system's ships from its address, the next step on the [roadmap](../README.md#roadmap).
+`system_capture.py` records every star system you visit in No Man's Sky, together with `SystemShips`: the list of ships the game prepares for that system (each ship's seed, type, role and faction). The project used these records to work out how the game picks a system's ship seeds from its address, which the site now shows, and uses them to check that model and, with exotics you label, to work out what a seed looks like: the next steps on the [roadmap](../README.md#roadmap).
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 

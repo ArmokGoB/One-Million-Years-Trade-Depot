@@ -28,6 +28,13 @@ export function swap16(x: bigint): bigint {
 export const MIX_A = 0x64dd81482cbd31d7n;
 export const MIX_B = 0xe36aa5c613612997n;
 
+/** The finaliser itself, applied to a 64-bit value. */
+export function mix64(value: bigint): bigint {
+  let register = (((value >> 33n) ^ value) * MIX_A) & MASK64;
+  register = (((register >> 33n) ^ register) * MIX_B) & MASK64;
+  return (register >> 33n) ^ register;
+}
+
 /** Index into an array with Python semantics: negative indices count from the end. */
 export function pyIndex<T>(arr: readonly T[], i: number): T {
   const j = i < 0 ? arr.length + i : i;

@@ -6,7 +6,8 @@ tests/crosscheck.test.ts replays the file against the TypeScript port when
 CROSSCHECK_FILE points at it. Unlike the 443 golden vectors, this covers
 every planet digit, all 256 galaxies, and the system indices where the
 generator branches (guide stars, black hole, Atlas Interface, the purple
-window, the ends of the range).
+window, the ends of the range). Each case also carries the ship pool that
+tools/captures/ship_model.py predicts, which builds on nms_namegen.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -34,6 +35,8 @@ def main() -> int:
     args = parser.parse_args()
 
     sys.path.insert(0, str(args.namegen.resolve()))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "captures"))
+    import ship_model  # noqa: E402
     from nms_namegen.planet import planetName  # noqa: E402
     from nms_namegen.region import regionName, voxelAttributes  # noqa: E402
     from nms_namegen.system import planetSeeds, systemAttributes, systemName  # noqa: E402
@@ -66,6 +69,22 @@ def main() -> int:
         except Exception as exc:  # the port must fail on exactly the same inputs
             return f"ERR:{type(exc).__name__}"
 
+    def ships(code, galaxy):
+        """The predicted ship pool, compactly: enough to pin every seed (they are consecutive draws)."""
+        ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
+        prediction = ship_model.predict(ua)
+        if prediction is None:
+            return None
+        return {
+            "bodies": [[b.size, b.parent, b.prime] for b in ship_model.bodies(ua)],
+            "start": prediction.start,
+            "uncertain": prediction.uncertain,
+            "first": f"{prediction.ships[0]:016X}",
+            "exotic": f"{prediction.ships[20]:016X}",
+            "crash": f"{prediction.crash:016X}",
+            "last": f"{prediction.ships[-1]:016X}",
+        }
+
     out = sys.stdout
     for _ in range(args.count):
         code, galaxy = random_case()
@@ -78,6 +97,7 @@ def main() -> int:
             "planet": guarded(planetName, code, galaxy),
             "sysattr": guarded(systemAttributes, code, galaxy),
             "voxel": guarded(voxelAttributes, code),
+            "ships": guarded(ships, code, galaxy),
         }
         if isinstance(seeds, dict):
             rec["seeds"] = [f"{s & 0xFFFFFFFFFFFFFFFF:016X}" for s in seeds["planet_seeds"]]

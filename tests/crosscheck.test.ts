@@ -16,9 +16,11 @@ import {
   planetNameFromSeed,
   planetSeeds,
   regionName,
+  shipPool,
   systemAttributes,
   systemName,
   voxelAttributes,
+  withPlanet,
 } from "../src/core";
 
 const path = process.env.CROSSCHECK_FILE;
@@ -37,6 +39,32 @@ interface Case {
   moon_count?: number;
   sizes?: number[];
   body_names?: string[];
+  /** tools/captures/ship_model.py's prediction; null for a gas giant layout. */
+  ships?: Maybe<ShipCase | null>;
+}
+interface ShipCase {
+  bodies: [number, number, boolean][];
+  start: number;
+  uncertain: string | null;
+  first: string;
+  exotic: string;
+  crash: string;
+  last: string;
+}
+
+/** The port's ship pool in the shape generate.py writes, key order included. */
+function shipCase(code: bigint, galaxy: number): ShipCase | null {
+  const pool = shipPool(code, galaxy);
+  if (!pool) return null;
+  return {
+    bodies: planetSeeds(withPlanet(code, 0), galaxy).bodies.map((b) => [b.size, b.parent, b.prime]),
+    start: pool.drawsBeforeShips,
+    uncertain: pool.uncertain,
+    first: hex64(pool.ships[0]!.seed),
+    exotic: hex64(pool.exotic),
+    crash: hex64(pool.crashSite),
+    last: hex64(pool.ships[49]!.seed),
+  };
 }
 
 const isErr = (v: unknown): v is string => typeof v === "string" && v.startsWith("ERR:");
@@ -56,6 +84,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
   it("matches on every case", () => {
     const lines = readFileSync(path!, "utf8").split("\n").filter(Boolean);
     const mismatches: string[] = [];
+    let shipPools = 0;
     for (const line of lines) {
       const c = JSON.parse(line) as Case;
       const code = parsePortalCode(c.code);
@@ -73,8 +102,13 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
         same(c.sizes!, () => s.sizes, `${tag} sizes`, mismatches);
         same(c.body_names!, () => s.planet_seeds.map(planetNameFromSeed), `${tag} body names`, mismatches);
       }
+      if (c.ships !== undefined) {
+        same(c.ships, () => shipCase(code, c.galaxy), `${tag} ships`, mismatches);
+        if (c.ships !== null && !isErr(c.ships)) shipPools += 1;
+      }
     }
     expect(lines.length).toBeGreaterThan(0);
+    expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
     expect(mismatches.slice(0, 20)).toEqual([]);
-  });
+  }, 300_000); // 20,000 cases take seconds, mostly the ship pools
 });
