@@ -134,24 +134,11 @@ class SystemRecord:
 
 
 @dataclass
-class Label:
-    """An exotic sighting the player labelled, and the session (index into Captures.sessions) it's from."""
-
-    data: dict
-    session: int
-
-    @property
-    def ua(self) -> int:
-        return int(self.data.get("ua") or "0", 16) or int(self.data.get("seed") or "0", 16)
-
-
-@dataclass
 class Captures:
     sessions: list[Session] = field(default_factory=list)
     records: list[SystemRecord] = field(default_factory=list)
     queries: list[dict] = field(default_factory=list)
     names: list[dict] = field(default_factory=list)
-    labels: list[Label] = field(default_factory=list)
     models: list[dict] = field(default_factory=list)
     # Items the game offered (multi-tools on racks and at merchants, gifts, rewards), with their session.
     items: list[tuple[dict, Session]] = field(default_factory=list)
@@ -217,8 +204,6 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                     captures.queries.append(obj)
                 elif kind == "name":
                     captures.names.append(obj)
-                elif kind == "label":
-                    captures.labels.append(Label(obj, len(captures.sessions) - 1))
                 elif kind == "model":
                     captures.models.append(obj)
                 elif kind == "item":
@@ -272,7 +257,7 @@ def summary_lines(captures: Captures) -> list[str]:
     lines = [
         f"{len(files)} file(s), {len(captures.sessions)} session(s), "
         f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s), "
-        f"{len(captures.names)} name(s), {len(captures.labels)} exotic label(s), "
+        f"{len(captures.names)} name(s), "
         f"{len(captures.models)} ship model(s), {len(captures.items)} offered item(s)"
     ]
     builds = Counter(
@@ -609,46 +594,6 @@ def lookup_lines(captures: Captures) -> list[str]:
 
 def _portal_label(ua: int) -> str:
     return f"{(ua >> 52) & 0xF:X}{(ua >> 40) & 0xFFF:03X}{ua & MASK32:08X} galaxy {(ua >> 32) & 0xFF}"
-
-
-def final_labels(captures: Captures) -> list[Label]:
-    """One label per system per session: the last, since pressing the other key corrects a mistake."""
-    last: dict[tuple[int, int], Label] = {}
-    for label in captures.labels:
-        key = (label.session, label.ua & ~PLANET_BITS)
-        last.pop(key, None)  # so the list stays in the order of each system's last label
-        last[key] = label
-    return list(last.values())
-
-
-def label_lines(captures: Captures) -> list[str]:
-    """Exotic sightings the player labelled, against each system's one exotic seed."""
-    if not captures.labels:
-        return []
-    labels = final_labels(captures)
-    counts = Counter(label.data.get("label") for label in labels)
-    heading = (
-        f"Exotic sightings labelled: {len(labels)} ("
-        + ", ".join(f"{k} {n}" for k, n in counts.most_common())
-        + ")"
-    )
-    if replaced := len(captures.labels) - len(labels):
-        heading += f"; {replaced} earlier label(s) replaced by a later one for the same system and session"
-    lines = ["", heading]
-    by_seed: dict[str, set[str]] = {}
-    for label in labels:
-        exotic = label.data.get("exotic") or []
-        name = label.data.get("displayName") or "(unnamed)"
-        lines.append(
-            f"  {_portal_label(label.ua)} {name}: {label.data.get('label')} "
-            f"({', '.join(exotic) if exotic else 'no exotic in the ship list'})"
-        )
-        for seed in exotic:
-            by_seed.setdefault(seed, set()).add(label.data.get("label"))
-    conflicts = sorted(seed for seed, kinds in by_seed.items() if len(kinds) > 1)
-    if conflicts:
-        lines.append("  labelled both ways in different sessions: " + ", ".join(conflicts))
-    return lines
 
 
 def _model_file(name: str) -> str:
@@ -1101,7 +1046,6 @@ def main(argv: list[str] | None = None) -> int:
         + ship_stream_lines(captures)
         + trace_lines(captures)
         + lookup_lines(captures)
-        + label_lines(captures)
         + model_lines(captures)
         + item_lines(captures)
     )
