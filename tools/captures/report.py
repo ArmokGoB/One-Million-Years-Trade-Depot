@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Summarise capture files written by mods/system_capture.py.
 
-Prints what was recorded (systems, ship pools, exotics); checks the game's
-data against itself, which is where a struct layout that no longer matches
-the game shows up first; and finds each system's ship seeds in the game's
-random-number stream seeded by the system seed. Given a path to
-nms_namegen, it also measures how often the generator behind the site
-agrees with the game.
+Prints what was recorded (systems, ship pools, exotics, and the parts the
+game picked for the ships it built); checks the game's data against itself,
+which is where a struct layout that no longer matches the game shows up
+first; and finds each system's ship seeds in the game's random-number stream
+seeded by the system seed. Given a path to nms_namegen, it also measures how
+often the generator behind the site agrees with the game.
 
 Usage:
     python3 tools/captures/report.py mods/captures/systems.jsonl
@@ -149,6 +149,7 @@ class Captures:
     queries: list[dict] = field(default_factory=list)
     names: list[dict] = field(default_factory=list)
     labels: list[Label] = field(default_factory=list)
+    models: list[dict] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -213,6 +214,8 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                     captures.names.append(obj)
                 elif kind == "label":
                     captures.labels.append(Label(obj, len(captures.sessions) - 1))
+                elif kind == "model":
+                    captures.models.append(obj)
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -262,7 +265,8 @@ def summary_lines(captures: Captures) -> list[str]:
     lines = [
         f"{len(files)} file(s), {len(captures.sessions)} session(s), "
         f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s), "
-        f"{len(captures.names)} name(s), {len(captures.labels)} exotic label(s)"
+        f"{len(captures.names)} name(s), {len(captures.labels)} exotic label(s), "
+        f"{len(captures.models)} ship model(s)"
     ]
     builds = Counter(
         (s.header.get("exe") or "unknown", s.header.get("steamBuild") or "?", s.header.get("nmspy") or "?")
@@ -640,6 +644,53 @@ def label_lines(captures: Captures) -> list[str]:
     return lines
 
 
+def _model_file(name: str) -> str:
+    """A model's file name without its folders and extensions: FIGHTER_PROC."""
+    return name.replace("\\", "/").rsplit("/", 1)[-1].split(".", 1)[0] or "(unnamed)"
+
+
+def model_lines(captures: Captures) -> list[str]:
+    """Ship models the game built, with the parts it picked, against their systems' ship lists."""
+    if not captures.models:
+        return []
+    systems = captures.representative_by_system()
+    files = Counter(_model_file(model.get("name") or "") for model in captures.models)
+    lines = [
+        "",
+        f"Ship models recorded with their parts: {len(captures.models)} ("
+        + ", ".join(f"{name} {n}" for name, n in files.most_common())
+        + ")",
+    ]
+    if errors := sum(1 for model in captures.models if model.get("errors")):
+        lines.append(f"  with read errors: {errors}")
+    kinds: Counter = Counter()
+    unmatched = 0
+    exotics: list[tuple[SystemRecord, dict]] = []
+    for model in captures.models:
+        record = systems.get(int(model.get("system") or "0", 16) & ~PLANET_BITS)
+        slot = model.get("slot")
+        ships = (record.data.get("ships") or []) if record is not None else []
+        if record is not None and slot == "crash" and record.data.get("crashShip") == model.get("seed"):
+            kinds["Sentinel crash-site ship"] += 1
+            continue
+        if not isinstance(slot, int) or not 0 <= slot < len(ships) or ships[slot][0] != model.get("seed"):
+            unmatched += 1
+            continue
+        name = record.session.name("shipClass", ships[slot][2])
+        kinds[SHIP_LABELS.get(name or "", name or f"class {ships[slot][2]}")] += 1
+        if name == "Royal":
+            exotics.append((record, model))
+    if kinds:
+        lines.append("  by ship type: " + ", ".join(f"{kind} {n}" for kind, n in kinds.most_common()))
+    if unmatched:
+        lines.append(f"  not found in a recorded system's ship list: {unmatched}")
+    lines.append(f"  exotics: {len(exotics)}")
+    for record, model in exotics:
+        parts = " ".join(model.get("parts") or []) or "(no parts)"
+        lines.append(f"    {record.label()}: {model.get('seed')} {parts}")
+    return lines
+
+
 def _region_name_candidates(seed: int) -> dict[str, str | None]:
     """The region name nms_namegen would make if the game's seed were each stage of its regionName()."""
     from nms_namegen.generator import generateName
@@ -959,6 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
         + trace_lines(captures)
         + lookup_lines(captures)
         + label_lines(captures)
+        + model_lines(captures)
     )
     if args.namegen:
         lines += namegen_lines(captures, args.namegen, args.examples)
