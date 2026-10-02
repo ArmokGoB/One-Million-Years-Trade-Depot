@@ -13,7 +13,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 - The ship list the game builds for the system: 50 slots, each with its seed and type, the exotic's included, plus the seed the game keeps for the ship at its Sentinel crash sites. Not every slot is a ship you can meet there: the list has a frigate of every type, including Recon and Cursed, whose only known frigates (the SSV Normandy SR1 and the Ship of the Damned) are expedition rewards.
 - A shareable link for every lookup
 
-It accepts a 12-digit portal address (`003DF8F87945`) or signal-booster coordinates (`025B:0082:03FF:004A`), plus a galaxy number (0 is Euclid).
+It accepts a 12-digit portal address (`009A039BAE4B`) or signal-booster coordinates (`064A:0082:01B9:009A`), plus a galaxy number (0 is Euclid). Both examples are the Pilgrim Star, which the site shows until you look up another system.
 
 How often each field matches what players recorded in game, measured by nms_namegen against 1,000 hand-recorded post-Origins systems (2026-08-23):
 
