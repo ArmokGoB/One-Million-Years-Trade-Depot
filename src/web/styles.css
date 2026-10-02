@@ -278,6 +278,9 @@ a:hover {
   font-size: var(--step--1);
   color: var(--ink-muted);
 }
+.manifest__note + .manifest__note {
+  margin-top: 0.25rem;
+}
 
 .swatch {
   display: inline-block;
@@ -362,6 +365,10 @@ a:hover {
 
 .manifest--ships {
   margin-top: 1.25rem;
+}
+
+.result__aside.ships__squids {
+  margin: 1rem 0 0;
 }
 
 .ships-all {

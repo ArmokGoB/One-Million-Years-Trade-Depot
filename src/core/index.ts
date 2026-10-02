@@ -12,15 +12,19 @@ export { MULTIPLIER, PRNG } from "./prng";
 export { regionName } from "./region";
 export {
   drawsBeforeShips,
+  exoticSquid,
+  firstDraw,
   shipPool,
   shipSeeds,
   shipUncertainty,
   slotTypes,
+  SQUID_EDGES,
   twoMoonPlanets,
   type Alternative,
   type Ship,
   type ShipGroup,
   type ShipPool,
+  type SquidCall,
 } from "./ships";
 export {
   planetSeeds,

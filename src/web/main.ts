@@ -18,8 +18,11 @@ import {
   parseGalaxy,
   SHIP_ACCURACY,
   SOLAR_COUNTS,
+  SQUID_CHECKS,
+  SQUID_EDGES,
   type ShipGroup,
   type ShipsInfo,
+  type SquidCall,
   type SystemDescription,
 } from "../core";
 
@@ -119,6 +122,58 @@ function keySeed(seed: string, others: string[]): HTMLElement {
   return dd;
 }
 
+/** Whether an exotic is a squid, as running text reads it: "probably" where its seed is too close to call. */
+function squidPhrase(call: SquidCall): string {
+  const verdict = call.squid ? "a squid" : "not a squid";
+  return call.close ? `probably ${verdict}` : verdict;
+}
+
+/** How many exotics in one fall where the line between squids and the rest could still be, roughly. */
+const closeOdds = Math.round(2 ** 32 / (SQUID_EDGES.squid - SQUID_EDGES.notSquid - 1) / 100) * 100;
+
+/**
+ * The exotic in the key: whether it's a squid, then its seed, for each way
+ * the system's two-moon planets can have their moons arranged.
+ */
+function exoticEntry(ships: ShipsInfo): HTMLElement {
+  const calls = [ships.exoticSquid, ...ships.alternatives.map((a) => a.exoticSquid)];
+  const [first, ...others] = calls.map(squidPhrase);
+  let verdict = first === "a squid" ? "Squid" : first!.charAt(0).toUpperCase() + first!.slice(1);
+  if (others.length) {
+    const different = [...new Set(others)].filter((phrase) => phrase !== first);
+    verdict += different.length
+      ? `, or ${different.join(" or ")} with the moons ${others.length > 1 ? "another" : "the other"} way round`
+      : ", whichever way round the moons are";
+  }
+
+  const seeds = el("span", "manifest__note", "Seed ", el("span", "seed", ships.exotic));
+  if (ships.alternatives.length) {
+    seeds.append(`, or ${ships.alternatives.map((a) => a.exotic).join(" or ")} with the moons the other way round`);
+  }
+  const dd = el("dd", undefined, verdict, seeds);
+
+  const close = calls.filter((call) => call.close).length;
+  if (close) {
+    const which =
+      close === calls.length
+        ? calls.length === 1
+          ? "Its seed falls"
+          : "These seeds fall"
+        : close === 1
+          ? "One of these seeds falls"
+          : "Some of these seeds fall";
+    dd.append(
+      el(
+        "span",
+        "manifest__note",
+        `${which} in the narrow stretch, about 1 exotic in ${closeOdds}, where the line between squids and ` +
+          `other exotics hasn't been pinned down.`,
+      ),
+    );
+  }
+  return dd;
+}
+
 function shipsSection(d: SystemDescription): HTMLElement {
   const ships = d.ships;
   const { matched, recorded } = SHIP_ACCURACY;
@@ -147,15 +202,19 @@ function shipsSection(d: SystemDescription): HTMLElement {
   const key = el("dl", "manifest manifest--ships");
   key.append(
     el("dt", undefined, "Exotic"),
-    keySeed(
-      ships.exotic,
-      ships.alternatives.map((a) => a.exotic),
-    ),
+    exoticEntry(ships),
     el("dt", undefined, "Sentinel crash-site ship"),
     keySeed(
       ships.crashSite,
       ships.alternatives.map((a) => a.crashSite),
     ),
+  );
+  const squids = el(
+    "p",
+    "result__aside ships__squids",
+    `Whether the exotic is a squid follows from its seed: the game picks the exotic's body with the first ` +
+      `number it draws from that seed, and makes about 1 exotic in 21 a squid. That held for all ` +
+      `${SQUID_CHECKS.recorded} exotics recorded in game, ${count(SQUID_CHECKS.squids)} of them squids.`,
   );
 
   const [shuttleSolar, shuttleSlots] = SOLAR_COUNTS.shuttle;
@@ -183,7 +242,7 @@ function shipsSection(d: SystemDescription): HTMLElement {
     shipTable(ships),
   );
 
-  return el("section", "result__section", el("h3", "result__heading", "Ships"), intro, ...warning, key, all);
+  return el("section", "result__section", el("h3", "result__heading", "Ships"), intro, ...warning, key, squids, all);
 }
 
 function render(d: SystemDescription): void {
@@ -288,7 +347,7 @@ function render(d: SystemDescription): void {
     "section",
     "result__section result__next",
     el("h3", "result__heading", "Coming next"),
-    el("p", undefined, "What each ship looks like, starting with the exotic, then multi-tools. ", roadmap, "."),
+    el("p", undefined, "The rest of what each ship looks like, then multi-tools. ", roadmap, "."),
   );
 
   result.replaceChildren(

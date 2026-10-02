@@ -1,6 +1,6 @@
 # Capture mod
 
-`system_capture.py` records every star system you visit in No Man's Sky, together with `SystemShips`: the list of ships the game prepares for that system (each ship's seed, type, role and faction). The project used these records to work out how the game picks a system's ship seeds from its address, which the site now shows, and uses them to check that model. When the game builds one of those ships, the mod also records the parts the game picked for it, which is how the project means to work out what a seed looks like, starting with squid and non-squid exotics: the next step on the [roadmap](../README.md#roadmap).
+`system_capture.py` records every star system you visit in No Man's Sky, together with `SystemShips`: the list of ships the game prepares for that system (each ship's seed, type, role and faction). The project used these records to work out how the game picks a system's ship seeds from its address, which the site now shows, and uses them to check that model. When the game builds one of those ships, the mod also records the parts the game picked for it. Those records showed which exotics are squids, which the site now predicts, and are how the project means to work out the rest of what a seed looks like: the next step on the [roadmap](../README.md#roadmap).
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
@@ -48,7 +48,7 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
    Recorded <system name> (<portal code>, galaxy <number>): 50 ships (Freighter 21, Fighter 9, Shuttle 6, ...)
    ```
 
-   As a system loads, the game builds every ship in its ship list, and the mod records the parts the game picked for each. When it gets to the exotic, three high notes play, often before the loading screen ends, and the log says `Recorded the parts of the exotic (seed ...)`, with its parts. You don't need to wait for the exotic to land.
+   As a system loads, the game builds every ship in its ship list, and the mod records the parts the game picked for each. When it gets to the exotic, three high notes play, often before the loading screen ends, and the log says `Recorded the parts of the exotic (seed ...)`, with its parts. You don't need to wait for the exotic to land. If its first part is `_SCLASSSHIP_SQU`, it's a squid.
 4. Save and quit the game normally when you're done. Pressing Ctrl+C in the terminal closes the game too.
 
    If you close the terminal window instead while the game keeps running, pyMHF stays inside the game until you quit it, and the mod can't attach again until then. It says so if you try.
@@ -57,7 +57,7 @@ The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to
 
 If you arrive somewhere and don't hear the notes, press F6 (see below). If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
 
-When you see an exotic land in a system, press F7 if it's a squid or F8 if it isn't, while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. With the exotic's parts recorded too, a label shows which of those parts make a squid; once that's known, the parts alone will tell. Only label exotics flown by the game, not other players' ships. If you press the wrong key, press the right one: the report keeps your last label for each system in a session.
+You don't need to label exotics any more: the parts tell which are squids. If you'd like to note what you saw anyway, press F7 when an exotic that lands is a squid or F8 if it isn't, while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. Only label exotics flown by the game, not other players' ships. If you press the wrong key, press the right one: the report keeps your last label for each system in a session.
 
 ## Hotkeys and sounds
 
@@ -113,7 +113,7 @@ Four other kinds of line:
 - `"t": "label"`: an exotic sighting you labelled with F7, F8 or the buttons, with the system and its exotic's seed.
 - `"t": "model"`: a ship of a system's ship list that the game built: the system and the ship's `slot` in its list (`"crash"` for the Sentinel crash-site ship), the model file (`name`) and resource `type`, the ship's `seed` (and a second seed, `seed2`, if the game gave one), and the IDs of the parts the game picked (`parts`). The first records of a session also keep the descriptor the game passed, as `raw`, to check the mod reads it right. Each model of each ship is recorded once per session.
 
-[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts, lists the exotic labels and lists the parts recorded for each exotic. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated, and checks the ship seeds that [`ship_model.py`](../tools/captures/ship_model.py) predicts from each system's address.
+[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts, lists the exotic labels, and lists the parts recorded for each exotic, checking whether it's a squid against what the site predicts from its seed. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated, and checks the ship seeds that [`ship_model.py`](../tools/captures/ship_model.py) predicts from each system's address.
 
 ```sh
 python3 tools/captures/report.py mods/captures/systems.jsonl

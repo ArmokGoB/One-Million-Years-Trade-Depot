@@ -3,8 +3,8 @@
 """Writes tests/fixtures/ship-vectors.json: the ship model's output for a few addresses.
 
 tools/captures/ship_model.py predicts a system's 50 ship seeds from its
-address; tests/ships.test.ts replays these vectors through the TypeScript
-port. The addresses are made up, picked by a fixed search so that between
+address, and whether its exotic is a squid; tests/ships.test.ts replays
+these vectors through the TypeScript port. The addresses are made up, picked by a fixed search so that between
 them they cover every kind of body layout and every dominant race the model
 treats differently. CI regenerates the file and fails if it changed.
 
@@ -102,6 +102,10 @@ def main() -> int:
         ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & MASK32)
         bodies = ship_model.bodies(ua) or []
         prediction, *others = ship_model.predictions(ua)
+
+        def squid(seed: int) -> dict[str, bool]:
+            return ship_model.exotic_squid(seed)._asdict()
+
         vectors.append(
             {
                 "what": kind,
@@ -111,9 +115,18 @@ def main() -> int:
                 "start": prediction.start,
                 "uncertain": prediction.uncertain,
                 "ships": [f"{s:016X}" for s in prediction.ships],
+                "exoticSquid": squid(prediction.ships[20]),
                 "crash": f"{prediction.crash:016X}",
                 # the other ways a two-moon planet's moons can be arranged
-                "others": [{"start": o.start, "exotic": f"{o.ships[20]:016X}", "crash": f"{o.crash:016X}"} for o in others],
+                "others": [
+                    {
+                        "start": o.start,
+                        "exotic": f"{o.ships[20]:016X}",
+                        "exoticSquid": squid(o.ships[20]),
+                        "crash": f"{o.crash:016X}",
+                    }
+                    for o in others
+                ],
             }
         )
 

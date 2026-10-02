@@ -3,7 +3,8 @@
 """Summarise capture files written by mods/system_capture.py.
 
 Prints what was recorded (systems, ship pools, exotics, and the parts the
-game picked for the ships it built); checks the game's data against itself,
+game picked for the ships it built, each exotic's against ship_model.py's
+squid rule); checks the game's data against itself,
 which is where a struct layout that no longer matches the game shows up
 first; and finds each system's ship seeds in the game's random-number stream
 seeded by the system seed. Given a path to nms_namegen, it also measures how
@@ -31,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # mix is re-exported for the tests.
 from game_rng import MASK32, MASK64, MIX_A, MIX_B, mix, seeded_state, stream_states, unmix  # noqa: E402, F401
+import ship_model  # noqa: E402  (nms_namegen is only needed for its bodies(), which --namegen uses)
 
 SUPPORTED_FORMATS = {1, 2}
 ZERO_SEED = "0" * 16
@@ -685,7 +687,61 @@ def model_lines(captures: Captures) -> list[str]:
     lines.append(f"  exotics: {len(exotics)}")
     for record, model in exotics:
         parts = " ".join(model.get("parts") or []) or "(no parts)"
-        lines.append(f"    {record.label()}: {model.get('seed')} {parts}")
+        seed = _hex_or_none(model.get("seed"))
+        draw = f" (first draw {ship_model.first_draw(seed) / 2**32:.6f})" if seed is not None else ""
+        lines.append(f"    {record.label()}: {model.get('seed')}{draw} {parts}")
+    return lines + squid_lines(exotics)
+
+
+def _hex_or_none(text: object) -> int | None:
+    try:
+        return int(str(text), 16)
+    except ValueError:
+        return None
+
+
+def squid_lines(exotics: list[tuple[SystemRecord, dict]]) -> list[str]:
+    """Each exotic's body, from its first part, against the squid rule in ship_model.py."""
+    bodies: dict[int, tuple[str, str | None]] = {}
+    for record, model in exotics:
+        seed = _hex_or_none(model.get("seed"))
+        if seed is not None:
+            parts = model.get("parts") or []
+            bodies[seed] = (record.label(), parts[0] if parts else None)
+    checked, disagree, other = 0, [], 0
+    highest_not_squid = lowest_squid = None
+    for seed, (label, first) in bodies.items():
+        if first not in (ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART):
+            other += 1
+            continue
+        checked += 1
+        squid, draw = first == ship_model.SQUID_PART, ship_model.first_draw(seed)
+        if squid:
+            lowest_squid = draw if lowest_squid is None else min(lowest_squid, draw)
+        else:
+            highest_not_squid = draw if highest_not_squid is None else max(highest_not_squid, draw)
+        if ship_model.exotic_squid(seed).squid != squid:
+            disagree.append(f"    disagrees: {label}: {seed:016X}, first draw {draw / 2**32:.6f}, {first}")
+    if not checked and not other:
+        return []
+    lines = [
+        f"  squid rule (a squid when the seed's first draw is at least 20/21 of its range): "
+        f"{checked - len(disagree)} of {checked} exotic seeds agree"
+    ]
+    lines += disagree
+    if other:
+        neither = f"neither {ship_model.SQUID_PART} nor {ship_model.OTHER_EXOTIC_PART}"
+        lines.append(f"    first part {neither}: {other}")
+    if highest_not_squid is not None and lowest_squid is not None:
+        closest = (
+            f"    closest to the line: not a squid at {highest_not_squid / 2**32:.6f} ({highest_not_squid}), "
+            f"a squid at {lowest_squid / 2**32:.6f} ({lowest_squid})"
+        )
+        if highest_not_squid >= lowest_squid:
+            closest += "; they overlap, so no line fits them all"
+        elif highest_not_squid > ship_model.NOT_SQUID_HIGHEST or lowest_squid < ship_model.SQUID_LOWEST:
+            closest += "; closer than ship_model.py's edges: update them and SQUID_EDGES in src/core/ships.ts"
+        lines.append(closest)
     return lines
 
 
@@ -909,7 +965,6 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
 def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
     """Each system's ship seeds as ship_model.py predicts them from the address, against the game's."""
     sys.path.insert(0, str(namegen.resolve()))
-    import ship_model
 
     lines = ["", "Ship seeds predicted from the address alone (tools/captures/ship_model.py)"]
     matched = other = checked = 0
@@ -954,7 +1009,6 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
 def moon_layout_lines(captures: Captures, namegen: Path, examples: int) -> list[str]:
     """Which way round each two-moon planet's moons are, wherever a record holds the bodies' positions."""
     sys.path.insert(0, str(namegen.resolve()))
-    import ship_model
 
     sources = [(r.ua & ~PLANET_BITS, r.data.get("positions")) for r in captures.records]
     sources += [(int(q["seed"], 16) & ~PLANET_BITS, q.get("positions")) for q in captures.queries if q.get("seed")]
