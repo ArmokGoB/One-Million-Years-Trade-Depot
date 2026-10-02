@@ -11,10 +11,21 @@ export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";
 export { MULTIPLIER, PRNG } from "./prng";
 export { regionName } from "./region";
 export {
+  drawsBeforeShips,
+  shipPool,
+  shipSeeds,
+  shipUncertainty,
+  slotTypes,
+  type Ship,
+  type ShipGroup,
+  type ShipPool,
+} from "./ships";
+export {
   planetSeeds,
   systemAttributes,
   systemAttributesDetailed,
   systemName,
+  type Body,
   type PlanetSeeds,
   type SystemAttributes,
   type SystemAttributesDetailed,

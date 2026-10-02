@@ -48,12 +48,29 @@ export interface SystemAttributes {
   pirate: boolean;
 }
 
+/**
+ * One body of a system, in generation order. This project's addition to the
+ * port: the same loop that draws the seeds also decides each body's size and
+ * whether it is a moon, so it records them as it goes. Checked against the
+ * game's own body data in every system recorded with the capture mod.
+ */
+export interface Body {
+  /** 0 large, 1 medium, 2 small, 3 moon */
+  size: number;
+  /** Index of the planet a moon orbits, or -1. */
+  parent: number;
+  /** A "prime" (extra) body, drawn after the others. */
+  prime: boolean;
+}
+
 export interface PlanetSeeds {
   planet_seeds: bigint[];
   planet_count: number;
   moon_count: number;
   /** Experimental in the reference: per-slot size class, not validated per slot. */
   sizes: number[];
+  /** Every body in order, one per seed; empty for a gas-giant layout, which isn't modelled. */
+  bodies: Body[];
 }
 
 /** The system's procedural name, e.g. "Abarof-Dulin". */
@@ -292,18 +309,22 @@ export function planetSeeds(code: bigint, galaxy: number): PlanetSeeds {
   const totalCount = primaryCount + attrs.prime_planet_count;
   const stop = attrs.safe_start_planet - 1;
   const sizes: number[] = [];
+  const bodies: Body[] = [];
 
   if (gasGiant) {
     for (let k = 0; k < totalCount; k++) seeds.push(bodySeed(rng));
-    return { planet_seeds: seeds, planet_count: 1, moon_count: totalCount - 1, sizes };
+    return { planet_seeds: seeds, planet_count: 1, moon_count: totalCount - 1, sizes, bodies };
   }
 
-  // Primary bodies: all size classes first, then all seeds.
+  // Primary bodies: all size classes first, then all seeds. A large planet
+  // pulls its moons in behind it.
   let i = 0;
   while (i < primaryCount) {
     i += 1;
     const size = rng.random(3);
     sizes.push(size);
+    bodies.push({ size, parent: -1, prime: false });
+    const parent = bodies.length - 1;
     if (size === 0) {
       let m = primaryCount - i;
       if (m < 0) m = 0;
@@ -314,6 +335,7 @@ export function planetSeeds(code: bigint, galaxy: number): PlanetSeeds {
           i += 1;
           nMoons -= 1;
           moonCount += 1;
+          bodies.push({ size: 3, parent, prime: false });
           if (nMoons <= 0) break;
         }
       }
@@ -331,6 +353,8 @@ export function planetSeeds(code: bigint, galaxy: number): PlanetSeeds {
     const size = rng.random(3);
     sizes.push(size);
     seeds.push(bodySeed(rng));
+    bodies.push({ size, parent: -1, prime: true });
+    const parent = bodies.length - 1;
     i += 1;
     if (size === 0) {
       let m = totalCount - i;
@@ -339,6 +363,7 @@ export function planetSeeds(code: bigint, galaxy: number): PlanetSeeds {
       let nMoons = rng.random(m + 1);
       while (nMoons > 0 && i !== stop) {
         seeds.push(bodySeed(rng));
+        bodies.push({ size: 3, parent, prime: true });
         moonCount += 1;
         nMoons -= 1;
         i += 1;
@@ -346,5 +371,5 @@ export function planetSeeds(code: bigint, galaxy: number): PlanetSeeds {
     }
   }
 
-  return { planet_seeds: seeds, planet_count: totalCount - moonCount, moon_count: moonCount, sizes };
+  return { planet_seeds: seeds, planet_count: totalCount - moonCount, moon_count: moonCount, sizes, bodies };
 }
