@@ -995,15 +995,31 @@ class ModelTests(CaptureTestCase):
     def test_report_lists_each_exotics_parts(self):
         self.game.generate(self.capture)
         self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
-        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_BODY_SQUID", "_WINGS_A"])
+        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"])
         self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])
         self.models()
         text = "\n".join(report.model_lines(report.read_captures([mod.CAPTURE_FILE])))
         self.assertIn("Ship models recorded with their parts: 3 (FIGHTER_PROC 2, S-CLASS_PROC 1)", text)
         self.assertIn("by ship type: Fighter 1, Exotic 1, Sentinel crash-site ship 1", text)
         self.assertIn("exotics: 1", text)
-        self.assertIn("03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001 _BODY_SQUID _WINGS_A", text)
+        self.assertIn(
+            "03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001 (first draw 0.853393) "
+            "_SCLASSSHIP_ROY _WINGS_A",
+            text,
+        )
+        self.assertIn("squid rule (a squid when the seed's first draw is at least 20/21 of its range)", text)
+        self.assertIn("1 of 1 exotic seeds agree", text)
+        self.assertNotIn("disagrees", text)
         self.assertNotIn("not found in a recorded system's ship list", text)
+
+    def test_report_flags_an_exotic_body_the_squid_rule_gets_wrong(self):
+        self.game.generate(self.capture)
+        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_SQU", "TEXTURE_TEMP"])
+        self.models()
+        text = "\n".join(report.model_lines(report.read_captures([mod.CAPTURE_FILE])))
+        self.assertIn("0 of 1 exotic seeds agree", text)
+        disagrees = "disagrees: 03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001, first draw 0.853393"
+        self.assertIn(disagrees, text)
 
 
 class LabelTests(CaptureTestCase):
@@ -1823,6 +1839,60 @@ class ShipModelTests(unittest.TestCase):
         self.assertAlmostEqual(azimuth(first[1]), azimuth(other[2]), places=9)
         self.assertAlmostEqual(azimuth(first[2]), azimuth(other[1]), places=9)
         self.assertAlmostEqual(azimuth(first[2]), ship_model.GOLDEN_ANGLE, places=9)
+
+    @staticmethod
+    def seed_with_first_draw(draw: int, low: int = 0x2468ACE1) -> int:
+        """A made-up seed whose first draw is ``draw``: the game's seeding, run backwards."""
+        high = (draw - low * game_rng.MULTIPLIER) & M32
+        assert high, "the game would make this high word 1; pick another low word"
+        return ((high ^ game_rng.swap16(low) ^ low) << 32) | low
+
+    def test_squid_line_at_20_21_between_the_closest_exotics_recorded(self):
+        line = 20 * 2**32 / 21
+        self.assertEqual(ship_model.first_draw(0x0123456789ABCDEF), 4005469434)  # as in tests/ships.test.ts
+        self.assertLess(ship_model.NOT_SQUID_HIGHEST, line)
+        self.assertGreater(ship_model.SQUID_LOWEST, line)
+        expected = [  # first draw, (squid, close)
+            (0, (False, False)),
+            (ship_model.NOT_SQUID_HIGHEST, (False, False)),
+            (ship_model.NOT_SQUID_HIGHEST + 1, (False, True)),
+            (math.floor(line), (False, True)),
+            (math.ceil(line), (True, True)),
+            (ship_model.SQUID_LOWEST - 1, (True, True)),
+            (ship_model.SQUID_LOWEST, (True, False)),
+            (M32, (True, False)),
+        ]
+        for draw, call in expected:
+            seed = self.seed_with_first_draw(draw)
+            self.assertEqual(ship_model.first_draw(seed), draw)
+            self.assertEqual(tuple(ship_model.exotic_squid(seed)), call, draw)
+
+    def test_report_checks_recorded_exotic_bodies_against_the_squid_line(self):
+        class Record(str):
+            def label(self) -> str:
+                return str(self)
+
+        def exotic(name: str, draw: int, body: str) -> tuple[Record, dict]:
+            seed = self.seed_with_first_draw(draw)
+            return Record(name), {"seed": f"{seed:016X}", "parts": [body, "TEXTURE_TEMP"]}
+
+        squid, other = ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART
+        narrower = report.squid_lines(
+            [
+                exotic("A", ship_model.NOT_SQUID_HIGHEST + 5, other),
+                exotic("B", ship_model.SQUID_LOWEST - 5, squid),
+            ]
+        )
+        self.assertIn("2 of 2 exotic seeds agree", narrower[0])
+        self.assertIn("closer than ship_model.py's edges: update them", narrower[1])
+        overlap = report.squid_lines([exotic("A", 4_100_000_000, other), exotic("B", 4_095_000_000, squid)])
+        overlap = "\n".join(overlap)
+        self.assertIn("1 of 2 exotic seeds agree", overlap)
+        self.assertIn("disagrees: A:", overlap)
+        self.assertIn("they overlap, so no line fits them all", overlap)
+        odd = "\n".join(report.squid_lines([exotic("A", 0, "_SOMETHING_ELSE")]))
+        self.assertIn("0 of 0 exotic seeds agree", odd)
+        self.assertIn("first part neither _SCLASSSHIP_SQU nor _SCLASSSHIP_ROY: 1", odd)
 
 
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")

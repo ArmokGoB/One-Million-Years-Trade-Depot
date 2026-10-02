@@ -11,6 +11,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 - Whether it is a region's black hole or Atlas Interface system
 - Planets and moons, with their procedural names and planet seeds
 - The ship list the game builds for the system: 50 slots, each with its seed and type, the exotic's included, plus the seed the game keeps for the ship at its Sentinel crash sites. Not every slot is a ship you can meet there: the list has a frigate of every type, including Recon and Cursed, whose only known frigates (the SSV Normandy SR1 and the Ship of the Damned) are expedition rewards.
+- Whether the system's exotic is a squid
 - A shareable link for every lookup
 
 It accepts a 12-digit portal address (`009A039BAE4B`) or signal-booster coordinates (`064A:0082:01B9:009A`), plus a galaxy number (0 is Euclid). Both examples are the Pilgrim Star, which the site shows until you look up another system.
@@ -33,12 +34,14 @@ The ships come from this project's own model of the game's generator (roadmap st
 
 Every recorded system lists its ships in the same 50 slots; only the first 20, the civilian ships, change: how many haulers, fighters and explorers depends on the dominant race, and the game makes some of them solar ships in a way not worked out yet. Outside outlaw systems, 42 of 375 shuttle slots held a solar ship and no other slot did; in outlaw systems, 54 of 63 shuttle slots did, and so did 11 of 117 other civilian slots.
 
+Whether the exotic is a squid comes from the exotic's own seed. As far as the captures show, the first number the game draws from a ship's seed picks the first part of the ship's model, each option getting one unbroken stretch of that number's range: that held for all 359 models the capture mod recorded of the seven kinds of ship whose first part varies. For an exotic, the top of the range gives `_SCLASSSHIP_SQU` and the rest `_SCLASSSHIP_ROY`. The 12 exotics recorded split cleanly: the 6 with `_SCLASSSHIP_SQU` drew between 0.9531 and 0.9965 of the range, and 5 of them were in systems where players had posted squids; the 6 with `_SCLASSSHIP_ROY` drew between 0.0023 and 0.9519, and the one of them seen landing wasn't a squid. The site draws the line at 20/21 (0.9524), where it would be if the game weighted the squid 0.05 against the others' 1, so about 1 exotic in 21 is a squid. For the 1 exotic in 800 or so whose draw falls in the gap between 0.9519 and 0.9531, the site says "probably".
+
 ## Roadmap
 
 1. **System lookup.** Done: this site.
 2. **Capture mod.** In progress: [`mods/system_capture.py`](mods/system_capture.py), an [NMS.py](https://github.com/monkeyman192/NMS.py) mod that records, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Needs a Windows PC; [how to run it](mods/README.md).
 3. **Address → ship pool.** On the site now. Every system captured so far has a 50-slot ship list with the same layout, with its one exotic in slot 20. [`tools/captures/ship_model.py`](tools/captures/ship_model.py) predicts all 50 ship seeds from the portal address alone, building on nms_namegen like the site does, and [`src/core/ships.ts`](src/core/ships.ts) is its port. It matched every ship and the Sentinel crash-site ship in 62 of the 66 systems captured so far, gas giant systems included, and the other 4 with a planet's two moons the other way round. The ships come last in a system's generation, after the space station and the "attractor" spawn points around each planet, and those decide where in the random-number stream the ships' seeds start. Still open: which way round the game puts a planet's two moons, and which civilian ships it makes solar.
-4. **Seed → appearance.** Decode each ship seed into parts and colours, starting with squid versus ball-cockpit exotics, then every ship type. Version 0.7.0 of the capture mod records the parts the game picks for each ship of a system's list as it builds the ship, which should show how a seed becomes parts. In its first run it recorded every ship in the system's list, the exotic's included, while the system loaded. The one exotic seen landing so far wasn't a squid, and its parts start with `_SCLASSSHIP_ROY`.
+4. **Seed → appearance.** In progress: decode each ship seed into parts and colours. Squid versus other exotics is on the site now. Version 0.7.0 of the capture mod records the parts the game picks for each ship in a system's list as it builds the ship, which showed that the first draw from a ship's seed picks the first part of its model. Next: the rest of the exotic's parts, then every ship type.
 5. **Multi-tools and freighters**, then pictures.
 
 ## How it works
@@ -51,7 +54,7 @@ Every recorded system lists its ships in the same 50 slots; only the first 20, t
 
 All 64-bit maths uses `BigInt`, and float comparisons use `Math.fround` where the game compares in single precision.
 
-The ships are this project's addition: `src/core/ships.ts` follows the same generator on, from the system's universal address through the space station and the planets' attractor spawn points to the ships, as `tools/captures/ship_model.py` does in Python.
+The ships are this project's addition: `src/core/ships.ts` follows the same generator on, from the system's universal address through the space station and the planets' attractor spawn points to the ships, and tells from the exotic's seed whether it's a squid, as `tools/captures/ship_model.py` does in Python.
 
 Parity is checked two ways. `npm test` replays nms_namegen's 443 golden vectors through the port, and the ship model's output for a set of addresses that covers every body layout it treats differently. CI also generates 20,000 fresh cases with the Python library, pinned to a known commit, covering all 256 galaxies, every planet digit and the system indices where the generator branches, and compares every field, ships included.
 

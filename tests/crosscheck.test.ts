@@ -48,6 +48,8 @@ interface ShipCase {
   uncertain: string | null;
   first: string;
   exotic: string;
+  /** [squid, close]: whether the exotic is a squid, and whether its seed is too close to the line to be sure. */
+  squid: [boolean, boolean];
   crash: string;
   last: string;
   /** [start, exotic, crash] for each other arrangement of a two-moon planet's moons. */
@@ -63,6 +65,7 @@ function shipCase(code: bigint, galaxy: number): ShipCase {
     uncertain: pool.uncertain,
     first: hex64(pool.ships[0]!.seed),
     exotic: hex64(pool.exotic),
+    squid: [pool.exoticSquid.squid, pool.exoticSquid.close],
     crash: hex64(pool.crashSite),
     last: hex64(pool.ships[49]!.seed),
     others: pool.alternatives.map((a) => [a.drawsBeforeShips, hex64(a.exotic), hex64(a.crashSite)]),
@@ -87,6 +90,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     const lines = readFileSync(path!, "utf8").split("\n").filter(Boolean);
     const mismatches: string[] = [];
     let shipPools = 0;
+    let squids = 0;
     for (const line of lines) {
       const c = JSON.parse(line) as Case;
       const code = parsePortalCode(c.code);
@@ -106,11 +110,15 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
       }
       if (c.ships !== undefined) {
         same(c.ships, () => shipCase(code, c.galaxy), `${tag} ships`, mismatches);
-        if (!isErr(c.ships)) shipPools += 1;
+        if (!isErr(c.ships)) {
+          shipPools += 1;
+          if (c.ships.squid[0]) squids += 1;
+        }
       }
     }
     expect(lines.length).toBeGreaterThan(0);
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
+    expect(squids, "cases whose exotic is a squid").toBeGreaterThan(0);
     expect(mismatches.slice(0, 20)).toEqual([]);
   }, 300_000); // 20,000 cases take seconds, mostly the ship pools
 });

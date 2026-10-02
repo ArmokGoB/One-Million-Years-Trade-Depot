@@ -9,14 +9,19 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   describeSystem,
+  exoticSquid,
+  firstDraw,
   hex64,
+  MULTIPLIER,
   parsePortalCode,
   planetSeeds,
   shipPool,
   slotTypes,
+  SQUID_EDGES,
   systemAttributes,
   withPlanet,
   type ShipGroup,
+  type SquidCall,
 } from "../src/core";
 
 interface ShipVector {
@@ -27,9 +32,10 @@ interface ShipVector {
   start: number;
   uncertain: string | null;
   ships: string[];
+  exoticSquid: SquidCall;
   crash: string;
   /** The other ways a two-moon planet's moons can be arranged. */
-  others: { start: number; exotic: string; crash: string }[];
+  others: { start: number; exotic: string; exoticSquid: SquidCall; crash: string }[];
 }
 
 const file = JSON.parse(readFileSync(new URL("./fixtures/ship-vectors.json", import.meta.url), "utf8")) as {
@@ -65,8 +71,14 @@ describe("ship pool vectors from the Python model", () => {
       expect(pool.ships.map((s) => s.slot)).toEqual([...Array(50).keys()]);
       expect(hex64(pool.crashSite)).toBe(v.crash);
       expect(hex64(pool.exotic)).toBe(v.ships[20]);
+      expect(pool.exoticSquid).toEqual(v.exoticSquid);
       expect(
-        pool.alternatives.map((a) => ({ start: a.drawsBeforeShips, exotic: hex64(a.exotic), crash: hex64(a.crashSite) })),
+        pool.alternatives.map((a) => ({
+          start: a.drawsBeforeShips,
+          exotic: hex64(a.exotic),
+          exoticSquid: a.exoticSquid,
+          crash: hex64(a.crashSite),
+        })),
       ).toEqual(v.others);
       for (const a of pool.alternatives) {
         expect(a.ships).toHaveLength(50);
@@ -163,11 +175,47 @@ describe("slot types", () => {
   });
 });
 
+describe("squid exotics", () => {
+  const M32 = 0xffffffffn;
+  const swap16 = (x: bigint) => ((x >> 16n) | (x << 16n)) & M32;
+  /** A made-up seed whose first draw is `draw`: the game's seeding, run backwards. */
+  function seedWithFirstDraw(draw: number, low = 0x2468ace1n): bigint {
+    const high = (BigInt(draw) - low * MULTIPLIER) & M32;
+    if (high === 0n) throw new Error("the game would make this high word 1; pick another low word");
+    return ((high ^ swap16(low) ^ low) << 32n) | low;
+  }
+  const line = (20 * 2 ** 32) / 21;
+  const call = (draw: number) => exoticSquid(seedWithFirstDraw(draw));
+
+  it("takes the first draw from the seed as the Python model does", () => {
+    expect(firstDraw(0x0123456789abcdefn)).toBe(4005469434);
+    expect(firstDraw(0xfedcba9876543210n)).toBe(3066718828);
+    expect(firstDraw(1n)).toBe(1517811866);
+    for (const draw of [0, 1, SQUID_EDGES.notSquid, Math.floor(line), Math.ceil(line), 2 ** 32 - 1]) {
+      expect(firstDraw(seedWithFirstDraw(draw))).toBe(draw);
+    }
+  });
+
+  it("draws the line at 20/21 of the range, between the closest exotics recorded", () => {
+    expect(SQUID_EDGES.notSquid).toBeLessThan(line);
+    expect(SQUID_EDGES.squid).toBeGreaterThan(line);
+    expect(call(0)).toEqual({ squid: false, close: false });
+    expect(call(SQUID_EDGES.notSquid)).toEqual({ squid: false, close: false });
+    expect(call(SQUID_EDGES.notSquid + 1)).toEqual({ squid: false, close: true });
+    expect(call(Math.floor(line))).toEqual({ squid: false, close: true });
+    expect(call(Math.ceil(line))).toEqual({ squid: true, close: true });
+    expect(call(SQUID_EDGES.squid - 1)).toEqual({ squid: true, close: true });
+    expect(call(SQUID_EDGES.squid)).toEqual({ squid: true, close: false });
+    expect(call(2 ** 32 - 1)).toEqual({ squid: true, close: false });
+  });
+});
+
 describe("describeSystem", () => {
   it("includes the ships, with seeds written as on the rest of the page", () => {
     const v = file.vectors.find((v) => v.what === "Korvax, a planet with one moon")!;
     const d = describeSystem(parsePortalCode(v.code), v.galaxy);
     expect(d.ships.exotic).toBe(`0x${v.ships[20]}`);
+    expect(d.ships.exoticSquid).toEqual(v.exoticSquid);
     expect(d.ships.crashSite).toBe(`0x${v.crash}`);
     expect(d.ships.ships).toHaveLength(50);
     expect(d.ships.ships[0]).toEqual({
@@ -186,7 +234,9 @@ describe("describeSystem", () => {
     const v = file.vectors.find((v) => v.what === "Vy'keen, a planet with two moons")!;
     const ships = describeSystem(parsePortalCode(v.code), v.galaxy).ships;
     expect(ships.uncertain).toBe(v.uncertain);
-    expect(ships.alternatives).toEqual(v.others.map((o) => ({ exotic: `0x${o.exotic}`, crashSite: `0x${o.crash}` })));
+    expect(ships.alternatives).toEqual(
+      v.others.map((o) => ({ exotic: `0x${o.exotic}`, exoticSquid: o.exoticSquid, crashSite: `0x${o.crash}` })),
+    );
     expect(ships.alternatives).toHaveLength(1);
   });
 

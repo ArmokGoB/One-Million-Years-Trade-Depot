@@ -5,7 +5,7 @@
 import { formatPortalCode, portalParts, toGalacticCoordinates, withPlanet } from "./address";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
-import { shipPool, type ShipGroup } from "./ships";
+import { shipPool, type ShipGroup, type SquidCall } from "./ships";
 import { planetSeeds, systemAttributesDetailed, systemName, type SystemAttributes } from "./system";
 import { hex64 } from "./u64";
 
@@ -58,6 +58,13 @@ export const CAPTURE_CHECKS = { systems: 66, outlawSystems: 9, planetNames: { ma
 export const SHIP_ACCURACY = { matched: 62, recorded: 66, twoMoons: { firstGuess: 3, recorded: 7 } } as const;
 
 /**
+ * How the squid prediction fares against the exotics whose parts the capture
+ * mod recorded as the game built them: every one of the `recorded` exotics,
+ * `squids` of them squids, on the side of the line the prediction puts it.
+ */
+export const SQUID_CHECKS = { recorded: 12, squids: 6 } as const;
+
+/**
  * How often the civilian slots held a solar ship in the systems recorded:
  * [solar, slots] for the shuttle slots outside and inside outlaw systems,
  * and for the other civilian slots inside them. Outside outlaw systems
@@ -81,13 +88,15 @@ export interface ShipInfo {
 
 export interface ShipsInfo {
   exotic: string;
+  /** Whether the exotic is a squid. */
+  exoticSquid: SquidCall;
   crashSite: string;
   /** All 50, in the game's order. */
   ships: ShipInfo[];
   /** Why the prediction may be wrong for this system, if a known gap in the model applies. */
   uncertain: string | null;
   /** The exotic and crash-site seeds for each other way a two-moon planet's moons can be arranged. */
-  alternatives: { exotic: string; crashSite: string }[];
+  alternatives: { exotic: string; exoticSquid: SquidCall; crashSite: string }[];
 }
 
 export interface BodyInfo {
@@ -130,10 +139,15 @@ function describeShips(code: bigint, galaxy: number): ShipsInfo {
   const pool = shipPool(code, galaxy);
   return {
     exotic: seedText(pool.exotic),
+    exoticSquid: pool.exoticSquid,
     crashSite: seedText(pool.crashSite),
     ships: pool.ships.map(({ slot, type, group, seed, note }) => ({ slot, type, group, seed: seedText(seed), note })),
     uncertain: pool.uncertain,
-    alternatives: pool.alternatives.map((a) => ({ exotic: seedText(a.exotic), crashSite: seedText(a.crashSite) })),
+    alternatives: pool.alternatives.map((a) => ({
+      exotic: seedText(a.exotic),
+      exoticSquid: a.exoticSquid,
+      crashSite: seedText(a.crashSite),
+    })),
   };
 }
 

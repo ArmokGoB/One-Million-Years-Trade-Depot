@@ -86,6 +86,10 @@
     "8E7111657DE0369F",
     "0955F3C7C31F8076"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "22BBDAEA3B23DE3C",
    "others": []
   },
@@ -179,6 +183,10 @@
     "F9921348C31AEEDF",
     "0CED447FB67327A7"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "6D9652F9E94336D2",
    "others": []
   },
@@ -272,11 +280,19 @@
     "E6C7809B3FA9F1EB",
     "E4837D78662F00F9"
    ],
+   "exoticSquid": {
+    "squid": true,
+    "close": false
+   },
    "crash": "4398B1975CA42AA8",
    "others": [
     {
      "start": 1188,
      "exotic": "3DD25F00226F19D0",
+     "exoticSquid": {
+      "squid": false,
+      "close": false
+     },
      "crash": "E4837D78662F00F9"
     }
    ]
@@ -366,11 +382,19 @@
     "9F05F2A30C77FDE8",
     "C81B8E010990BA42"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "C16060EA5D5BFC9E",
    "others": [
     {
      "start": 896,
      "exotic": "73A88478F298B71F",
+     "exoticSquid": {
+      "squid": false,
+      "close": false
+     },
      "crash": "A9BD26A12CB6B87A"
     }
    ]
@@ -445,6 +469,10 @@
     "6DF87C4743CAE43F",
     "ED9D23B7647CC5FD"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "FDB3F7E075CFB0CA",
    "others": []
   },
@@ -528,6 +556,10 @@
     "DE8DE58C235672CD",
     "25EC6ECFA1FCB156"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "BD09131C4238380B",
    "others": []
   },
@@ -621,6 +653,10 @@
     "C4A0622B1991C847",
     "B1415893EDC134A3"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "ED8CD079324DDDA6",
    "others": []
   },
@@ -699,6 +735,10 @@
     "EEC17CE56CAC5FB9",
     "AF979A95AA78F9E4"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "D9B1FB1C229E802D",
    "others": []
   },
@@ -761,6 +801,10 @@
     "C9BCA37FAF0903CF",
     "1F5BD721E68ABAD2"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "6659EB20C29FD9E4",
    "others": []
   },
@@ -849,6 +893,10 @@
     "70C4D661D87A610E",
     "0325D2780472AB24"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "9F6559FBFFCD6F7F",
    "others": []
   },
@@ -942,21 +990,37 @@
     "646F1BD16113B9EA",
     "FFC943C9D1019B82"
    ],
+   "exoticSquid": {
+    "squid": false,
+    "close": false
+   },
    "crash": "A9DB785EBAC885B2",
    "others": [
     {
      "start": 1553,
      "exotic": "7B3B0C1597D32BED",
+     "exoticSquid": {
+      "squid": false,
+      "close": false
+     },
      "crash": "469FBA3673D0F54F"
     },
     {
      "start": 1368,
      "exotic": "1C21818A00B9C012",
+     "exoticSquid": {
+      "squid": false,
+      "close": false
+     },
      "crash": "02132013CB9A8560"
     },
     {
      "start": 1100,
      "exotic": "7D147003C6A80EED",
+     "exoticSquid": {
+      "squid": false,
+      "close": false
+     },
      "crash": "6A1E1FC9BC8DC51A"
     }
    ]

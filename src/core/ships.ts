@@ -17,6 +17,9 @@
 //   3. 3 draws.
 //   4. The ships: each seed mixes the next two draws; 50 ships, with the seed
 //      for Sentinel crash sites drawn between ships 41 and 42.
+//
+// Whether the exotic is a squid comes from the exotic's own seed: see
+// exoticSquid().
 
 import { withPlanet } from "./address";
 import { PRNG } from "./prng";
@@ -65,6 +68,8 @@ export interface ShipPool {
   ships: Ship[];
   /** The exotic's seed (always slot 20). */
   exotic: bigint;
+  /** Whether the exotic is a squid. */
+  exoticSquid: SquidCall;
   /** The seed the game holds for the ship at this system's Sentinel crash sites. */
   crashSite: bigint;
   /** Draws the generator makes before the first ship's. */
@@ -83,8 +88,20 @@ export interface Alternative {
   swapped: number[];
   ships: bigint[];
   exotic: bigint;
+  exoticSquid: SquidCall;
   crashSite: bigint;
   drawsBeforeShips: number;
+}
+
+export interface SquidCall {
+  /** Whether the game makes the exotic with this seed a squid. */
+  squid: boolean;
+  /**
+   * The seed's first draw lies in the narrow stretch where the line between
+   * squids and other exotics could still be, so `squid` rests on where it
+   * most likely is rather than on exotics recorded on both sides.
+   */
+  close: boolean;
 }
 
 /** The generator state the game builds from a 64-bit seed. */
@@ -190,6 +207,36 @@ export function shipSeeds(ua: bigint, start: number): { ships: bigint[]; crashSi
   }
   const crashSite = seeds.splice(CRASH_BEFORE, 1)[0]!;
   return { ships: seeds, crashSite };
+}
+
+// --- Whether the exotic is a squid ---
+
+/**
+ * Among the exotics recorded in game so far, the highest first draw (see
+ * firstDraw) of one that isn't a squid, and the lowest of a squid. Where
+ * exactly the line lies between the two isn't known yet.
+ */
+export const SQUID_EDGES = { notSquid: 4088215205, squid: 4093481076 } as const;
+
+/** The first draw the game makes from a ship's seed, which picks the first part of the ship's model. */
+export function firstDraw(seed: bigint): number {
+  return seeded(seed).randi();
+}
+
+/**
+ * Whether the exotic with this seed is a squid. The game picks the first part
+ * of a ship's model with the first draw from the ship's seed, each option
+ * taking its own stretch of the draw's range: for an exotic, the squid's body
+ * near the top of the range and the other exotics' body below it. The line is
+ * drawn at 20/21 of the range, the squid weighted 0.05 against the other's 1,
+ * the likeliest place for it between SQUID_EDGES.
+ */
+export function exoticSquid(seed: bigint): SquidCall {
+  const draw = firstDraw(seed);
+  return {
+    squid: 21 * draw >= 20 * 2 ** 32,
+    close: draw > SQUID_EDGES.notSquid && draw < SQUID_EDGES.squid,
+  };
 }
 
 // --- What each slot holds, as seen in every system recorded so far ---
@@ -300,7 +347,8 @@ export function shipPool(code: bigint, galaxy: number): ShipPool {
   const [first, ...others] = arrangements.map((swapped) => {
     const start = drawsBeforeShips(ua, bodies, new Set(swapped));
     const { ships, crashSite } = shipSeeds(ua, start);
-    return { swapped, ships, exotic: ships[20]!, crashSite, drawsBeforeShips: start };
+    const exotic = ships[20]!;
+    return { swapped, ships, exotic, exoticSquid: exoticSquid(exotic), crashSite, drawsBeforeShips: start };
   });
   const types = slotTypes(attributes.dominant_race, attributes.pirate);
   return {
@@ -312,6 +360,7 @@ export function shipPool(code: bigint, galaxy: number): ShipPool {
       note: SLOT_NOTES[slot] ?? null,
     })),
     exotic: first!.exotic,
+    exoticSquid: first!.exoticSquid,
     crashSite: first!.crashSite,
     drawsBeforeShips: first!.drawsBeforeShips,
     uncertain: shipUncertainty(bodies),
