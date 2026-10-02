@@ -335,7 +335,7 @@ def summary_lines(captures: Captures) -> list[str]:
     via = Counter(r.data.get("via", "?") for r in captures.records)
     lines.append("  recorded by: " + ", ".join(f"{k} {n}" for k, n in via.most_common()))
     errors = sum(1 for r in captures.records if r.data.get("errors"))
-    unusual = sum(1 for r in captures.records if r.data.get("unusual"))
+    unusual = sum(1 for r in captures.records if _unusual(r))
     lines.append(f"  records with read errors: {errors}; with unusual values: {unusual}")
     for problem in captures.skipped[:10]:
         lines.append(f"  skipped {problem}")
@@ -383,6 +383,15 @@ def summary_lines(captures: Captures) -> list[str]:
     lines.append(f"Systems with an exotic in the pool: {len(exotic)}")
     lines.extend(exotic)
     return lines
+
+
+def _unusual(record: SystemRecord) -> list[str]:
+    """The record's implausible-looking fields. Format 1 also flagged an address of 0 during
+    generation, which is normal, so that flag is dropped."""
+    flags = record.data.get("unusual") or []
+    if record.session.header.get("format") == 1:
+        flags = [flag for flag in flags if flag != "ua"]
+    return flags
 
 
 def _location_matches(record: SystemRecord) -> bool | None:
@@ -559,12 +568,17 @@ def trace_lines(captures: Captures, limit: int = STREAM_LIMIT) -> list[str]:
     traced_queries = [q for q in captures.queries if q.get("trace") and q.get("seed")]
     if not traced and not traced_queries:
         return []
+    named = captures.representative_by_system()
     lines = ["", "Generation traces (draws made from the system seed at each step; - = not in this stream)"]
+    placements = []
     for r in traced:
         seed = int(r.data["seed"], 16)
         states = {state: i for i, state in enumerate(stream_states(seed, limit))}
         steps = " ".join(f"{label}{_draw_index(states, seed, value)}" for label, value in r.data["trace"])
-        lines.append(f"  {r.label()}: {steps}")
+        label = named.get(r.ua & ~PLANET_BITS, r).label()
+        lines.append(f"  {label}: {steps}")
+        if r.data.get("via") == "gen" and (placed := _ship_placement(r, states, seed, limit)) is not None:
+            placements.append((label, *placed))
     for q in traced_queries[:20]:
         seed = int(q["seed"], 16)
         states = {state: i for i, state in enumerate(stream_states(seed, limit))}
@@ -572,7 +586,50 @@ def trace_lines(captures: Captures, limit: int = STREAM_LIMIT) -> list[str]:
         lines.append(f"  lookup {q['seed']}: {steps}")
     if len(traced_queries) > 20:
         lines.append(f"  ... {len(traced_queries) - 20} more lookups")
+    if placements:
+        lines.append("  Where the ships come in each traced generation:")
+        tails: Counter[int] = Counter()
+        for label, biomes, ships_start, end, locators in placements:
+            between = ships_start - biomes
+            text = (
+                f"    {label}: biomes done after {biomes} draws, ships start after {ships_start}, "
+                f"Generate done after {end}; {between} draws between biomes and ships"
+            )
+            if locators:
+                text += f", {locators} locators ({between / locators:.2f} draws each)"
+            lines.append(text)
+            tails[end - ships_start] += 1
+        tail, count = tails.most_common(1)[0]
+        lines.append(
+            f"    Generate ended {tail} draws after the ships started in {count} of {len(placements)} "
+            "generation(s)"
+        )
     return lines
+
+
+def _ship_placement(
+    record: SystemRecord, states: dict[int, int], seed: int, limit: int
+) -> tuple[int, int, int, int | None] | None:
+    """(draws made when the biomes were done, when the ships started and when Generate returned,
+    and the locator count) for a traced generation, or None if any draw count is unknown."""
+
+    def draws(label: str) -> int | None:
+        value = next((v for step, v in record.data["trace"] if step == label), None)
+        if value is None:
+            return None
+        state = int(value, 16)
+        return 0 if state == seeded_state(seed) else (states[state] + 1 if state in states else None)
+
+    ships = record.data.get("ships")
+    biomes, end = draws("biomes<"), draws("generate<")
+    if not ships or biomes is None or end is None:
+        return None
+    found = locate_ship_stream(seed, [row[0] for row in ships], record.data.get("crashShip"), limit)
+    if found.offset is None:
+        return None
+    locators = record.data.get("locators")
+    count = locators.get("count") if isinstance(locators, dict) else None
+    return biomes, found.offset, end, count
 
 
 def lookup_lines(captures: Captures) -> list[str]:

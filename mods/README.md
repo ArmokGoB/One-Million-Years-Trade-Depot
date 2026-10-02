@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 has recorded systems in the game, with NMS.py 180383.0. Later versions add hooks on the game's system generator and name generator (0.2 and 0.3), and hotkeys and sounds (0.4); none of that has run in the game yet. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Version 0.4.0 has run in the game too: all of its hooks attached, the generation traces and names it recorded check out, and its arrival tone plays. Not yet tried in the game: the hotkeys, and what 0.5.0 adds (locators, and generation steps inside lookups). If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -90,14 +90,15 @@ One JSON object per line. A `"t": "session"` line starts each run of the game an
 | `bodies` | Planet generation inputs: seed, biome, size, resources and flags per planet |
 | `galaxy` | The galaxy generator's view of the same system: planet seeds, star attributes and region data |
 | `trace` | `gen` records: the generator's random-number state at the start and end of each generation step |
-| `keyAttributes` | `gen` records: the galaxy generator's summary that generation starts from: planet counts, the safe start planet, flags, and four bytes (`anomaly`) not yet understood |
+| `keyAttributes` | The galaxy generator's summary that generation starts from: planet counts, the safe start planet, flags, and four bytes (`anomaly`) not yet understood. Only when the game runs that step for the system, which it didn't for any system generated in the 0.4.0 capture |
+| `locators` | `gen` records: the system's locators, spawn points the generator places: `count`, and the whole array, compressed and base64-encoded, in `raw`. Most of the random numbers drawn between the planet biomes and the ships seem to go to these |
 | `raw`, `rawGalaxy` | `gen` records: all of the generated system data and of the galaxy attributes, zlib-compressed and base64-encoded, for offline analysis |
 | `arg`, `active`, `sim`, `loc` | Cross-checks: the seed the game passed in, whether the system was the loaded one, the simulation's address and the player's location |
 | `errors`, `unusual` | Present only when part of the system couldn't be read or looked implausible |
 
 Three other kinds of line:
 
-- `"t": "query"`: a lookup, a system the game described without loading it. It has the system's seed, the random-number states around the lookup and whatever the lookup filled in. Each seed is recorded once per session.
+- `"t": "query"`: a lookup, a system the game described without loading it. It has the system's seed, the random-number states around the lookup and around any generation steps inside it, its key attributes if that step ran, and whatever the lookup filled in. Each seed is recorded once per session.
 - `"t": "name"`: a planet or region name the game generated, with the seed it was generated from (`kind`, `seed`, `name`; `local` if the shown text differs), and the system you were in at the time. Each seed is recorded once per session.
 - `"t": "label"`: an exotic sighting you labelled with F7, F8 or the buttons, with the system and its exotic's seed.
 
