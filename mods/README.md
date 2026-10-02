@@ -1,10 +1,10 @@
 # Capture mod
 
-`system_capture.py` records every star system you visit in No Man's Sky, together with `SystemShips`: the list of ships the game prepares for that system (each ship's seed, type, role and faction). The project used these records to work out how the game picks a system's ship seeds from its address, which the site now shows, and uses them to check that model and, with exotics you label, to work out what a seed looks like: the next steps on the [roadmap](../README.md#roadmap).
+`system_capture.py` records every star system you visit in No Man's Sky, together with `SystemShips`: the list of ships the game prepares for that system (each ship's seed, type, role and faction). The project used these records to work out how the game picks a system's ship seeds from its address, which the site now shows, and uses them to check that model. When the game builds one of those ships, the mod also records the parts the game picked for it, which is how the project means to work out what a seed looks like, starting with squid and non-squid exotics: the next step on the [roadmap](../README.md#roadmap).
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0, 0.5.0 and 0.5.2 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 took out the change that did it. Not yet tried in the game: 0.6.0, which also records where each planet and moon is, the hotkeys, and finding a game that was already running when the mod attached. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0, 0.5.0 and 0.5.2 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 took out the change that did it. Not yet tried in the game: 0.6.0, which also records where each planet and moon is; 0.7.0, which also records the parts of the ships the game builds; the hotkeys; and finding a game that was already running when the mod attached. To record ship parts, 0.7.0 watches a function the game calls for everything it loads, which no earlier version touched. If the game crashes or loads slowly with it, set `RECORD_SHIP_PARTS = False` near the top of `system_capture.py` and the mod leaves that function alone. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -48,6 +48,7 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
    Recorded <system name> (<portal code>, galaxy <number>): 50 ships (Freighter 21, Fighter 9, Shuttle 6, ...)
    ```
 
+   While you're in a system, each time the game builds a ship from the system's ship list, the mod records the parts the game picked for it. When that ship is the system's exotic, three high notes play and the log says `Recorded the parts of the exotic (seed ...)`, with its parts. You don't need to see the exotic yourself. It isn't known yet whether the game builds a system's ships as soon as you arrive or only as each one appears; the first captures will show.
 4. Save and quit the game normally when you're done. Pressing Ctrl+C in the terminal closes the game too.
 
    If you close the terminal window instead while the game keeps running, pyMHF stays inside the game until you quit it, and the mod can't attach again until then. It says so if you try.
@@ -56,7 +57,7 @@ The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to
 
 If you arrive somewhere and don't hear the notes, press F6 (see below). If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
 
-When you see an exotic land in a system, press F7 if it's a squid or F8 if it isn't, while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. Those pairs are what decoding a ship's appearance from its seed will be built and checked on. Only label exotics flown by the game, not other players' ships. If you press the wrong key, press the right one: the report keeps your last label for each system in a session.
+When you see an exotic land in a system, press F7 if it's a squid or F8 if it isn't, while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. With the exotic's parts recorded too, a label shows which of those parts make a squid. Only label exotics flown by the game, not other players' ships. If you press the wrong key, press the right one: the report keeps your last label for each system in a session.
 
 ## Hotkeys and sounds
 
@@ -70,13 +71,15 @@ You don't need to switch away from the game. While its window has focus, these k
 
 Two low notes mean it didn't work: no system was loaded yet, the system couldn't be read or written, or for F7 and F8, the system's ship list has no exotic to pair the label with. The log says which.
 
-The keys act when you let go of them. The game's default controls don't appear to use F6 to F8. If one clashes with your own key bindings or another program, change `HOTKEYS` near the top of `system_capture.py`; pyMHF can bind single keys only, not combinations like Ctrl+F6. In the same place, `PLAY_SOUNDS`, `CHIME_ON_ARRIVAL` (the notes after you arrive) and `SOUND_VOLUME` turn the tones off or change their volume.
+Three high notes, the last one higher, mean the mod has recorded the parts of the system's exotic. They play once per exotic.
+
+The keys act when you let go of them. The game's default controls don't appear to use F6 to F8. If one clashes with your own key bindings or another program, change `HOTKEYS` near the top of `system_capture.py`; pyMHF can bind single keys only, not combinations like Ctrl+F6. In the same place, `PLAY_SOUNDS`, `CHIME_ON_ARRIVAL` (the notes after you arrive) and `SOUND_VOLUME` turn the tones off or change their volume, and `RECORD_SHIP_PARTS` turns off recording ship parts.
 
 ## Send captures
 
 Zip `captures\systems.jsonl` and attach it to an [issue](https://github.com/ArmokGoB/One-Million-Years-Trade-Depot/issues). If something went wrong, attach the newest file in `logs\` too.
 
-A capture file holds the address of every system you recorded and when you got there, so anyone you share it with can see where you've been. It holds nothing else about you: no player name, account or save data, and nothing about other players. The first line of each session names the game's executable by its SHA-1 hash and Steam build ID, says which of the mod's hooks attached, and lists the NMS.py, pyMHF and Python versions.
+A capture file holds the address of every system you recorded and when you got there, so anyone you share it with can see where you've been. It holds nothing else about you: no player name, account or save data, and nothing about other players. Ship parts are recorded only for ships in the system's own ship list, never for your ships or other players'. The first line of each session names the game's executable by its SHA-1 hash and Steam build ID, says which of the mod's hooks attached, and lists the NMS.py, pyMHF and Python versions.
 
 For the hotkeys, pyMHF watches the keyboard while the game runs. The mod reacts only to its three keys, and only while the game has focus; it records nothing you type.
 
@@ -103,13 +106,14 @@ One JSON object per line. A `"t": "session"` line starts each run of the game an
 | `arg`, `active`, `sim`, `loc` | Cross-checks: the seed the game passed in, whether the system was the loaded one, the simulation's address and the player's location |
 | `errors`, `unusual` | Present only when part of the system couldn't be read or looked implausible |
 
-Three other kinds of line:
+Four other kinds of line:
 
 - `"t": "query"`: a lookup, a system the game described without loading it. It has the system's seed, the random-number states around the lookup and around any generation steps inside it, its key attributes if that step ran, and whatever the lookup filled in, perhaps including where its planets are. Each seed is recorded once per session.
 - `"t": "name"`: a planet or region name the game generated, with the seed it was generated from (`kind`, `seed`, `name`; `local` if the shown text differs), and the system you were in at the time. Each seed is recorded once per session.
 - `"t": "label"`: an exotic sighting you labelled with F7, F8 or the buttons, with the system and its exotic's seed.
+- `"t": "model"`: a ship of a system's ship list that the game built: the system and the ship's `slot` in its list (`"crash"` for the Sentinel crash-site ship), the model file (`name`) and resource `type`, the ship's `seed` (and a second seed, `seed2`, if the game gave one), and the IDs of the parts the game picked (`parts`). The first records of a session also keep the descriptor the game passed, as `raw`, to check the mod reads it right. Each model of each ship is recorded once per session.
 
-[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts and lists the exotic labels. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated, and checks the ship seeds that [`ship_model.py`](../tools/captures/ship_model.py) predicts from each system's address.
+[`tools/captures/report.py`](../tools/captures/report.py) reads these files. It summarises the ship pools and checks the game's data against itself. It also finds each system's ship seeds in the random-number stream seeded by the system seed, turns the traces into draw counts, lists the exotic labels and lists the parts recorded for each exotic. Given a clone of nms_namegen, it scores the site's generator against the game, including the names the game generated, and checks the ship seeds that [`ship_model.py`](../tools/captures/ship_model.py) predicts from each system's address.
 
 ```sh
 python3 tools/captures/report.py mods/captures/systems.jsonl

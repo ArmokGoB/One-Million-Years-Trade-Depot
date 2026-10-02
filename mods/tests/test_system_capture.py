@@ -34,6 +34,7 @@ mod = harness.load_mod()
 nms, nmse, basic = mod.nms, mod.nmse, mod.basic
 
 from pymhf.core._types import DetourTime  # noqa: E402  (importable only after harness.load_mod)
+from pymhf.extensions.ctypes import c_char_p64  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location("capture_report", ROOT / "tools" / "captures" / "report.py")
@@ -351,9 +352,20 @@ class WiringTests(CaptureTestCase):
     def test_mod_registers_hooks_callback_and_gui(self):
         expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
         expected |= {name for pair in STEPS for name in pair}
+        expected.add("before_add_resource")
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 10)
+        self.assertEqual(len(self.capture._gui_widgets), 11)
+
+    def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
+        hook = mod.TradeDepotCapture.before_add_resource
+        self.assertEqual(hook._hook_func_name, "Engine.AddResource")
+        self.assertEqual(hook._hook_time, DetourTime.BEFORE)
+        self.assertEqual(hook._hook_pattern, nms.Engine.AddResource._signature)
+        # (result, type, name, flags, descriptor) and one argument more, which the game ignores.
+        self.assertEqual(len(hook._hook_func_def.argtypes), 6)
+        argtypes = hook._hook_func_def.argtypes
+        self.assertEqual(argtypes[4], ctypes.POINTER(nms.cTkResourceDescriptor))
 
     def test_no_detour_on_the_main_loop(self):
         # 0.5.1 took the application object from cGcApplication::Update's argument, and the game
@@ -746,6 +758,252 @@ class NameTests(CaptureTestCase):
         self.poll()
         (name,) = [line for line in self.lines() if line["t"] == "name"]
         self.assertNotIn("system", name)
+
+
+FIGHTER_MODEL = "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN"
+EXOTIC_MODEL = "MODELS/COMMON/SPACECRAFT/S-CLASS/S-CLASS_PROC.SCENE.MBIN"
+CRASH_SEED = 0x0102030405060708  # the system's SentinelCrashSiteShipSeed in Game.fill
+
+
+class ModelTests(CaptureTestCase):
+    def descriptor(self, seed: int, parts: list[str], seed2: int = 0, count=None, pointer=None):
+        """A cTkResourceDescriptor in fake memory, with ``parts`` as its part IDs."""
+        descriptor = self.game._alloc(nms.cTkResourceDescriptor)
+        vector = descriptor.maDescriptors
+        if parts:
+            array = (basic.TkID0x20 * len(parts))()
+            self.game.memory.keep(array)
+            self.game._keep.append(array)
+            for item, part in zip(array, parts):
+                item.value = part.encode()
+            if pointer is None:
+                pointer = ctypes.addressof(array)
+        if pointer is not None:
+            vector._ptr = ctypes.cast(pointer, ctypes.POINTER(basic.TkID0x20))
+        vector.vector_size = len(parts) if count is None else count
+        vector.allocated_size = vector.vector_size
+        descriptor.mSeed.Seed = seed
+        descriptor.mSeed.UseSeedValue = 1
+        descriptor.mSecondarySeed.Seed = seed2
+        return ctypes.pointer(descriptor)
+
+    def name_pointer(self, name: str) -> c_char_p64:
+        text = ctypes.create_string_buffer(name.encode(), 0x100)
+        self.game.memory.keep(text)
+        self.game._keep.append(text)
+        return c_char_p64(ctypes.addressof(text))
+
+    def build(self, name: str, seed: int, parts: list[str], resource_type: int = 1, **kwargs) -> None:
+        """Call the AddResource detour the way pyMHF does."""
+        descriptor = self.descriptor(seed, parts, **kwargs)
+        type_value, name_pointer = ctypes.c_int32(resource_type), self.name_pointer(name)
+        result = self.capture.before_add_resource(None, type_value, name_pointer, 0, descriptor, 0)
+        self.assertIsNone(result, "detours must return None")
+
+    def models(self) -> list[dict]:
+        self.poll()
+        return [line for line in self.lines() if line["t"] == "model"]
+
+    def test_parts_of_the_systems_ships_are_recorded_once(self):
+        self.game.generate(self.capture)  # the mod reads the system's ship list
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B"])
+            self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B"])  # built again
+            self.build(EXOTIC_MODEL, 0x8000000000000001, ["_BODY_SQUID"], seed2=0x42)
+        models = self.models()
+        self.assertEqual(
+            [{k: v for k, v in m.items() if k not in ("at", "raw")} for m in models],
+            [
+                {
+                    "t": "model",
+                    "system": f"{UA:016X}",
+                    "slot": 0,
+                    "name": FIGHTER_MODEL,
+                    "type": 1,
+                    "seed": "1111111111111111",
+                    "useSeed": 1,
+                    "parts": ["_COCKPIT_A", "_WINGS_B"],
+                },
+                {
+                    "t": "model",
+                    "system": f"{UA:016X}",
+                    "slot": 2,
+                    "name": EXOTIC_MODEL,
+                    "type": 1,
+                    "seed": "8000000000000001",
+                    "useSeed": 1,
+                    "seed2": "0000000000000042",
+                    "useSeed2": 0,
+                    "parts": ["_BODY_SQUID"],
+                },
+            ],
+        )
+        raw = bytes.fromhex(models[0]["raw"])
+        self.assertEqual(len(raw), ctypes.sizeof(nms.cTkResourceDescriptor), "the first records keep it")
+        self.assertEqual(int.from_bytes(raw[0x10:0x18], "little"), 0x1111111111111111)
+        text = "\n".join(logs.output)
+        self.assertIn(
+            f"Recording ship parts. The first: {FIGHTER_MODEL}, seed 1111111111111111: _COCKPIT_A, _WINGS_B",
+            text,
+        )
+        self.assertIn("Recorded the parts of the exotic (seed 8000000000000001): _BODY_SQUID", text)
+        self.assertEqual(self.capture.ship_parts, "2 of 2 ship models seen")
+        self.assertEqual(self.sounds, ["exotic parts"])
+        self.build(EXOTIC_MODEL.replace("_PROC", "_LOD"), 0x8000000000000001, ["_BODY_SQUID"])
+        self.models()
+        self.assertEqual(self.sounds.count("exotic parts"), 1, "one tone per exotic")
+
+    def test_ships_not_in_the_systems_list_are_not_recorded(self):
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, 0x9999999999999999, ["_COCKPIT_A"])  # your own ship, say
+        self.assertEqual(self.models(), [])
+        self.assertEqual(self.capture.ship_parts, "0 of 1 ship models seen")
+
+    def test_ships_built_before_their_system_is_read_wait_for_its_list(self):
+        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_B"])
+        self.assertEqual(self.models(), [])
+        self.game.generate(self.capture)
+        (model,) = self.models()
+        self.assertEqual((model["slot"], model["parts"]), (1, ["_COCKPIT_B"]))
+
+    def test_waiting_ships_are_limited(self):
+        self._patch("WAITING_MODELS", 1)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
+        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_B"])  # pushes the first out
+        self.game.generate(self.capture)
+        self.assertEqual([m["seed"] for m in self.models()], ["2222222222222222"])
+
+    def test_the_crash_site_ship_is_recorded(self):
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])
+        (model,) = self.models()
+        self.assertEqual(model["slot"], "crash")
+
+    def test_other_models_are_named_in_the_log_once_and_not_recorded(self):
+        self.game.generate(self.capture)
+        creature = "MODELS/PLANETS/CREATURES/QUADRUPED/QUADRUPED.SCENE.MBIN"
+        texture = "TEXTURES/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_BODY.DDS"
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.build(creature, 0x1111111111111111, ["_HEAD_A", "_LEGS_B"])
+            self.build(creature, 0x1111111111111111, ["_HEAD_A", "_LEGS_C"])
+            self.build(texture, 0x1111111111111111, [], resource_type=7)
+        self.assertEqual(
+            logs.output,
+            [
+                f"INFO:TradeDepotCapture:Model {creature}: not a ship, so its parts aren't recorded "
+                "(2 parts).",
+                f"INFO:TradeDepotCapture:Model {texture}: a ship's, but without parts, so not recorded "
+                "(resource type 7).",
+            ],
+        )
+        self.assertEqual(self.models(), [])
+
+    def test_resources_without_a_descriptor_or_anything_in_one_are_ignored(self):
+        self.game.generate(self.capture)
+        name = self.name_pointer(FIGHTER_MODEL)
+        with self.assertNoLogs("TradeDepotCapture", "INFO"):
+            self.assertIsNone(self.capture.before_add_resource(None, 1, name, 0, None, 0))
+            self.build(FIGHTER_MODEL, 0, [])
+        self.assertEqual(self.models(), [])
+
+    def test_unreadable_or_implausible_part_lists_are_recorded_with_the_descriptors_bytes(self):
+        self._patch("RAW_DESCRIPTORS", 0)
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"], count=100_000)
+        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_A"], pointer=0xDEAD0000)
+        first, second = self.models()
+        self.assertRegex(first["errors"][0], r"^implausible part list \(count 100000, pointer 0x[0-9a-f]+\)$")
+        self.assertEqual(second["errors"], ["part list at 0xdead0000 couldn't be read"])
+        for model in (first, second):
+            self.assertEqual(model["parts"], [])
+            self.assertEqual(len(bytes.fromhex(model["raw"])), ctypes.sizeof(nms.cTkResourceDescriptor))
+
+    def test_only_the_first_records_keep_the_descriptors_bytes(self):
+        self._patch("RAW_DESCRIPTORS", 1)
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
+        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_B"])
+        first, second = self.models()
+        self.assertIn("raw", first)
+        self.assertNotIn("raw", second)
+
+    def test_a_hook_failure_is_reported_once_and_the_game_carries_on(self):
+        self.game.generate(self.capture)
+        self._patch("resource_descriptor", mock.Mock(side_effect=RuntimeError("boom")))
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
+            self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("Couldn't record a ship's parts.", logs.output[0])
+
+    def test_names_are_read_a_page_at_a_time(self):
+        buffer = (ctypes.c_char * 0x2000)()
+        start = ctypes.addressof(buffer)
+        boundary = (start + 0x1000) & ~0xFFF  # a page boundary inside the buffer
+        ctypes.memmove(boundary - 4, b"ABCDEFGH\0", 9)
+
+        def readable_to(end):
+            def read(address, size):
+                inside = start <= address and address + size <= end
+                return ctypes.string_at(address, size) if inside else None
+
+            return read
+
+        self._patch("read_memory", readable_to(start + 0x2000))
+        self.assertEqual(mod.read_c_string(boundary - 4, 0x100), "ABCDEFGH", "across a page boundary")
+        self.assertEqual(mod.read_c_string(boundary - 4, 6), "ABCDEF", "at most the limit")
+        ctypes.memmove(boundary - 4, b"ABC\0", 4)
+        self._patch("read_memory", readable_to(boundary))
+        self.assertEqual(mod.read_c_string(boundary - 4, 0x100), "ABC", "up to unreadable memory")
+        self.assertIsNone(mod.read_c_string(boundary, 0x100))
+        self.assertIsNone(mod.read_c_string(0, 0x100))
+
+    def test_the_log_counts_resources_every_few_minutes_while_the_count_changes(self):
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
+        font = self.name_pointer("FONTS/A.TTF")
+        self.assertIsNone(self.capture.before_add_resource(None, 1, font, 0, None, 0))  # no descriptor
+        self.models()  # flush the record; the first count isn't due yet
+        later = mod.time.monotonic() + mod.FIRST_RESOURCE_COUNT_SECONDS
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture._count_resources(later)
+            self.capture._count_resources(later + 2 * mod.RESOURCE_COUNT_SECONDS)  # nothing new
+        expected = (
+            "INFO:TradeDepotCapture:Resources the game has loaded so far: 2, 1 of them with a "
+            "descriptor; ship models: 1 seen, 1 recorded."
+        )
+        self.assertEqual(logs.output, [expected])
+
+    def test_session_header_names_the_resource_types(self):
+        self.game.generate(self.capture)
+        self.assertEqual(self.lines()[0]["enums"]["resourceType"][1], "SceneGraph")
+
+    def test_turning_ship_parts_off_leaves_the_function_alone(self):
+        source = harness.MOD_PATH.read_text(encoding="utf-8")
+        self.assertIn("\nRECORD_SHIP_PARTS = True\n", source)
+        path = Path(self._tmp.name) / "system_capture_without_parts.py"
+        path.write_text(source.replace("\nRECORD_SHIP_PARTS = True\n", "\nRECORD_SHIP_PARTS = False\n"))
+        spec = importlib.util.spec_from_file_location("system_capture_without_parts", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        capture = module.TradeDepotCapture()
+        self.assertNotIn("before_add_resource", {hook.__name__ for hook in capture.hooks})
+        self.assertEqual(capture.ship_parts, "Off (RECORD_SHIP_PARTS is False)")
+
+    def test_report_lists_each_exotics_parts(self):
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
+        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_BODY_SQUID", "_WINGS_A"])
+        self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])
+        self.models()
+        text = "\n".join(report.model_lines(report.read_captures([mod.CAPTURE_FILE])))
+        self.assertIn("Ship models recorded with their parts: 3 (FIGHTER_PROC 2, S-CLASS_PROC 1)", text)
+        self.assertIn("by ship type: Fighter 1, Exotic 1, Sentinel crash-site ship 1", text)
+        self.assertIn("exotics: 1", text)
+        self.assertIn("03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001 _BODY_SQUID _WINGS_A", text)
+        self.assertNotIn("not found in a recorded system's ship list", text)
 
 
 class LabelTests(CaptureTestCase):

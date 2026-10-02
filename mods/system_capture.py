@@ -20,8 +20,11 @@ Each time the game generates a star system, this NMS.py mod appends one line
 to ``captures/systems.jsonl`` next to this file. The line holds the system's
 universal address, its seed, the game's own description of it (name, star,
 race, economy, planets) and ``SystemShips``, the list of ships the game
-prepares for the system. The One Million Years Trade Depot uses these lines
-as ground truth for working out how the game picks a system's ships.
+prepares for the system. When the game builds the model of a ship from that
+list, the mod also records the parts the game picked for it, with the ship's
+seed. The One Million Years Trade Depot uses these lines as ground truth for
+working out how the game picks a system's ships, and what a ship's seed makes
+it look like.
 
 The mod only reads. It changes nothing in the game or your save. Every read
 of game memory goes through ReadProcessMemory, so if NMS.py's struct layouts
@@ -69,10 +72,10 @@ from pymhf import Mod
 from pymhf.core.hooking import on_key_release
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.6.0"
+MOD_VERSION = "0.7.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.6.0 only add fields, record types and controls, so they keep format 2.)
+# (0.3.0 to 0.7.0 only add fields, record types and controls, so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
@@ -88,6 +91,11 @@ HOTKEYS = {
     "squid": "f7",  # the exotic you just saw here is a squid
     "not a squid": "f8",  # ... isn't a squid
 }
+# Record the parts the game picks for each ship of the system's own ship list
+# when it builds the ship's model. This watches a function the game calls for
+# everything it loads; set it to False if the game crashes or loads slowly
+# with the mod, and the mod won't touch that function at all.
+RECORD_SHIP_PARTS = True
 # Short tones tell you what happened while the log is hidden behind the game.
 PLAY_SOUNDS = True
 # Also play the "recorded" tone once per system, a few seconds after you
@@ -99,6 +107,8 @@ SOUNDS = {
     "recorded": [(880.0, 0.07), (1318.5, 0.12)],  # two rising notes
     "squid": [(659.3, 0.07), (880.0, 0.07), (1174.7, 0.14)],  # three rising notes
     "not a squid": [(1174.7, 0.07), (880.0, 0.07), (659.3, 0.14)],  # three falling notes
+    # high, high, higher: the parts of the system's exotic are recorded
+    "exotic parts": [(1318.5, 0.06), (0.0, 0.05), (1318.5, 0.06), (0.0, 0.05), (1760.0, 0.12)],
     "problem": [(220.0, 0.18), (0.0, 0.07), (220.0, 0.18)],  # two low notes
 }
 
@@ -119,6 +129,26 @@ NOT_FOUND_YET = (
 FLUSH_SECONDS = 1.0
 MAX_QUERY_RECORDS = 5_000
 MAX_NAME_RECORDS = 20_000
+# Ship models: resources whose name holds one of these, and that come with a
+# descriptor (the parts picked and the seed they were picked with).
+SHIP_MODEL_PATHS = ("/SPACECRAFT/",)
+MAX_MODEL_RECORDS = 20_000
+MAX_MODEL_PARTS = 256
+MODEL_NAME_LENGTH = 0x100  # cTkFixedString<0x100>, the game's resource names
+# Ship models built before the mod has read their system's ship list wait this
+# many at a time; those whose seed then isn't in the list (your own ships and
+# other players') are dropped unrecorded.
+WAITING_MODELS = 2_000
+# The first few model records of a session keep the descriptor's raw bytes, to
+# check NMS.py's layout of it against the game.
+RAW_DESCRIPTORS = 20
+# Names of other models with parts that the log mentions, to show what the
+# game builds that isn't a ship.
+OTHER_MODELS_LOGGED = 30
+# When the log first counts the resources the game has loaded, and how often after
+# that while the count changes.
+FIRST_RESOURCE_COUNT_SECONDS = 60.0
+RESOURCE_COUNT_SECONDS = 300.0
 NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
 MAX_LOCATORS = 4096
@@ -166,6 +196,7 @@ ENUM_SOURCES = {
     "biome": "cGcBiomeType",
     "biomeSubType": "cGcBiomeSubType",
     "planetClass": "cGcPlanetClass",
+    "resourceType": "ResourceTypes",
 }
 
 # In-game names for the log, keyed by cGcSpaceshipClasses member name.
@@ -585,6 +616,70 @@ def read_text(address: int, size: int) -> str | None:
     return None if raw is None else raw.split(b"\0", 1)[0].decode("utf-8", errors="backslashreplace")
 
 
+def read_c_string(address: int, limit: int) -> str | None:
+    """A NUL-terminated string of at most ``limit`` bytes, read a page at a time, so a short
+    string near the end of readable memory doesn't fail for want of bytes it doesn't have."""
+    if not address:
+        return None
+    text_bytes = b""
+    while len(text_bytes) < limit:
+        start = address + len(text_bytes)
+        raw = read_memory(start, min(limit - len(text_bytes), 0x1000 - (start & 0xFFF)))
+        if raw is None:
+            return None
+        end = raw.find(b"\0")
+        if end >= 0:
+            text_bytes += raw[:end]
+            break
+        text_bytes += raw
+    return text_bytes.decode("utf-8", errors="backslashreplace")
+
+
+def resource_descriptor(address: int, keep_raw: bool = False) -> dict | None:
+    """The parts and seeds in a cTkResourceDescriptor, or None if it has neither.
+
+    The game hands one of these over with each model it builds: the IDs of
+    the parts it picked and the seed it picked them with.
+    """
+    raw = read_memory(address, ctypes.sizeof(nms.cTkResourceDescriptor))
+    if raw is None:
+        raise CaptureError(f"the descriptor at {address:#x} couldn't be read")
+    descriptor = nms.cTkResourceDescriptor.from_buffer_copy(raw)
+    parts, seed, seed2 = descriptor.maDescriptors, descriptor.mSeed, descriptor.mSecondarySeed
+    count, pointer = as_int(parts.vector_size), address_of(parts._ptr)
+    if not count and not seed.Seed and not seed2.Seed:
+        return None
+    found: dict = {"seed": hex64(seed.Seed), "useSeed": as_int(seed.UseSeedValue)}
+    if seed2.Seed or seed2.UseSeedValue:
+        found["seed2"] = hex64(seed2.Seed)
+        found["useSeed2"] = as_int(seed2.UseSeedValue)
+    problems: list[str] = []
+    found["parts"] = []
+    if count:
+        size = ctypes.sizeof(basic.TkID0x20)
+        if not pointer or not 0 < count <= MAX_MODEL_PARTS:
+            problems.append(f"implausible part list (count {count}, pointer {pointer:#x})")
+        elif (part_bytes := read_memory(pointer, count * size)) is None:
+            problems.append(f"part list at {pointer:#x} couldn't be read")
+        else:
+            found["parts"] = [
+                part_bytes[i : i + size].split(b"\0", 1)[0].decode("ascii", errors="backslashreplace")
+                for i in range(0, len(part_bytes), size)
+            ]
+            if not all(part.isprintable() for part in found["parts"]):
+                problems.append("part IDs that aren't text")
+    if problems:
+        found["errors"] = problems
+    if problems or keep_raw:
+        found["raw"] = raw.hex().upper()
+    return found
+
+
+def is_ship_model(name: str) -> bool:
+    path = name.replace("\\", "/").upper()
+    return any(part in path for part in SHIP_MODEL_PATHS)
+
+
 def key_attributes(address: int) -> dict | None:
     """The galaxy generator's summary of a system (StarSystemKeyAttributes) that generation starts from."""
     raw = read_memory(address, LAYOUT.key_attributes_size)
@@ -853,7 +948,10 @@ def play_sound(name: str) -> threading.Thread | None:
 
 class TradeDepotCapture(Mod):
     __author__ = "One Million Years Trade Depot contributors"
-    __description__ = "Records each star system you visit and the ships the game prepares for it."
+    __description__ = (
+        "Records each star system you visit, the ships the game prepares for it "
+        "and the parts it picks for them."
+    )
     __version__ = MOD_VERSION
     __pymhf_required_version__ = "0.2.4"
 
@@ -864,6 +962,8 @@ class TradeDepotCapture(Mod):
     _count = 0
     _query_count = 0
     _name_count = 0
+    _model_count = 0
+    _ship_models_seen = 0
 
     def __init__(self):
         super().__init__()
@@ -893,6 +993,22 @@ class TradeDepotCapture(Mod):
         self._first_frame: float | None = None
         self._waiting_for_game = False
         self._game_found = False
+        # Ship models. The ship seeds of the last few systems read, newest last, as
+        # system -> {seed: (slot, ship class)}; models built before their system was read;
+        # models written; distinct ship models seen; other models the log has mentioned;
+        # exotics whose tone has played.
+        self._ship_systems: dict[int, dict[str, tuple[int | str, int | None]]] = {}
+        self._waiting_models: dict[tuple, dict] = {}
+        self._model_keys: set[tuple] = set()
+        self._seen_models: set[tuple] = set()
+        self._other_models: set[str] = set()
+        self._exotics_heard: set[str] = set()
+        self._raw_descriptors = 0
+        # Resources the game has loaded, and how many came with a descriptor, for the log.
+        self._resources = 0
+        self._described = 0
+        self._resources_logged = 0
+        self._next_resource_count = time.monotonic() + FIRST_RESOURCE_COUNT_SECONDS
         try:
             prepare_sounds()
         except Exception:
@@ -927,6 +1043,13 @@ class TradeDepotCapture(Mod):
     @STRING("Planet and region names recorded")
     def names(self):
         return str(self._name_count)
+
+    @property
+    @STRING("Ship parts recorded")
+    def ship_parts(self):
+        if not RECORD_SHIP_PARTS:
+            return "Off (RECORD_SHIP_PARTS is False)"
+        return f"{self._model_count} of {self._ship_models_seen} ship models seen"
 
     @property
     @STRING("Last system")
@@ -1059,6 +1182,20 @@ class TradeDepotCapture(Mod):
     def after_region_name(self, this, lu64Seed, lResult, lLocResult):
         self._named("region", lu64Seed, lResult, lLocResult)
 
+    if RECORD_SHIP_PARTS:  # otherwise the mod leaves this function alone
+        # Engine::AddResource(type, name, flags, descriptor) loads a resource for the game.
+        # NMS.py 180383 lists the resource manager's own AddResource among the functions whose
+        # pattern no longer finds them; this one's still does. NMS.py calls the descriptor
+        # lAlternateMaterialId, and declares one argument more than the function's mangled name
+        # shows; that one goes on the stack, where the function never reads it.
+        @nms.Engine.AddResource.before
+        def before_add_resource(self, result, liType, lpcName, liFlags, lAlternateMaterialId, unknown):
+            # Read before the game uses the descriptor, in case it moves the part list out.
+            try:
+                self._model_requested(liType, lpcName, lAlternateMaterialId)
+            except Exception:
+                self._report_once("model", "Couldn't record a ship's parts.")
+
     @main_loop.after
     def on_frame(self):
         try:
@@ -1066,6 +1203,7 @@ class TradeDepotCapture(Mod):
             self._flush_pending()
             self._apply_label()
             self._poll()
+            self._count_resources(time.monotonic())
         except Exception:
             self._status = "Couldn't read the current system. See the log."
             self._report_once("poll", "Couldn't read the current system.")
@@ -1166,8 +1304,137 @@ class TradeDepotCapture(Mod):
         except Exception:
             self._report_once("name-hook", "Couldn't record a planet or region name.")
 
+    def _model_requested(self, type_value, name_pointer, descriptor_pointer) -> None:
+        """The game is about to build a model: note its parts if it's a ship from a system's ship list."""
+        self._resources += 1  # counts for the log; a miss when threads race doesn't matter
+        address = address_of(descriptor_pointer)
+        if not address:
+            return
+        descriptor = resource_descriptor(address, keep_raw=self._raw_descriptors < RAW_DESCRIPTORS)
+        if descriptor is None:
+            return
+        self._described += 1
+        name = read_c_string(address_of(name_pointer), MODEL_NAME_LENGTH)
+        if not name:
+            return
+        resource_type = as_int(type_value)
+        if not is_ship_model(name):
+            if descriptor["parts"]:
+                self._other_model(
+                    name, f"not a ship, so its parts aren't recorded ({len(descriptor['parts'])} parts)"
+                )
+            return
+        if not descriptor["parts"] and "errors" not in descriptor:
+            self._other_model(
+                name, f"a ship's, but without parts, so not recorded (resource type {resource_type})"
+            )
+            return
+        entry = {"name": name, "type": resource_type, **descriptor}
+        key = (name, descriptor["seed"], descriptor.get("seed2"), tuple(descriptor["parts"]))
+        with self._lock:
+            if key in self._model_keys:
+                return
+            if key not in self._seen_models and len(self._seen_models) < 2 * MAX_MODEL_RECORDS:
+                self._seen_models.add(key)
+                self._ship_models_seen += 1
+            place = self._ship_place(descriptor["seed"])
+            if place is not None:
+                self._write_model(key, entry, place)
+                return
+            # Not (yet) known as a ship of this system: wait for its ship list.
+            self._waiting_models.pop(key, None)
+            self._waiting_models[key] = dict(entry, at=int(time.time()))
+            while len(self._waiting_models) > WAITING_MODELS:
+                del self._waiting_models[next(iter(self._waiting_models))]
+
+    def _ship_place(self, seed: str) -> tuple[int, int | str, int | None] | None:
+        """(system, slot, ship class) of a ship seed in the systems read lately. The caller holds the lock."""
+        for system, slots in reversed(self._ship_systems.items()):
+            if (place := slots.get(seed)) is not None:
+                return (system, *place)
+        return None
+
+    def _write_model(self, key: tuple, entry: dict, place: tuple[int, int | str, int | None]) -> None:
+        """Queue a ship's model for the capture file. The caller holds the lock."""
+        if key in self._model_keys or len(self._model_keys) >= MAX_MODEL_RECORDS:
+            return
+        self._model_keys.add(key)
+        system, slot, ship_class = place
+        record = {
+            "t": "model",
+            "at": entry.get("at", int(time.time())),
+            "system": hex64(system),
+            "slot": slot,
+        }
+        record.update((k, v) for k, v in entry.items() if k != "at")
+        if "raw" in record and "errors" not in record:
+            self._raw_descriptors += 1
+        self._pending.append(record)
+        parts = ", ".join(record["parts"]) or "no parts"
+        if len(self._model_keys) == 1:
+            logger.info(
+                "Recording ship parts. The first: %s, seed %s: %s", record["name"], record["seed"], parts
+            )
+        classes = ENUM_TABLES.get("shipClass", [])
+        if ship_class is not None and 0 <= ship_class < len(classes) and classes[ship_class] == "Royal":
+            logger.info("Recorded the parts of the exotic (seed %s): %s", record["seed"], parts)
+            self._status = "Recorded the parts of this system's exotic."
+            if record["seed"] not in self._exotics_heard:  # one tone per exotic, however many models
+                self._exotics_heard.add(record["seed"])
+                play_sound("exotic parts")
+
+    def _remember_ships(self, record: dict) -> None:
+        """Note a system's ship seeds, so the parts of its ships can be recorded when the game builds them."""
+        ships = record.get("ships")
+        if not ships or not RECORD_SHIP_PARTS:
+            return
+        system = (int(record["ua"], 16) or int(record.get("seed") or "0", 16)) & ~PLANET_BITS
+        slots: dict[str, tuple[int | str, int | None]] = {}
+        for slot, row in enumerate(ships):
+            if row[0] != ZERO_SEED:
+                slots.setdefault(row[0], (slot, row[2]))
+        if (crash := record.get("crashShip")) and crash != ZERO_SEED:
+            slots.setdefault(crash, ("crash", None))
+        with self._lock:
+            self._ship_systems.pop(system, None)
+            self._ship_systems[system] = slots
+            while len(self._ship_systems) > 8:
+                del self._ship_systems[next(iter(self._ship_systems))]
+            for key in [k for k, waiting in self._waiting_models.items() if waiting["seed"] in slots]:
+                entry = self._waiting_models.pop(key)
+                self._write_model(key, entry, (system, *slots[entry["seed"]]))
+
+    def _count_resources(self, now: float) -> None:
+        """Every few minutes, while it changes, say in the log how many resources the game has
+        loaded through the function the mod watches for ship parts."""
+        if (
+            not RECORD_SHIP_PARTS
+            or now < self._next_resource_count
+            or self._resources == self._resources_logged
+        ):
+            return
+        self._next_resource_count = now + RESOURCE_COUNT_SECONDS
+        self._resources_logged = self._resources
+        logger.info(
+            "Resources the game has loaded so far: %d, %d of them with a descriptor; ship models: %d seen, "
+            "%d recorded.",
+            self._resources,
+            self._described,
+            self._ship_models_seen,
+            self._model_count,
+        )
+
+    def _other_model(self, name: str, why: str) -> None:
+        """Name in the log the first few models the game builds from a descriptor that aren't
+        recorded, to show what the game builds that way."""
+        with self._lock:
+            if name in self._other_models or len(self._other_models) >= OTHER_MODELS_LOGGED:
+                return
+            self._other_models.add(name)
+        logger.info("Model %s: %s.", name, why)
+
     def _flush_pending(self) -> None:
-        """Write queued lookups and names (their hooks may run on any thread)."""
+        """Write queued lookups, names and ship models (their hooks may run on any thread)."""
         now = time.monotonic()
         if not self._pending or now < self._next_flush:
             return
@@ -1182,6 +1449,7 @@ class TradeDepotCapture(Mod):
             kinds = Counter(entry["t"] for entry in pending)
             self._query_count += kinds["query"]
             self._name_count += kinds["name"]
+            self._model_count += kinds["model"]
 
     def _apply_label(self) -> None:
         label, self._label_requested = self._label_requested, None
@@ -1335,6 +1603,7 @@ class TradeDepotCapture(Mod):
 
     def _record(self, address: int, via: str, context: dict, announce: bool = False) -> bool:
         record = snapshot(address)
+        self._remember_ships(record)
         keyed = dict(record, displayName=context.get("displayName"))
         key = hashlib.sha1(json.dumps(keyed, sort_keys=True).encode()).hexdigest()
         entry = {"t": "sys", "via": via, "at": int(time.time()), "ua": record["ua"]}
