@@ -26,13 +26,13 @@ How often each field matches what players recorded in game, measured by nms_name
 | Wealth tier | 98.9% |
 | Planet and moon counts | 98.4% |
 
-System, region and planet names, the order of bodies, and the outlaw flag aren't covered by that measurement yet. The site says so where it shows them.
+System, region and planet names, the order of bodies, and the outlaw flag aren't covered by that measurement. The site says so where it shows them. The [capture mod](mods/README.md)'s records check them on a smaller sample: so far 5 of 5 system names, 7 of 7 region names and 191 of 198 planet names agree with the game, as do the order of bodies and the outlaw flag in all 12 systems recorded. The 7 planet names that differ look like the work of a filter for offensive words, which the site doesn't model yet.
 
 ## Roadmap
 
 1. **System lookup.** Done: this site.
 2. **Capture mod.** In progress: [`mods/system_capture.py`](mods/system_capture.py), an [NMS.py](https://github.com/monkeyman192/NMS.py) mod that records, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Needs a Windows PC; [how to run it](mods/README.md).
-3. **Address → ship pool.** Work out how the game derives those ships from the address, using the captures as ground truth, and publish the measured accuracy. Found so far, in the first 10 captured systems: each has a 50-slot ship list with the same layout, including exactly one exotic. Every ship seed is made from the next two draws of the game's random-number generator seeded with the system's address, with the crashed Sentinel ship's seed drawn between slots 41 and 42. Still unknown: how many draws the generator makes before the ships (197 to 1,489 in those systems).
+3. **Address → ship pool.** Work out how the game derives those ships from the address, using the captures as ground truth, and publish the measured accuracy. Found so far, in 12 captured systems: each has a 50-slot ship list with the same layout, including exactly one exotic. Every ship seed is made from the next two draws of the game's random-number generator seeded with the system's address, with the crashed Sentinel ship's seed drawn between slots 41 and 42. The ships come at the end: in the 5 systems traced through generation, the generator finished exactly 104 draws after the ships began. Before them come the planet positions and biomes (10 to 20 draws), then 419 to 945 draws that track the system's number of locators (spawn points, 95 to 227 of them) at about 4 draws each. Next: how the locators are generated.
 4. **Seed → appearance.** Decode each ship seed into parts and colours, starting with squid versus ball-cockpit exotics, then every ship type.
 5. **Multi-tools and freighters**, then pictures.
 

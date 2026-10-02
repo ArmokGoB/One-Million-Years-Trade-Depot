@@ -68,10 +68,10 @@ from pymhf import Mod
 from pymhf.core.hooking import on_key_release
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.4.1"
+MOD_VERSION = "0.5.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 and 0.4.0 only add fields, record types and controls, so they keep format 2.)
+# (0.3.0 to 0.5.0 only add fields, record types and controls, so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
@@ -111,6 +111,7 @@ MAX_QUERY_RECORDS = 5_000
 MAX_NAME_RECORDS = 20_000
 NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
+MAX_LOCATORS = 4096
 MAX_READ = 1 << 20
 MASK64 = (1 << 64) - 1
 PLANET_BITS = 0xF << 52  # the planet digit of a universal address
@@ -201,6 +202,9 @@ class Layout:
         )
         self.seed = self.data + data.Seed.offset
         self.ships = self.data + data.SystemShips.offset
+        self.locators = self.data + data.Locators.offset
+        self.locators_type = dict(data._fields_)["Locators"]  # the dynamic array header
+        self.locator_size = ctypes.sizeof(nmse.cGcSolarSystemLocator)
         self.simulation_system = nms.cGcSimulation.mpSolarSystem.offset
         self.simulation_ua = nms.cGcSimulation.mCurrentUA.offset
         self.location = nms.cGcPlayerState.mLocation.offset
@@ -527,6 +531,28 @@ def packed(raw: bytes | None) -> str | None:
 def raw_data(address: int) -> str | None:
     """The whole generated cGcSolarSystemData, compressed, for offline analysis."""
     return packed(read_memory(address + LAYOUT.data, LAYOUT.data_size))
+
+
+def locator_data(address: int) -> dict | None:
+    """The system's Locators, the spawn points generation places, compressed.
+
+    In the systems traced so far, generation drew about four random numbers
+    per locator between the planet biomes and the ships, so the locators look
+    like what decides where the ships start in the random-number stream.
+    """
+    header = read_memory(address + LAYOUT.locators, ctypes.sizeof(LAYOUT.locators_type))
+    if header is None:
+        return None
+    array = LAYOUT.locators_type.from_buffer_copy(header)
+    count, pointer = as_int(array.Size), as_int(array.ArrayPointer)
+    if count == 0:
+        return {"count": 0}
+    if not pointer or not 0 < count <= MAX_LOCATORS:
+        raise CaptureError(f"implausible locator list (count {count}, pointer {pointer:#x})")
+    raw = read_memory(pointer, count * LAYOUT.locator_size)
+    if raw is None:
+        raise CaptureError(f"locator list at {pointer:#x} couldn't be read")
+    return {"count": count, "size": LAYOUT.locator_size, "raw": packed(raw)}
 
 
 def raw_galaxy(address: int) -> str | None:
@@ -965,6 +991,8 @@ class TradeDepotCapture(Mod):
             generator = address_of(this)
             if generator in self._traces:
                 self._keys[generator] = key_attributes(address_of(lStarKeyAttributes))
+            elif (query := self._queries.get(generator)) is not None:
+                query["keyAttributes"] = key_attributes(address_of(lStarKeyAttributes))
         except Exception:
             self._report_once("keys", "Couldn't read a system's key attributes.")
 
@@ -1019,9 +1047,12 @@ class TradeDepotCapture(Mod):
     # --- Internals ---
 
     def _trace(self, generator_pointer, label: str) -> None:
+        """Note the RNG at a generation step, in the system being generated or looked up."""
         try:
             generator = address_of(generator_pointer)
             trace = self._traces.get(generator)
+            if trace is None and (query := self._queries.get(generator)) is not None:
+                trace = query["trace"]
             if trace is not None and len(trace) < 64:
                 trace.append([label, rng_state(generator)])
         except Exception:
@@ -1054,6 +1085,8 @@ class TradeDepotCapture(Mod):
             self._query_seeds.add(query["seed"])
         query["trace"].append(["query<", rng_state(generator)])
         entry = {"t": "query", "at": int(time.time()), "seed": query["seed"], "trace": query["trace"]}
+        if "keyAttributes" in query:
+            entry["keyAttributes"] = query["keyAttributes"]
         try:
             entry.update(query_metadata(address_of(data_pointer)))
         except CaptureError as exc:
@@ -1175,6 +1208,11 @@ class TradeDepotCapture(Mod):
             context["raw"] = raw
         if (raw := raw_galaxy(address)) is not None:
             context["rawGalaxy"] = raw
+        try:
+            if (locators := locator_data(address)) is not None:
+                context["locators"] = locators
+        except CaptureError as exc:
+            context["locators"] = {"error": str(exc)}
         self._record(address, "gen", context)
 
     def _poll(self) -> None:

@@ -221,6 +221,22 @@ class Game:
         dynamic.ArrayPointer = ctypes.addressof(array) if ships else 0
         dynamic.Size = len(ships)
 
+    def set_locators(self, count: int):
+        """``count`` locators with distinct contents; returns the array."""
+        array = (nmse.cGcSolarSystemLocator * count)()
+        self.memory.keep(array)
+        self._keep.append(array)
+        for i, locator in enumerate(array):
+            locator.Position.x, locator.Position.y, locator.Position.z = i * 1000.5, -i * 2.25, i + 0.5
+            locator.Direction.x, locator.Direction.y, locator.Direction.z = 0.0, 1.0, 0.0
+            locator.Radius = 100.0 + i
+            locator.Type = i % 4
+            locator.Name.value = f"LOC{i}".encode()
+        dynamic = self.system.mSolarSystemData.Locators
+        dynamic.ArrayPointer = ctypes.addressof(array) if count else 0
+        dynamic.Size = count
+        return array
+
     def this(self):
         return ctypes.cast(self.address, ctypes.POINTER(nms.cGcSolarSystem))
 
@@ -644,6 +660,37 @@ class TraceTests(CaptureTestCase):
         )
 
 
+class LocatorTests(CaptureTestCase):
+    def test_generated_record_keeps_the_locators(self):
+        locators = self.game.set_locators(3)
+        self.game.generate(self.capture)
+        kept = self.lines()[1]["locators"]
+        self.assertEqual({k: v for k, v in kept.items() if k != "raw"}, {"count": 3, "size": 0x50})
+        self.assertEqual(zlib.decompress(base64.b64decode(kept["raw"])), bytes(locators))
+
+    def test_no_locators(self):
+        self.game.generate(self.capture)
+        self.assertEqual(self.lines()[1]["locators"], {"count": 0})
+
+    def test_unreadable_or_implausible_locators_are_noted_and_the_record_kept(self):
+        dynamic = self.game.system.mSolarSystemData.Locators
+        cases = [(5, "couldn't be read"), (mod.MAX_LOCATORS + 1, "implausible")]
+        for size, problem in cases:
+            with self.subTest(size=size):
+                dynamic.ArrayPointer, dynamic.Size = 0x10, size
+                self.game.generate(mod.TradeDepotCapture())
+                record = self.lines()[-1]
+                self.assertIn(problem, record["locators"]["error"])
+                self.assertEqual(len(record["ships"]), 3)
+
+    def test_polls_dont_repeat_the_locators(self):
+        self.game.set_locators(2)
+        self.game.generate(self.capture)
+        self.poll()
+        self.poll()
+        self.assertEqual([("locators" in line) for line in self.lines()[1:]], [True, False])
+
+
 class NameTests(CaptureTestCase):
     def name(self, kind: str, seed: int, name: str, local: str | None = None):
         """Call a name-generator detour the way pyMHF does."""
@@ -824,8 +871,9 @@ class DiagnosticsTests(CaptureTestCase):
 
 
 class LookupTests(CaptureTestCase):
-    def lookup(self, seed: int, ships=SHIPS) -> None:
-        """A GenerateQueryInfo call on a generator that isn't generating a loaded system."""
+    def lookup(self, seed: int, ships=SHIPS, steps: bool = False) -> None:
+        """A GenerateQueryInfo call on a generator that isn't generating a loaded system;
+        with ``steps``, the basics, positions and biomes steps run inside it."""
         generator = self.game._alloc(nms.cGcSolarSystemGenerator)
         data = self.game._alloc(nmse.cGcSolarSystemData)
         generation = self.game._alloc(nms.cGcSolarSystemGenerator.GenerationData)
@@ -835,6 +883,22 @@ class LookupTests(CaptureTestCase):
         self.game.set_rng(report.seeded_state(seed), generator)
         pointer = self.game.generator_pointer(generator)
         self.capture.before_query(pointer, ctypes.pointer(query_seed), None, ctypes.pointer(generation))
+        if steps:
+            stream = report.stream_states(seed, 40)
+            for name, state in (
+                ("before_basics", report.seeded_state(seed)),
+                ("after_basics", report.seeded_state(seed)),
+                ("before_positions", report.seeded_state(seed)),
+                ("after_positions", stream[5]),
+                ("before_biomes", stream[5]),
+                ("after_biomes", stream[9]),
+            ):
+                self.game.set_rng(state, generator)
+                if "basics" in name:
+                    args = (ctypes.pointer(query_seed), None, ctypes.pointer(self.game.keys), None)
+                else:
+                    args = (None, None, None)
+                getattr(self.capture, name)(pointer, *args)
         data.Seed.Seed = seed
         data.StarType = 3
         self.game.set_rng(report.stream_states(seed, 40)[39], generator)
@@ -863,6 +927,21 @@ class LookupTests(CaptureTestCase):
         self.assertEqual(self.capture.lookups, "1")
         lines = report.trace_lines(report.read_captures([mod.CAPTURE_FILE]))
         self.assertIn("lookup 0000ABC012345678: query>0 query<40", "\n".join(lines))
+
+    def test_steps_inside_a_lookup_join_its_trace_with_its_key_attributes(self):
+        self.lookup(0x0000ABC012345678, steps=True)
+        self.game.loaded = False
+        self.poll()
+        query = self.lines()[1]
+        labels = ["query>", "basics>", "basics<", "positions>", "positions<", "biomes>", "biomes<", "query<"]
+        self.assertEqual([label for label, _ in query["trace"]], labels)
+        self.assertEqual(query["keyAttributes"]["anomaly"], "01020304")
+        lines = report.trace_lines(report.read_captures([mod.CAPTURE_FILE]))
+        self.assertIn(
+            "lookup 0000ABC012345678: query>0 basics>0 basics<0 positions>0 positions<6 biomes>6 biomes<10 "
+            "query<40",
+            "\n".join(lines),
+        )
 
     def test_each_seed_is_looked_up_once(self):
         self.lookup(0x0000ABC012345678)
@@ -1220,6 +1299,25 @@ class ReportTests(CaptureTestCase):
             "ships 0-41, crash ship, ships 42-49",
             "\n".join(lines),
         )
+
+    def test_trace_shows_where_the_ships_come_in_the_generation(self):
+        ship_seeds, crash = stream_ships(UA, offset=429)
+        self.game.set_ships([(seed, FIGHTER, 0, 1, 0, "") for seed in ship_seeds])
+        self.game.system.mSolarSystemData.SentinelCrashSiteShipSeed.Seed = crash
+        self.game.set_locators(95)
+        states = report.stream_states(UA, 600)
+        picks = [report.seeded_state(0x1234), report.seeded_state(UA), states[3], report.seeded_state(UA)]
+        picks += [states[5], states[5], states[9], states[9], states[9], states[532]]
+        self.game.generate_traced(self.capture, picks)
+        self.poll()
+        self.poll()  # the named record joins the generated one
+        text = "\n".join(report.trace_lines(report.read_captures([mod.CAPTURE_FILE]), limit=2000))
+        self.assertIn(
+            "03E9F3545C3E galaxy 1 Shown-Name: biomes done after 10 draws, ships start after 429, "
+            "Generate done after 533; 419 draws between biomes and ships, 95 locators (4.41 draws each)",
+            text,
+        )
+        self.assertIn("Generate ended 104 draws after the ships started in 1 of 1 generation(s)", text)
 
     def test_ship_stream_reports_other_draws_and_absence(self):
         found = report.locate_ship_stream(
