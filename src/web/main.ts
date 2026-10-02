@@ -52,6 +52,14 @@ function count(n: number): string {
   return ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"][n] ?? String(n);
 }
 
+/** The address of this page with a system in it, which opens the site on that system. */
+function systemLink(portalCode: string, galaxy: number): URL {
+  const url = new URL(window.location.href);
+  url.searchParams.set("address", portalCode);
+  url.searchParams.set("galaxy", String(galaxy));
+  return url;
+}
+
 function galaxyLabel(galaxy: number): string {
   return galaxy === 0 ? "0 (Euclid)" : String(galaxy);
 }
@@ -261,11 +269,15 @@ function render(d: SystemDescription): void {
   const copy = el("button", "button-secondary", "Copy link to this system");
   copy.type = "button";
   copy.addEventListener("click", async () => {
+    // Built from the system shown, since the page's own address has none on the default system.
+    const link = systemLink(d.portalCode, d.galaxy).href;
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(link);
       status.textContent = "Link copied.";
     } catch {
-      status.textContent = "Couldn't copy. Use the address bar instead.";
+      const anchor = el("a", undefined, link);
+      anchor.href = link;
+      status.replaceChildren("Couldn't copy. Here is the link: ", anchor);
     }
   });
   const actions = el("div", "result__actions", copy, status);
@@ -314,12 +326,7 @@ function lookup(addressText: string, galaxyText: string, updateUrl: boolean): vo
   addressInput.value = formatPortalCode(code);
   render(description);
 
-  if (updateUrl) {
-    const url = new URL(window.location.href);
-    url.searchParams.set("address", description.portalCode);
-    url.searchParams.set("galaxy", String(galaxy));
-    window.history.replaceState(null, "", url);
-  }
+  if (updateUrl) window.history.replaceState(null, "", systemLink(description.portalCode, galaxy));
 }
 
 form.addEventListener("submit", (event) => {
@@ -327,11 +334,23 @@ form.addEventListener("submit", (event) => {
   lookup(addressInput.value, galaxyInput.value, true);
 });
 
-// Restore a shared link.
+// Restore a shared link, or start on the Pilgrim Star (064A:0082:01B9:009A on a signal booster) in Euclid.
+// The site shows generated names, not the ones players give, so an intro says which system this is.
+const DEFAULT_ADDRESS = "009A039BAE4B";
 const params = new URLSearchParams(window.location.search);
 const sharedAddress = params.get("address");
 if (sharedAddress) {
   galaxyInput.value = params.get("galaxy") ?? "0";
   addressInput.value = sharedAddress;
   lookup(sharedAddress, galaxyInput.value, false);
+} else {
+  galaxyInput.value = "0";
+  lookup(DEFAULT_ADDRESS, galaxyInput.value, false);
+  result.prepend(
+    el(
+      "p",
+      "result__intro",
+      "An example to start with: the system its discoverer named the Pilgrim Star. Enter any other address above.",
+    ),
+  );
 }

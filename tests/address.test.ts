@@ -49,6 +49,12 @@ describe("signal-booster galactic coordinates", () => {
     }
   });
 
+  // The Pilgrim Star, which the site shows until a visitor looks up another system.
+  it("agrees on the Pilgrim Star", () => {
+    expect(formatPortalCode(parseGalacticCoordinates("064A:0082:01B9:009A"))).toBe("009A039BAE4B");
+    expect(toGalacticCoordinates(parsePortalCode("009A039BAE4B"))).toBe("064A:0082:01B9:009A");
+  });
+
   it("is picked automatically by parseAnyAddress", () => {
     expect(formatPortalCode(parseAnyAddress("025B:0082:03FF:004A"))).toBe("004A03C00A5C");
     expect(formatPortalCode(parseAnyAddress("004A03C00A5C"))).toBe("004A03C00A5C");
