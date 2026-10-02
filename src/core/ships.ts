@@ -56,6 +56,8 @@ export interface Ship {
   /** What the game puts in this slot, e.g. "Hauler" or "Frigate (Combat)". */
   type: string;
   group: ShipGroup;
+  /** What a player should know about this slot, if anything, e.g. that it never turns up in systems. */
+  note: string | null;
 }
 
 export interface ShipPool {
@@ -186,6 +188,15 @@ const FRIGATE_CLASSES = [
   "DeepSpaceCommon",
 ] as const;
 
+/**
+ * The game's list is a set of templates, not a list of ships that turn up:
+ * every system has a slot for each frigate class, for one. Where it's known
+ * that a slot's ship doesn't appear in systems, the slot says so.
+ */
+const SLOT_NOTES: Record<number, string> = {
+  32: "The Beachhead expedition's reward; not found in star systems.",
+};
+
 const FIXED_SLOTS: Record<number, readonly [string, ShipGroup]> = {
   20: ["Exotic", "exotic"],
   21: ["Freighter", "freighter"],
@@ -241,7 +252,13 @@ export function shipPool(code: bigint, galaxy: number): ShipPool | null {
   const { ships, crashSite } = shipSeeds(ua, start);
   const types = slotTypes(attributes.dominant_race);
   return {
-    ships: ships.map((seed, slot) => ({ slot, seed, type: types[slot]![0], group: types[slot]![1] })),
+    ships: ships.map((seed, slot) => ({
+      slot,
+      seed,
+      type: types[slot]![0],
+      group: types[slot]![1],
+      note: SLOT_NOTES[slot] ?? null,
+    })),
     exotic: ships[20]!,
     crashSite,
     drawsBeforeShips: start,

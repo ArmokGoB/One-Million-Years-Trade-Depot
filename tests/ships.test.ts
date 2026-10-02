@@ -119,6 +119,14 @@ describe("slot types", () => {
       expect(shipPool(code, v.galaxy)!.ships.map((s) => s.type)).toEqual(slotTypes(race).map(([type]) => type));
     }
   });
+
+  it("says the Normandy's slot isn't a ship found in systems", () => {
+    const v = file.vectors.find((v) => v.ships)!;
+    const ships = shipPool(parsePortalCode(v.code), v.galaxy)!.ships;
+    expect(ships[32]!.type).toBe("Frigate (Normandy)");
+    expect(ships[32]!.note).toMatch(/Beachhead expedition/);
+    expect(ships.filter((s) => s.note).map((s) => s.slot)).toEqual([32]);
+  });
 });
 
 describe("describeSystem", () => {
@@ -129,7 +137,14 @@ describe("describeSystem", () => {
     expect(d.ships!.exotic).toBe(`0x${v.ships![20]}`);
     expect(d.ships!.crashSite).toBe(`0x${v.crash}`);
     expect(d.ships!.ships).toHaveLength(50);
-    expect(d.ships!.ships[0]).toEqual({ slot: 0, type: "Hauler", group: "civilian", seed: `0x${v.ships![0]}` });
+    expect(d.ships!.ships[0]).toEqual({
+      slot: 0,
+      type: "Hauler",
+      group: "civilian",
+      seed: `0x${v.ships![0]}`,
+      note: null,
+    });
+    expect(d.ships!.ships[32]!.note).toMatch(/Beachhead expedition/);
     expect(d.ships!.uncertain).toBeNull();
   });
 

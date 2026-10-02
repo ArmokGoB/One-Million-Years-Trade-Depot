@@ -10,7 +10,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 - Star colour, faction (or uncharted / abandoned), economy, wealth and conflict
 - Whether it is a region's black hole or Atlas Interface system
 - Planets and moons, with their procedural names and planet seeds
-- The system's 50 ships, each with its seed and the type the game gives its slot, the exotic included, and the seed the game keeps for the ship at its Sentinel crash sites
+- The ship list the game builds for the system: 50 slots, each with its seed and type, the exotic's included, plus the seed the game keeps for the ship at its Sentinel crash sites. Not every slot is a ship you can meet there: the list has a frigate of every class, including the Normandy, which only comes from the Beachhead expedition.
 - A shareable link for every lookup
 
 It accepts a 12-digit portal address (`003DF8F87945`) or signal-booster coordinates (`025B:0082:03FF:004A`), plus a galaxy number (0 is Euclid).
