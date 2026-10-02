@@ -655,12 +655,10 @@ def model_lines(captures: Captures) -> list[str]:
         return []
     systems = captures.representative_by_system()
     files = Counter(_model_file(model.get("name") or "") for model in captures.models)
-    lines = [
-        "",
-        f"Ship models recorded with their parts: {len(captures.models)} ("
-        + ", ".join(f"{name} {n}" for name, n in files.most_common())
-        + ")",
-    ]
+    shown = ", ".join(f"{name} {n}" for name, n in files.most_common(8))
+    if len(files) > 8:
+        shown += f", and {len(files) - 8} other model files"
+    lines = ["", f"Ship models recorded with their parts: {len(captures.models)} ({shown})"]
     if errors := sum(1 for model in captures.models if model.get("errors")):
         lines.append(f"  with read errors: {errors}")
     kinds: Counter = Counter()

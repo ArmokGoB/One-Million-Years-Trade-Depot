@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0, 0.5.0 and 0.5.2 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 took out the change that did it. Not yet tried in the game: 0.6.0, which also records where each planet and moon is; 0.7.0, which also records the parts of the ships the game builds; the hotkeys; and finding a game that was already running when the mod attached. To record ship parts, 0.7.0 watches a function the game calls for everything it loads, which no earlier version touched. If the game crashes or loads slowly with it, set `RECORD_SHIP_PARTS = False` near the top of `system_capture.py` and the mod leaves that function alone. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0, 0.5.0, 0.5.2 and 0.7.0 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 took out the change that did it. In its first run, 0.7.0 recorded where each planet is, and the parts of every ship in the system's list, the exotic's included, while the system was still loading; the parts it read match the raw bytes it kept. Not yet tried in the game: the hotkeys, and finding a game that was already running when the mod attached. To record ship parts, 0.7.0 watches a function the game calls for everything it loads. If the game crashes or loads slowly with it, set `RECORD_SHIP_PARTS = False` near the top of `system_capture.py` and the mod leaves that function alone. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -48,7 +48,7 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
    Recorded <system name> (<portal code>, galaxy <number>): 50 ships (Freighter 21, Fighter 9, Shuttle 6, ...)
    ```
 
-   While you're in a system, each time the game builds a ship from the system's ship list, the mod records the parts the game picked for it. When that ship is the system's exotic, three high notes play and the log says `Recorded the parts of the exotic (seed ...)`, with its parts. You don't need to see the exotic yourself. It isn't known yet whether the game builds a system's ships as soon as you arrive or only as each one appears; the first captures will show.
+   As a system loads, the game builds every ship in its ship list, and the mod records the parts the game picked for each. When it gets to the exotic, three high notes play, often before the loading screen ends, and the log says `Recorded the parts of the exotic (seed ...)`, with its parts. You don't need to wait for the exotic to land.
 4. Save and quit the game normally when you're done. Pressing Ctrl+C in the terminal closes the game too.
 
    If you close the terminal window instead while the game keeps running, pyMHF stays inside the game until you quit it, and the mod can't attach again until then. It says so if you try.
@@ -57,7 +57,7 @@ The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to
 
 If you arrive somewhere and don't hear the notes, press F6 (see below). If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
 
-When you see an exotic land in a system, press F7 if it's a squid or F8 if it isn't, while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. With the exotic's parts recorded too, a label shows which of those parts make a squid. Only label exotics flown by the game, not other players' ships. If you press the wrong key, press the right one: the report keeps your last label for each system in a session.
+When you see an exotic land in a system, press F7 if it's a squid or F8 if it isn't, while you're still in that system. In every system recorded so far the ship list holds exactly one exotic, so the mod pairs your label with that exotic's seed. With the exotic's parts recorded too, a label shows which of those parts make a squid; once that's known, the parts alone will tell. Only label exotics flown by the game, not other players' ships. If you press the wrong key, press the right one: the report keeps your last label for each system in a session.
 
 ## Hotkeys and sounds
 
