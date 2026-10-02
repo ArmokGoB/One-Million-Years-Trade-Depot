@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0 and 0.5.0 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Not yet tried in the game: the hotkeys, and 0.5.1's fix for attaching to a game that's already running. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0 and 0.5.0 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 takes out the change that did it and otherwise runs in the game like 0.5.0. Not yet tried in the game: 0.5.2 itself, the hotkeys, and finding a game that was already running when the mod attached. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -40,6 +40,8 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
    This starts the game through Steam with the mod attached, or attaches the mod to the game if it's already running. Two extra windows open: a log console and the pyMHF panel, which has a **TradeDepotCapture** tab.
 
    Starting the game this way is better: the mod then sees how the system you load into is generated. A system that was generated before the mod attached gets recorded without those details.
+
+   Attached to a game that's already running, the mod can't see the game until the game next changes state. Opening the galaxy map should do it. The log says "Found the game" when it has.
 3. Load your save and play as usual. A few seconds after you arrive in a system, the mod plays two short rising notes, and the log shows a line like:
 
    ```text
