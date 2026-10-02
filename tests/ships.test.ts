@@ -95,8 +95,20 @@ describe("slot types", () => {
     expect(fixed(0)).toEqual(fixed(3));
     const types = slotTypes(1);
     expect(types[20]).toEqual(["Exotic", "exotic"]);
-    expect(types[27]).toEqual(["Frigate (Combat)", "frigate"]);
-    expect(types[35]).toEqual(["Police interceptor", "police"]);
+    expect(types[27]).toEqual(["Combat frigate", "frigate"]);
+    expect(types.slice(27, 35).map(([type]) => type)).toEqual([
+      "Combat frigate",
+      "Exploration frigate",
+      "Industrial frigate",
+      "Trade frigate",
+      "Support frigate",
+      "Recon frigate",
+      "Organic frigate (DeepSpace)",
+      "Organic frigate (DeepSpaceCommon)",
+    ]);
+    expect(types[35]).toEqual(["Sentinel ship", "sentinel"]);
+    expect(types[42]).toEqual(["Raider frigate", "frigate"]);
+    expect(types[45]).toEqual(["Cursed frigate", "frigate"]);
     expect(types[49]).toEqual(["Corvette", "corvette"]);
     const counts = new Map<ShipGroup, number>();
     for (const [, group] of types) counts.set(group, (counts.get(group) ?? 0) + 1);
@@ -105,7 +117,7 @@ describe("slot types", () => {
       exotic: 1,
       freighter: 6,
       frigate: 10,
-      police: 2,
+      sentinel: 2,
       pirate: 7,
       swarm: 3,
       corvette: 1,
@@ -120,12 +132,16 @@ describe("slot types", () => {
     }
   });
 
-  it("says the Normandy's slot isn't a ship found in systems", () => {
+  it("notes the frigate types that don't come from ordinary systems", () => {
     const v = file.vectors.find((v) => v.ships)!;
     const ships = shipPool(parsePortalCode(v.code), v.galaxy)!.ships;
-    expect(ships[32]!.type).toBe("Frigate (Normandy)");
-    expect(ships[32]!.note).toMatch(/Beachhead expedition/);
-    expect(ships.filter((s) => s.note).map((s) => s.slot)).toEqual([32]);
+    expect(ships[32]!.type).toBe("Recon frigate");
+    expect(ships[32]!.note).toMatch(/SSV Normandy SR1, the Beachhead expedition's reward/);
+    expect(ships[45]!.note).toMatch(/Ship of the Damned, the Adrift expedition's reward/);
+    expect(ships[42]!.note).toMatch(/Pirate Dreadnought/);
+    expect(ships[33]!.note).toMatch(/Dream Aerial/);
+    expect(ships[34]!.note).toBe(ships[33]!.note);
+    expect(ships.filter((s) => s.note).map((s) => s.slot)).toEqual([32, 33, 34, 42, 45]);
   });
 });
 

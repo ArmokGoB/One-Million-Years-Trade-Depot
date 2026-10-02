@@ -75,7 +75,7 @@ const SHIP_GROUPS: readonly (readonly [ShipGroup, string])[] = [
   ["exotic", "Exotic"],
   ["freighter", "Freighters"],
   ["frigate", "Frigates"],
-  ["police", "Police"],
+  ["sentinel", "Sentinels"],
   ["pirate", "Pirates"],
   ["swarm", "Swarm"],
   ["corvette", "Corvette"],
@@ -154,10 +154,10 @@ function shipsSection(d: SystemDescription): HTMLElement {
       "p",
       "result__aside",
       "This is the list the game builds for the system, laid out the same way in every system recorded so far. " +
-        "Not every slot is a ship you can meet there: it holds a frigate of every class, the Normandy included. " +
+        "Not every slot is a ship you can meet there: it holds a frigate of every type, including types " +
+        "whose only known frigates are expedition rewards. " +
         "Only the civilian slots vary: how many haulers, fighters and explorers depends on the dominant race, " +
-        "and the game picks between a shuttle and a solar ship in a way not worked out yet. " +
-        "Frigate classes go by the game's internal names.",
+        "and the game picks between a shuttle and a solar ship in a way not worked out yet.",
     ),
     shipTable(ships),
   );
