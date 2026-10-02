@@ -62,6 +62,8 @@ export interface ShipInfo {
   type: string;
   group: ShipGroup;
   seed: string;
+  /** What a player should know about this slot, if anything. */
+  note: string | null;
 }
 
 export interface ShipsInfo {
@@ -115,7 +117,7 @@ function describeShips(code: bigint, galaxy: number): ShipsInfo | null {
   return {
     exotic: seedText(pool.exotic),
     crashSite: seedText(pool.crashSite),
-    ships: pool.ships.map(({ slot, type, group, seed }) => ({ slot, type, group, seed: seedText(seed) })),
+    ships: pool.ships.map(({ slot, type, group, seed, note }) => ({ slot, type, group, seed: seedText(seed), note })),
     uncertain: pool.uncertain,
   };
 }

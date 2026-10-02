@@ -47,15 +47,17 @@ const MOON_PAIR: readonly Vec3[] = [
   [-144186.29608742514, -112895.99999999999, 132086.45830890225],
 ];
 
-export type ShipGroup = "civilian" | "exotic" | "freighter" | "frigate" | "police" | "pirate" | "swarm" | "corvette";
+export type ShipGroup = "civilian" | "exotic" | "freighter" | "frigate" | "sentinel" | "pirate" | "swarm" | "corvette";
 
 export interface Ship {
   /** Position in the game's list, 0-49. */
   slot: number;
   seed: bigint;
-  /** What the game puts in this slot, e.g. "Hauler" or "Frigate (Combat)". */
+  /** What the game puts in this slot, e.g. "Hauler" or "Combat frigate". */
   type: string;
   group: ShipGroup;
+  /** What a player should know about this slot, if anything, e.g. that it never turns up in systems. */
+  note: string | null;
 }
 
 export interface ShipPool {
@@ -174,17 +176,36 @@ const CIVILIAN_BY_RACE: Record<number, readonly [number, number, number]> = {
   3: [3, 7, 3], // Vy'keen
 };
 
-/** Frigate classes go by the game's internal names. */
-const FRIGATE_CLASSES = [
-  "Combat",
-  "Exploration",
-  "Mining",
-  "Diplomacy",
-  "Support",
-  "Normandy",
-  "DeepSpace",
-  "DeepSpaceCommon",
+/**
+ * Frigate types as the game shows them, for its frigate classes 0-7 (Combat,
+ * Exploration, Mining, Diplomacy, Support, Normandy, DeepSpace,
+ * DeepSpaceCommon). The two organic classes keep their internal names apart.
+ */
+const FRIGATE_TYPES = [
+  "Combat frigate",
+  "Exploration frigate",
+  "Industrial frigate",
+  "Trade frigate",
+  "Support frigate",
+  "Recon frigate",
+  "Organic frigate (DeepSpace)",
+  "Organic frigate (DeepSpaceCommon)",
 ] as const;
+
+const ORGANIC = "Organic frigates come through the Dream Aerial, built from plans a fleet expedition can bring back.";
+
+/**
+ * The game's list is a set of templates, not a list of ships that turn up:
+ * every system has a frigate of every type, for one, including types whose
+ * only known frigates are expedition rewards. Those slots say so.
+ */
+const SLOT_NOTES: Record<number, string> = {
+  32: "The only known Recon frigate is the SSV Normandy SR1, the Beachhead expedition's reward.",
+  33: ORGANIC,
+  34: ORGANIC,
+  42: "Raider frigates are the ones you can hire after defeating a Pirate Dreadnought.",
+  45: "The only known Cursed frigate is the Ship of the Damned, the Adrift expedition's reward.",
+};
 
 const FIXED_SLOTS: Record<number, readonly [string, ShipGroup]> = {
   20: ["Exotic", "exotic"],
@@ -194,18 +215,19 @@ const FIXED_SLOTS: Record<number, readonly [string, ShipGroup]> = {
   24: ["Capital freighter", "freighter"],
   25: ["Small freighter", "freighter"],
   26: ["Tiny freighter", "freighter"],
-  ...Object.fromEntries(FRIGATE_CLASSES.map((name, i) => [27 + i, [`Frigate (${name})`, "frigate"] as const])),
-  35: ["Police interceptor", "police"],
-  36: ["Police freighter", "police"],
+  ...Object.fromEntries(FRIGATE_TYPES.map((name, i) => [27 + i, [name, "frigate"] as const])),
+  // The game's Police faction, which is the Sentinels: a ship of class Robot (texture hint POLICE) and a freighter.
+  35: ["Sentinel ship", "sentinel"],
+  36: ["Sentinel freighter", "sentinel"],
   37: ["Pirate fighter", "pirate"],
   38: ["Pirate fighter", "pirate"],
   39: ["Pirate fighter", "pirate"],
   40: ["Pirate fighter", "pirate"],
   41: ["Pirate fighter", "pirate"],
-  42: ["Frigate (Pirate)", "frigate"],
+  42: ["Raider frigate", "frigate"],
   43: ["Pirate capital freighter", "pirate"],
   44: ["Pirate frigate", "pirate"],
-  45: ["Frigate (GhostShip)", "frigate"],
+  45: ["Cursed frigate", "frigate"],
   46: ["Swarm capital freighter", "swarm"],
   47: ["Swarm frigate", "swarm"],
   48: ["Swarm drone", "swarm"],
@@ -241,7 +263,13 @@ export function shipPool(code: bigint, galaxy: number): ShipPool | null {
   const { ships, crashSite } = shipSeeds(ua, start);
   const types = slotTypes(attributes.dominant_race);
   return {
-    ships: ships.map((seed, slot) => ({ slot, seed, type: types[slot]![0], group: types[slot]![1] })),
+    ships: ships.map((seed, slot) => ({
+      slot,
+      seed,
+      type: types[slot]![0],
+      group: types[slot]![1],
+      note: SLOT_NOTES[slot] ?? null,
+    })),
     exotic: ships[20]!,
     crashSite,
     drawsBeforeShips: start,

@@ -75,7 +75,7 @@ const SHIP_GROUPS: readonly (readonly [ShipGroup, string])[] = [
   ["exotic", "Exotic"],
   ["freighter", "Freighters"],
   ["frigate", "Frigates"],
-  ["police", "Police"],
+  ["sentinel", "Sentinels"],
   ["pirate", "Pirates"],
   ["swarm", "Swarm"],
   ["corvette", "Corvette"],
@@ -94,7 +94,9 @@ function shipTable(ships: ShipsInfo): HTMLTableElement {
     title.colSpan = 2;
     const body = el("tbody", undefined, el("tr", undefined, title));
     for (const s of members) {
-      body.append(el("tr", undefined, el("td", "ships__type", s.type), el("td", "ships__seed seed", s.seed)));
+      const type = el("td", "ships__type", s.type);
+      if (s.note) type.append(el("span", "ships__note", s.note));
+      body.append(el("tr", undefined, type, el("td", "ships__seed seed", s.seed)));
     }
     table.append(body);
   }
@@ -147,13 +149,15 @@ function shipsSection(d: SystemDescription): HTMLElement {
   const all = el(
     "details",
     "ships-all",
-    el("summary", "ships-all__summary", `All ${ships.ships.length} ships`),
+    el("summary", "ships-all__summary", `The game's full list (${ships.ships.length} slots)`),
     el(
       "p",
       "result__aside",
-      "Every system recorded so far lists its ships in the same 50 slots. Only the civilian ships change: " +
-        "how many haulers, fighters and explorers depends on the dominant race, and the game picks between " +
-        "a shuttle and a solar ship in a way not worked out yet. Frigate classes go by the game's internal names.",
+      "This is the list the game builds for the system, laid out the same way in every system recorded so far. " +
+        "Not every slot is a ship you can meet there: it holds a frigate of every type, including types " +
+        "whose only known frigates are expedition rewards. " +
+        "Only the civilian slots vary: how many haulers, fighters and explorers depends on the dominant race, " +
+        "and the game picks between a shuttle and a solar ship in a way not worked out yet.",
     ),
     shipTable(ships),
   );
