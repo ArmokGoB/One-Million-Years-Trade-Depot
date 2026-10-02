@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Summarise capture files written by mods/system_capture.py.
 
-Prints what was recorded (systems, ship pools, exotics, and the parts the
-game picked for the ships it built, each exotic's against ship_model.py's
-squid rule); checks the game's data against itself,
+Prints what was recorded (systems, ship pools, exotics, the parts the game
+picked for the ships it built, each exotic's against ship_model.py's squid
+rule, and the multi-tools the game offered); checks the game's data against
+itself,
 which is where a struct layout that no longer matches the game shows up
 first; and finds each system's ship seeds in the game's random-number stream
 seeded by the system seed. Given a path to nms_namegen, it also measures how
@@ -152,6 +153,8 @@ class Captures:
     names: list[dict] = field(default_factory=list)
     labels: list[Label] = field(default_factory=list)
     models: list[dict] = field(default_factory=list)
+    # Items the game offered (multi-tools on racks and at merchants, gifts, rewards), with their session.
+    items: list[tuple[dict, Session]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -218,6 +221,8 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                     captures.labels.append(Label(obj, len(captures.sessions) - 1))
                 elif kind == "model":
                     captures.models.append(obj)
+                elif kind == "item":
+                    captures.items.append((obj, session))
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -268,7 +273,7 @@ def summary_lines(captures: Captures) -> list[str]:
         f"{len(files)} file(s), {len(captures.sessions)} session(s), "
         f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s), "
         f"{len(captures.names)} name(s), {len(captures.labels)} exotic label(s), "
-        f"{len(captures.models)} ship model(s)"
+        f"{len(captures.models)} ship model(s), {len(captures.items)} offered item(s)"
     ]
     builds = Counter(
         (s.header.get("exe") or "unknown", s.header.get("steamBuild") or "?", s.header.get("nmspy") or "?")
@@ -693,6 +698,41 @@ def model_lines(captures: Captures) -> list[str]:
     return lines + squid_lines(exotics)
 
 
+def item_lines(captures: Captures) -> list[str]:
+    """Items the game offered (multi-tools on racks and at merchants, gifts, rewards), with the
+    multi-tools they held."""
+    if not captures.items:
+        return []
+    systems = captures.representative_by_system()
+    with_tools = [(item, session) for item, session in captures.items if item.get("tools")]
+    types = Counter(str(item.get("itemType")) for item, _ in captures.items)
+    lines = [
+        "",
+        f"Items the game offered: {len(captures.items)}, {len(with_tools)} of them with a multi-tool "
+        f"(item types: {', '.join(f'{t} x{n}' for t, n in sorted(types.items()))})",
+    ]
+    tool_systems: dict[str, set[int]] = {}
+    for item, session in with_tools:
+        ua = int(item.get("system") or "0", 16)
+        record = systems.get(ua & ~PLANET_BITS)
+        place = record.label() if record is not None else (_portal_label(ua) if ua else "(no system)")
+        where = session.name("where", item.get("where")) or f"place {item.get('where')}"
+        flags = "".join(f", {flag}" for flag in ("free", "gift", "reward") if item.get(flag))
+        for tool in item["tools"]:
+            tool_systems.setdefault(tool["seed"], set()).add(ua)
+            parts = " ".join(tool.get("parts") or []) or "(no parts)"
+            lines.append(
+                f"  {place}, {where}, nearest planet {item.get('planet')}, item type {item.get('itemType')}"
+                f"{flags}: {_model_file(tool.get('name') or '')} {tool['seed']} (at byte "
+                f"{tool.get('offset', 0):#x} of the item): {parts}"
+            )
+    repeated = sum(1 for seen in tool_systems.values() if len(seen) > 1)
+    lines.append(f"  multi-tools: {len(tool_systems)}; offered in more than one system: {repeated}")
+    if raw_only := sum(1 for item, _ in captures.items if not item.get("tools")):
+        lines.append(f"  items without a multi-tool, kept as raw bytes: {raw_only}")
+    return lines
+
+
 def _hex_or_none(text: object) -> int | None:
     try:
         return int(str(text), 16)
@@ -1063,6 +1103,7 @@ def main(argv: list[str] | None = None) -> int:
         + lookup_lines(captures)
         + label_lines(captures)
         + model_lines(captures)
+        + item_lines(captures)
     )
     if args.namegen:
         lines += namegen_lines(captures, args.namegen, args.examples)
