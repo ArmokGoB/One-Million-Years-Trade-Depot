@@ -36,16 +36,16 @@ type Vec3 = readonly [number, number, number];
 
 /**
  * Where a moon sits relative to its parent: 225,792 away, a lone moon along
- * +x. A pair of moons gets the one layout seen so far, at +30 and -30 degrees
- * of elevation and azimuths 0 and the golden angle, written out exactly as
- * the Python model computes it. Another system's two moons were laid out
- * differently, so predictions that depend on a pair are flagged.
+ * +x. A planet's two moons sit at +30 and -30 degrees of elevation, the first
+ * above, at azimuths 0 and the golden angle (137.5 degrees); which of the two
+ * gets which azimuth varies in a way not worked out yet. Written out exactly
+ * as the Python model computes them.
  */
 const LONE_MOON: Vec3 = [225792, 0, 0];
-const MOON_PAIR: readonly Vec3[] = [
-  [195541.60797129598, 112895.99999999999, 0],
-  [-144186.29608742514, -112895.99999999999, 132086.45830890225],
-];
+const ABOVE_AT_0: Vec3 = [195541.60797129598, 112895.99999999999, 0];
+const BELOW_AT_GOLDEN: Vec3 = [-144186.29608742514, -112895.99999999999, 132086.45830890225];
+const ABOVE_AT_GOLDEN: Vec3 = [-144186.29608742514, 112895.99999999999, 132086.45830890225];
+const BELOW_AT_0: Vec3 = [195541.60797129598, -112895.99999999999, 0];
 
 export type ShipGroup = "civilian" | "exotic" | "freighter" | "frigate" | "sentinel" | "pirate" | "swarm" | "corvette";
 
@@ -71,6 +71,20 @@ export interface ShipPool {
   drawsBeforeShips: number;
   /** Why the prediction may be wrong, if a known gap in the model applies. */
   uncertain: string | null;
+  /**
+   * The ship seeds for each other way the system's two-moon planets can have
+   * their moons arranged. Empty unless a planet that isn't prime has two moons.
+   */
+  alternatives: Alternative[];
+}
+
+export interface Alternative {
+  /** The planets whose two moons are the other way round. */
+  swapped: number[];
+  ships: bigint[];
+  exotic: bigint;
+  crashSite: bigint;
+  drawsBeforeShips: number;
 }
 
 /** The generator state the game builds from a 64-bit seed. */
@@ -85,33 +99,45 @@ function distance(a: Vec3, b: Vec3): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-function moonOffsets(bodies: readonly Body[]): Map<number, Vec3> {
+/** Each moon's position relative to its parent; the planets in `swapped` have their two moons the other way round. */
+function moonOffsets(bodies: readonly Body[], swapped: ReadonlySet<number>): Map<number, Vec3> {
   const moons = new Map<number, number[]>();
   bodies.forEach((body, k) => {
     if (body.parent >= 0) moons.set(body.parent, [...(moons.get(body.parent) ?? []), k]);
   });
   const offsets = new Map<number, Vec3>();
-  for (const siblings of moons.values()) {
-    if (siblings.length === 1) offsets.set(siblings[0]!, LONE_MOON);
-    else siblings.forEach((k, j) => offsets.set(k, MOON_PAIR[j % MOON_PAIR.length]!));
+  for (const [parent, siblings] of moons) {
+    if (siblings.length === 1) {
+      offsets.set(siblings[0]!, LONE_MOON);
+      continue;
+    }
+    const [first, second] = swapped.has(parent) ? [ABOVE_AT_GOLDEN, BELOW_AT_0] : [ABOVE_AT_0, BELOW_AT_GOLDEN];
+    siblings.forEach((k, j) => offsets.set(k, j % 2 === 0 ? first : second));
   }
   return offsets;
 }
 
+/** The planets that aren't prime and have two moons, whose arrangement the model can't tell. */
+export function twoMoonPlanets(bodies: readonly Body[]): number[] {
+  return bodies.flatMap((body, k) =>
+    !body.prime && bodies.filter((other) => other.parent === k).length === 2 ? [k] : [],
+  );
+}
+
 /** Why a prediction for these bodies may be wrong, if a known gap in the model applies. */
 export function shipUncertainty(bodies: readonly Body[]): string | null {
-  for (let k = 0; k < bodies.length; k++) {
-    const family = [k, ...bodies.flatMap((other, j) => (other.parent === k ? [j] : []))];
-    if (family.length > 2 && !family.every((j) => bodies[j]!.prime)) {
-      return "a planet with two moons, whose layout isn't known yet";
-    }
-  }
+  const planets = twoMoonPlanets(bodies).length; // at most two: a system has six bodies at most
+  if (planets === 1) return "a planet with two moons, which the game arranges in one of two ways";
+  if (planets) return "two planets with two moons each, which the game arranges in one of two ways";
   return null;
 }
 
-/** How many draws the generator makes before the first ship's. */
-export function drawsBeforeShips(ua: bigint, bodies: readonly Body[]): number {
-  const offsets = moonOffsets(bodies);
+/**
+ * How many draws the generator makes before the first ship's, with the two
+ * moons of the planets in `swapped` the other way round.
+ */
+export function drawsBeforeShips(ua: bigint, bodies: readonly Body[], swapped: ReadonlySet<number> = new Set()): number {
+  const offsets = moonOffsets(bodies, swapped);
   const rng = seeded(ua);
   let draws = 0;
   const word = () => {
@@ -236,43 +262,59 @@ const FIXED_SLOTS: Record<number, readonly [string, ShipGroup]> = {
 
 /**
  * The type the game puts in each of the 50 slots. Only the first 20, the
- * civilian ships, vary: with the dominant race (0 for an uncharted system).
- * The game picks between a shuttle and a solar ship in a way not known yet.
+ * civilian ships, vary: with the dominant race (0 for an uncharted system),
+ * and with whether outlaws control the system. The game makes some of them
+ * solar ships, in a way not worked out yet: about 1 in 10 shuttles, and in
+ * outlaw systems most shuttles and about 1 in 10 of the other civilian ships.
  */
-export function slotTypes(dominantRace: number): (readonly [string, ShipGroup])[] {
+export function slotTypes(dominantRace: number, outlaw = false): (readonly [string, ShipGroup])[] {
   const [haulers, fighters, explorers] = CIVILIAN_BY_RACE[dominantRace] ?? CIVILIAN_BY_RACE[0]!;
+  const maybeSolar = (type: string) => (outlaw ? `${type} or solar` : type);
   const civilian = [
-    ...Array<string>(haulers).fill("Hauler"),
-    ...Array<string>(fighters).fill("Fighter"),
-    ...Array<string>(explorers).fill("Explorer"),
+    ...Array<string>(haulers).fill(maybeSolar("Hauler")),
+    ...Array<string>(fighters).fill(maybeSolar("Fighter")),
+    ...Array<string>(explorers).fill(maybeSolar("Explorer")),
   ];
-  while (civilian.length < 20) civilian.push("Shuttle or solar");
+  while (civilian.length < 20) civilian.push(outlaw ? "Solar or shuttle" : "Shuttle or solar");
   return Array.from({ length: SHIP_COUNT }, (_, slot) =>
     slot < 20 ? ([civilian[slot]!, "civilian"] as const) : FIXED_SLOTS[slot]!,
   );
 }
 
-/** The system's 50 ships, or null for a gas-giant layout, which isn't modelled yet. */
-export function shipPool(code: bigint, galaxy: number): ShipPool | null {
+/**
+ * The system's 50 ships. Where a planet has two moons, the model's first
+ * guess at their arrangement, with the ships for the others as alternatives.
+ * A gas giant layout's bodies aren't modelled, but it only occurs in purple
+ * systems, whose bodies are all prime planets and moons and have no attractors.
+ */
+export function shipPool(code: bigint, galaxy: number): ShipPool {
   const systemCode = withPlanet(code, 0);
   const attributes = systemAttributes(systemCode, galaxy);
-  if (attributes.gas_giant) return null;
   const { bodies } = planetSeeds(systemCode, galaxy);
   const ua = (((systemCode >> 32n) & 0xfffn) << 40n) | (BigInt(galaxy & 0xff) << 32n) | (systemCode & MASK32);
-  const start = drawsBeforeShips(ua, bodies);
-  const { ships, crashSite } = shipSeeds(ua, start);
-  const types = slotTypes(attributes.dominant_race);
+  const planets = twoMoonPlanets(bodies);
+  // In the Python model's order: the last planet's moons flip first.
+  const arrangements = Array.from({ length: 2 ** planets.length }, (_, n) =>
+    planets.filter((_, i) => (n >> (planets.length - 1 - i)) & 1),
+  );
+  const [first, ...others] = arrangements.map((swapped) => {
+    const start = drawsBeforeShips(ua, bodies, new Set(swapped));
+    const { ships, crashSite } = shipSeeds(ua, start);
+    return { swapped, ships, exotic: ships[20]!, crashSite, drawsBeforeShips: start };
+  });
+  const types = slotTypes(attributes.dominant_race, attributes.pirate);
   return {
-    ships: ships.map((seed, slot) => ({
+    ships: first!.ships.map((seed, slot) => ({
       slot,
       seed,
       type: types[slot]![0],
       group: types[slot]![1],
       note: SLOT_NOTES[slot] ?? null,
     })),
-    exotic: ships[20]!,
-    crashSite,
-    drawsBeforeShips: start,
+    exotic: first!.exotic,
+    crashSite: first!.crashSite,
+    drawsBeforeShips: first!.drawsBeforeShips,
     uncertain: shipUncertainty(bodies),
+    alternatives: others,
   };
 }

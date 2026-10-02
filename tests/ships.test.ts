@@ -23,11 +23,13 @@ interface ShipVector {
   what: string;
   code: string;
   galaxy: number;
-  bodies?: [number, number, boolean][];
-  start?: number;
-  uncertain?: string | null;
-  ships: string[] | null;
-  crash?: string;
+  bodies: [number, number, boolean][];
+  start: number;
+  uncertain: string | null;
+  ships: string[];
+  crash: string;
+  /** The other ways a two-moon planet's moons can be arranged. */
+  others: { start: number; exotic: string; crash: string }[];
 }
 
 const file = JSON.parse(readFileSync(new URL("./fixtures/ship-vectors.json", import.meta.url), "utf8")) as {
@@ -47,6 +49,7 @@ describe("ship pool vectors from the Python model", () => {
       "purple star",
       "gas giant layout",
       "another galaxy, with a planet digit",
+      "two planets with two moons each",
     ]);
   });
 
@@ -54,11 +57,6 @@ describe("ship pool vectors from the Python model", () => {
     it(`${v.what}: ${v.code} in galaxy ${v.galaxy}`, () => {
       const code = parsePortalCode(v.code);
       const pool = shipPool(code, v.galaxy);
-      if (v.ships === null) {
-        expect(pool).toBeNull();
-        return;
-      }
-      if (!pool) throw new Error("expected a ship pool");
       const { bodies } = planetSeeds(withPlanet(code, 0), v.galaxy);
       expect(bodies.map((b) => [b.size, b.parent, b.prime])).toEqual(v.bodies);
       expect(pool.drawsBeforeShips).toBe(v.start);
@@ -67,6 +65,13 @@ describe("ship pool vectors from the Python model", () => {
       expect(pool.ships.map((s) => s.slot)).toEqual([...Array(50).keys()]);
       expect(hex64(pool.crashSite)).toBe(v.crash);
       expect(hex64(pool.exotic)).toBe(v.ships[20]);
+      expect(
+        pool.alternatives.map((a) => ({ start: a.drawsBeforeShips, exotic: hex64(a.exotic), crash: hex64(a.crashSite) })),
+      ).toEqual(v.others);
+      for (const a of pool.alternatives) {
+        expect(a.ships).toHaveLength(50);
+        expect(a.ships[20]).toBe(a.exotic);
+      }
     });
   }
 });
@@ -124,17 +129,30 @@ describe("slot types", () => {
     });
   });
 
-  it("uses the system's dominant race", () => {
-    for (const v of file.vectors.filter((v) => v.ships)) {
+  it("uses the system's dominant race and outlaw flag", () => {
+    for (const v of file.vectors) {
       const code = parsePortalCode(v.code);
-      const race = systemAttributes(withPlanet(code, 0), v.galaxy).dominant_race;
-      expect(shipPool(code, v.galaxy)!.ships.map((s) => s.type)).toEqual(slotTypes(race).map(([type]) => type));
+      const attributes = systemAttributes(withPlanet(code, 0), v.galaxy);
+      expect(shipPool(code, v.galaxy).ships.map((s) => s.type)).toEqual(
+        slotTypes(attributes.dominant_race, attributes.pirate).map(([type]) => type),
+      );
     }
   });
 
+  it("says which civilian ships an outlaw system may make solar", () => {
+    const outlaw = (race: number) => slotTypes(race, true).slice(0, 20).map(([type]) => type);
+    expect(runs(outlaw(1))).toEqual([
+      ["Hauler or solar", 7],
+      ["Fighter or solar", 3],
+      ["Explorer or solar", 3],
+      ["Solar or shuttle", 7],
+    ]);
+    expect(slotTypes(2, true).slice(20)).toEqual(slotTypes(2).slice(20));
+  });
+
   it("notes the frigate types that don't come from ordinary systems", () => {
-    const v = file.vectors.find((v) => v.ships)!;
-    const ships = shipPool(parsePortalCode(v.code), v.galaxy)!.ships;
+    const v = file.vectors[0]!;
+    const ships = shipPool(parsePortalCode(v.code), v.galaxy).ships;
     expect(ships[32]!.type).toBe("Recon frigate");
     expect(ships[32]!.note).toMatch(/SSV Normandy SR1, the Beachhead expedition's reward/);
     expect(ships[45]!.note).toMatch(/Ship of the Damned, the Adrift expedition's reward/);
@@ -149,30 +167,34 @@ describe("describeSystem", () => {
   it("includes the ships, with seeds written as on the rest of the page", () => {
     const v = file.vectors.find((v) => v.what === "Korvax, a planet with one moon")!;
     const d = describeSystem(parsePortalCode(v.code), v.galaxy);
-    expect(d.ships).not.toBeNull();
-    expect(d.ships!.exotic).toBe(`0x${v.ships![20]}`);
-    expect(d.ships!.crashSite).toBe(`0x${v.crash}`);
-    expect(d.ships!.ships).toHaveLength(50);
-    expect(d.ships!.ships[0]).toEqual({
+    expect(d.ships.exotic).toBe(`0x${v.ships[20]}`);
+    expect(d.ships.crashSite).toBe(`0x${v.crash}`);
+    expect(d.ships.ships).toHaveLength(50);
+    expect(d.ships.ships[0]).toEqual({
       slot: 0,
       type: "Hauler",
       group: "civilian",
-      seed: `0x${v.ships![0]}`,
+      seed: `0x${v.ships[0]}`,
       note: null,
     });
-    expect(d.ships!.ships[32]!.note).toMatch(/Beachhead expedition/);
-    expect(d.ships!.uncertain).toBeNull();
+    expect(d.ships.ships[32]!.note).toMatch(/Beachhead expedition/);
+    expect(d.ships.uncertain).toBeNull();
+    expect(d.ships.alternatives).toEqual([]);
   });
 
-  it("says why a prediction may be wrong", () => {
+  it("gives the other moon arrangement's exotic and crash-site seeds", () => {
     const v = file.vectors.find((v) => v.what === "Vy'keen, a planet with two moons")!;
-    expect(describeSystem(parsePortalCode(v.code), v.galaxy).ships!.uncertain).toBe(v.uncertain);
+    const ships = describeSystem(parsePortalCode(v.code), v.galaxy).ships;
+    expect(ships.uncertain).toBe(v.uncertain);
+    expect(ships.alternatives).toEqual(v.others.map((o) => ({ exotic: `0x${o.exotic}`, crashSite: `0x${o.crash}` })));
+    expect(ships.alternatives).toHaveLength(1);
   });
 
-  it("has no ships for a gas giant layout", () => {
+  it("predicts a gas giant system, whose bodies are all prime", () => {
     const v = file.vectors.find((v) => v.what === "gas giant layout")!;
     const d = describeSystem(parsePortalCode(v.code), v.galaxy);
     expect(d.gasGiant).toBe(true);
-    expect(d.ships).toBeNull();
+    expect(d.ships.exotic).toBe(`0x${v.ships[20]}`);
+    expect(v.start).toBe(41);
   });
 });

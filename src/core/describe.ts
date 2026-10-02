@@ -45,16 +45,29 @@ export const MEASURED_ACCURACY = {
  * did `planetNames.matched` of the `planetNames.checked` planet names the
  * game generated while they were recorded.
  */
-export const CAPTURE_CHECKS = { systems: 31, outlawSystems: 2, planetNames: { matched: 1109, checked: 1141 } } as const;
+export const CAPTURE_CHECKS = { systems: 66, outlawSystems: 9, planetNames: { matched: 2417, checked: 2497 } } as const;
 
 /**
  * How the ship prediction fares against the systems recorded in game with
  * the capture mod: every ship seed and the Sentinel crash-site seed right in
- * `matched` of `recorded`. The model was worked out from these same systems.
- * `twoMoons` counts those with a planet that has two moons, the layout that
- * ShipsInfo.uncertain flags.
+ * `matched` of `recorded` with the model's first guess, and in all the rest
+ * with a planet's two moons the other way round. The model was worked out
+ * from these same systems. `twoMoons` counts those with a planet that has two
+ * moons, which ShipsInfo.uncertain flags, and how many the first guess got.
  */
-export const SHIP_ACCURACY = { matched: 30, recorded: 31, twoMoons: { matched: 1, recorded: 2 } } as const;
+export const SHIP_ACCURACY = { matched: 62, recorded: 66, twoMoons: { firstGuess: 3, recorded: 7 } } as const;
+
+/**
+ * How often the civilian slots held a solar ship in the systems recorded:
+ * [solar, slots] for the shuttle slots outside and inside outlaw systems,
+ * and for the other civilian slots inside them. Outside outlaw systems
+ * those never did.
+ */
+export const SOLAR_COUNTS = {
+  shuttle: [42, 375],
+  outlawShuttle: [54, 63],
+  outlawOther: [11, 117],
+} as const;
 
 export interface ShipInfo {
   /** Position in the game's list, 0-49. */
@@ -73,6 +86,8 @@ export interface ShipsInfo {
   ships: ShipInfo[];
   /** Why the prediction may be wrong for this system, if a known gap in the model applies. */
   uncertain: string | null;
+  /** The exotic and crash-site seeds for each other way a two-moon planet's moons can be arranged. */
+  alternatives: { exotic: string; crashSite: string }[];
 }
 
 export interface BodyInfo {
@@ -104,21 +119,21 @@ export interface SystemDescription {
   planetCount: number;
   moonCount: number;
   bodies: BodyInfo[];
-  /** The ships predicted from the address, or null for a gas giant layout, which the model doesn't cover. */
-  ships: ShipsInfo | null;
+  /** The ships predicted from the address. */
+  ships: ShipsInfo;
   raw: SystemAttributes;
 }
 
 const seedText = (seed: bigint) => `0x${hex64(seed)}`;
 
-function describeShips(code: bigint, galaxy: number): ShipsInfo | null {
+function describeShips(code: bigint, galaxy: number): ShipsInfo {
   const pool = shipPool(code, galaxy);
-  if (!pool) return null;
   return {
     exotic: seedText(pool.exotic),
     crashSite: seedText(pool.crashSite),
     ships: pool.ships.map(({ slot, type, group, seed, note }) => ({ slot, type, group, seed: seedText(seed), note })),
     uncertain: pool.uncertain,
+    alternatives: pool.alternatives.map((a) => ({ exotic: seedText(a.exotic), crashSite: seedText(a.crashSite) })),
   };
 }
 

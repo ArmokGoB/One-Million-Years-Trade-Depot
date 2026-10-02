@@ -34,6 +34,7 @@ WANTED = [
     "purple star",
     "gas giant layout",
     "another galaxy, with a planet digit",
+    "two planets with two moons each",
 ]
 
 
@@ -76,6 +77,8 @@ def main() -> int:
             found.add("a prime planet with moons")
         if len(bodies) == 6:
             found.add("six bodies")
+        if len(ship_model.two_moon_planets(bodies)) == 2:
+            found.add("two planets with two moons each")
         if galaxy != 0 and code >> 44:
             found.add("another galaxy, with a planet digit")
         return found
@@ -97,20 +100,22 @@ def main() -> int:
     for kind in WANTED:
         code, galaxy = chosen[kind]
         ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & MASK32)
-        bodies = ship_model.bodies(ua)
-        prediction = ship_model.predict(ua)
-        vector = {"what": kind, "code": f"{code:012X}", "galaxy": galaxy}
-        if prediction is None:
-            vector["ships"] = None
-        else:
-            vector.update(
-                bodies=[[b.size, b.parent, b.prime] for b in bodies],
-                start=prediction.start,
-                uncertain=prediction.uncertain,
-                ships=[f"{s:016X}" for s in prediction.ships],
-                crash=f"{prediction.crash:016X}",
-            )
-        vectors.append(vector)
+        bodies = ship_model.bodies(ua) or []
+        prediction, *others = ship_model.predictions(ua)
+        vectors.append(
+            {
+                "what": kind,
+                "code": f"{code:012X}",
+                "galaxy": galaxy,
+                "bodies": [[b.size, b.parent, b.prime] for b in bodies],
+                "start": prediction.start,
+                "uncertain": prediction.uncertain,
+                "ships": [f"{s:016X}" for s in prediction.ships],
+                "crash": f"{prediction.crash:016X}",
+                # the other ways a two-moon planet's moons can be arranged
+                "others": [{"start": o.start, "exotic": f"{o.ships[20]:016X}", "crash": f"{o.crash:016X}"} for o in others],
+            }
+        )
 
     payload = {
         "_source": "tools/captures/ship_model.py over made-up addresses, written by tools/crosscheck/ship_vectors.py.",

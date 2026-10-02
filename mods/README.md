@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0 and 0.5.0 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 takes out the change that did it and otherwise runs in the game like 0.5.0. Not yet tried in the game: 0.5.2 itself, the hotkeys, and finding a game that was already running when the mod attached. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0, 0.5.0 and 0.5.2 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 took out the change that did it. Not yet tried in the game: 0.6.0, which also records where each planet and moon is, the hotkeys, and finding a game that was already running when the mod attached. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -94,6 +94,7 @@ One JSON object per line. A `"t": "session"` line starts each run of the game an
 | `name`, `star`, `race`, `trade`, `wealth`, `conflict`, `planets`, `prime` | The game's own description of the system |
 | `ships` | `SystemShips`, one row per ship: seed, use-seed flag, class, role, faction, frigate class, texture hint |
 | `bodies` | Planet generation inputs: seed, biome, size, resources and flags per planet |
+| `positions` | Where each planet and moon is in the system, as x, y, z; in lookups too, if the game has placed them by the end of the lookup. They show which way round the game put a planet's two moons, which decides where the system's ship seeds fall |
 | `galaxy` | The galaxy generator's view of the same system: planet seeds, star attributes and region data |
 | `trace` | `gen` records: the generator's random-number state at the start and end of each generation step |
 | `keyAttributes` | The galaxy generator's summary that generation starts from: planet counts, the safe start planet, flags, and four bytes (`anomaly`) not yet understood. Only when the game runs that step for the system, which it hasn't for any generated or looked-up system so far |
@@ -104,7 +105,7 @@ One JSON object per line. A `"t": "session"` line starts each run of the game an
 
 Three other kinds of line:
 
-- `"t": "query"`: a lookup, a system the game described without loading it. It has the system's seed, the random-number states around the lookup and around any generation steps inside it, its key attributes if that step ran, and whatever the lookup filled in. Each seed is recorded once per session.
+- `"t": "query"`: a lookup, a system the game described without loading it. It has the system's seed, the random-number states around the lookup and around any generation steps inside it, its key attributes if that step ran, and whatever the lookup filled in, perhaps including where its planets are. Each seed is recorded once per session.
 - `"t": "name"`: a planet or region name the game generated, with the seed it was generated from (`kind`, `seed`, `name`; `local` if the shown text differs), and the system you were in at the time. Each seed is recorded once per session.
 - `"t": "label"`: an exotic sighting you labelled with F7, F8 or the buttons, with the system and its exotic's seed.
 

@@ -69,10 +69,10 @@ from pymhf import Mod
 from pymhf.core.hooking import on_key_release
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.5.2"
+MOD_VERSION = "0.6.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.5.2 only add fields, record types and controls, so they keep format 2.)
+# (0.3.0 to 0.6.0 only add fields, record types and controls, so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
@@ -415,9 +415,16 @@ def trader_row(spawn) -> list:
     ]
 
 
+def body_positions(data) -> list[list[float]]:
+    """Where the generator put each planet and moon, or nothing if it hasn't yet."""
+    count = max(0, min(as_int(data.Planets), len(data.PlanetPositions)))
+    positions = [[round(p.x, 1), round(p.y, 1), round(p.z, 1)] for p in list(data.PlanetPositions)[:count]]
+    return positions if any(any(v for v in p) for p in positions) else []
+
+
 def system_fields(data) -> dict:
     trading = data.TradingData
-    return {
+    fields = {
         "seed": hex64(data.Seed.Seed),
         "useSeed": as_int(data.Seed.UseSeedValue),
         "name": text(data.Name),
@@ -438,6 +445,9 @@ def system_fields(data) -> dict:
         "orbits": [as_int(orbit) for orbit in data.PlanetOrbits],
         "traders": [trader_row(data.TraderSpawnInStations), trader_row(data.TraderSpawnOnOutposts)],
     }
+    if positions := body_positions(data):
+        fields["positions"] = positions
+    return fields
 
 
 def galaxy_attributes(attributes) -> dict:

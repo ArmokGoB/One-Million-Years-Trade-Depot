@@ -881,9 +881,10 @@ class DiagnosticsTests(CaptureTestCase):
 
 
 class LookupTests(CaptureTestCase):
-    def lookup(self, seed: int, ships=SHIPS, steps: bool = False) -> None:
+    def lookup(self, seed: int, ships=SHIPS, steps: bool = False, positions=()) -> None:
         """A GenerateQueryInfo call on a generator that isn't generating a loaded system;
-        with ``steps``, the basics, positions and biomes steps run inside it."""
+        with ``steps``, the basics, positions and biomes steps run inside it, and with
+        ``positions``, its bodies are where they say."""
         generator = self.game._alloc(nms.cGcSolarSystemGenerator)
         data = self.game._alloc(nmse.cGcSolarSystemData)
         generation = self.game._alloc(nms.cGcSolarSystemGenerator.GenerationData)
@@ -911,6 +912,9 @@ class LookupTests(CaptureTestCase):
                 getattr(self.capture, name)(pointer, *args)
         data.Seed.Seed = seed
         data.StarType = 3
+        data.Planets = len(positions)
+        for slot, (x, y, z) in zip(data.PlanetPositions, positions):
+            slot.x, slot.y, slot.z = x, y, z
         self.game.set_rng(report.stream_states(seed, 40)[39], generator)
         array = (nmse.cGcAISpaceshipPreloadCacheData * len(ships))()
         self.game.memory.keep(array)
@@ -952,6 +956,18 @@ class LookupTests(CaptureTestCase):
             "query<40",
             "\n".join(lines),
         )
+
+    def test_a_lookup_records_where_its_bodies_are(self):
+        moons = [(1000.25, -2.5, 300.0), (196541.6, 112896.0, 300.0), (-143186.3, -112896.0, 132386.5)]
+        self.lookup(0x0000ABC012345678, steps=True, positions=moons)
+        self.lookup(0x0000ABC012345679, steps=True)
+        self.game.loaded = False
+        self.poll()
+        placed, unplaced = self.lines()[1:]
+        self.assertEqual(
+            placed["positions"], [[1000.2, -2.5, 300.0], [196541.6, 112896.0, 300.0], [-143186.3, -112896.0, 132386.5]]
+        )
+        self.assertNotIn("positions", unplaced, "nothing placed: nothing recorded")
 
     def test_each_seed_is_looked_up_once(self):
         self.lookup(0x0000ABC012345678)
@@ -1538,6 +1554,17 @@ class ShipModelTests(unittest.TestCase):
         self.assertIn("two moons", ship_model.uncertainty(two))
         self.assertIsNone(ship_model.uncertainty([b._replace(prime=True) for b in two]))
         self.assertIsNone(ship_model.uncertainty(two[:2]))
+        self.assertEqual(ship_model.two_moon_planets(two), [0])
+
+    def test_swapped_moons_trade_azimuths_and_keep_elevations(self):
+        two = [self.Body(0, -1, False), self.Body(3, 0, False), self.Body(3, 0, False)]
+        first, other = ship_model.moon_offsets(two), ship_model.moon_offsets(two, frozenset({0}))
+        for k in (1, 2):
+            self.assertAlmostEqual(first[k][1], other[k][1], places=6, msg="elevation stays with the moon")
+        azimuth = lambda v: math.atan2(v[2], v[0]) % math.tau  # noqa: E731
+        self.assertAlmostEqual(azimuth(first[1]), azimuth(other[2]), places=9)
+        self.assertAlmostEqual(azimuth(first[2]), azimuth(other[1]), places=9)
+        self.assertAlmostEqual(azimuth(first[2]), ship_model.GOLDEN_ANGLE, places=9)
 
 
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")
@@ -1601,6 +1628,36 @@ class NamegenComparisonTests(CaptureTestCase):
         self.assertTrue(any("key attributes: safe start planet" in line for line in scored))
         for line in scored:
             self.assertIn("100.0%", line)
+
+    def test_moon_layouts_are_read_from_recorded_positions(self):
+        # Two made-up systems whose second body, a large planet, has two moons (bodies 2 and 3):
+        # the first laid out the way the model guesses, the second the other way round.
+        lookup = LookupTests.lookup.__get__(self)
+        planet = (500000.0, 1200.0, -300000.0)
+        for code, galaxy, swapped in ((0x021B7BE06E75, 248, frozenset()), (0x6226B9E3A187, 0, frozenset({1}))):
+            ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
+            system = ship_model.bodies(ua)
+            self.assertEqual(ship_model.two_moon_planets(system), [1])
+            offsets = ship_model.moon_offsets(system, swapped)
+            positions = [(1.0e6 * (k + 1), 0.0, 0.0) for k in range(len(system))]
+            positions[1] = planet
+            for k in (2, 3):
+                positions[k] = tuple(a + b for a, b in zip(planet, offsets[k]))
+            lookup(ua, steps=True, positions=positions)
+            lookup(ua | (3 << 52), steps=True, positions=positions)  # the same system, from a planet
+        self.game.loaded = False
+        self.poll()
+        lines = report.moon_layout_lines(
+            report.read_captures([mod.CAPTURE_FILE]), Path(os.environ["NMS_NAMEGEN"]), 5
+        )
+        self.assertEqual(
+            lines[1:],
+            [
+                "Two-moon planets whose moons' positions were recorded: 2",
+                "  first moon at azimuth 0 (the model's first guess): 1",
+                "  first moon at 137.5 degrees: 1",
+            ],
+        )
 
     def test_names_are_scored_against_the_generator(self):
         sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
