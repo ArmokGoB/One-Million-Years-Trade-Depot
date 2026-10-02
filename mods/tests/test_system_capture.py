@@ -269,6 +269,8 @@ class Game:
 
 
 class FakeGameData:
+    GcApplication = "found"  # NMS.py has found the game
+
     def __init__(self, game: Game):
         self.game = game
 
@@ -348,16 +350,15 @@ class WiringTests(CaptureTestCase):
 
     def test_mod_registers_hooks_callback_and_gui(self):
         expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
-        expected |= {name for pair in STEPS for name in pair} | {"find_application"}
+        expected |= {name for pair in STEPS for name in pair}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
         self.assertEqual(len(self.capture._gui_widgets), 10)
 
-    def test_application_hook_targets_the_main_loop(self):
-        hook = mod.TradeDepotCapture.find_application
-        self.assertEqual(hook._hook_func_name, "cGcApplication.Update")
-        self.assertEqual(hook._hook_time, DetourTime.BEFORE)
-        self.assertEqual(hook._hook_pattern, nms.cGcApplication.Update._signature)
+    def test_no_detour_on_the_main_loop(self):
+        # 0.5.1 took the application object from cGcApplication::Update's argument, and the game
+        # crashed. The mod runs on the main loop through NMS.py's callback instead.
+        self.assertNotIn("cGcApplication.Update", {hook._hook_func_name for hook in self.capture.hooks})
 
     def test_hotkeys_are_registered_on_key_release(self):
         keys = {f.__name__: (f._hotkey, f._hotkey_press) for f in self.capture._hotkey_funcs}
@@ -1096,7 +1097,7 @@ class PollingTests(CaptureTestCase):
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.capture.on_frame()
         expected = "INFO:TradeDepotCapture:Couldn't record: no star system is loaded yet."
-        self.assertEqual(logs.output, [expected])
+        self.assertEqual(logs.output, ["INFO:TradeDepotCapture:Found the game. Recording from now on.", expected])
         self.assertEqual(self.capture.status, "No star system is loaded yet.")
         self.assertEqual(self.sounds, ["problem"])
 
@@ -1112,7 +1113,7 @@ class PollingTests(CaptureTestCase):
 
 
 class ApplicationTests(CaptureTestCase):
-    """Attached to a game that was already running, NMS.py hasn't found the application object."""
+    """Until NMS.py finds the game's application object, the mod can't see the game."""
 
     def setUp(self):
         super().setUp()
@@ -1121,38 +1122,73 @@ class ApplicationTests(CaptureTestCase):
         self.data = GameData()
         self._patch("gameData", self.data)
 
-    def application(self):
-        app = self.game._alloc(nms.cGcApplication)
-        return app, ctypes.cast(ctypes.addressof(app), ctypes.POINTER(nms.cGcApplication))
-
-    def test_the_main_loop_supplies_the_application(self):
-        app, pointer = self.application()
-        self.assertIsNone(self.data.GcApplication)
-        self.assertIsNone(self.capture.find_application(pointer))
-        self.assertEqual(ctypes.addressof(self.data.GcApplication), ctypes.addressof(app))
-
-    def test_a_different_pointer_is_replaced_and_the_right_one_kept(self):
-        wrong, _ = self.application()
-        self.data.GcApplication = wrong
-        app, pointer = self.application()
-        self.capture.find_application(pointer)
-        kept = self.data.GcApplication
-        self.assertEqual(ctypes.addressof(kept), ctypes.addressof(app))
-        self.capture.find_application(pointer)
-        self.assertIs(self.data.GcApplication, kept)
-        self.capture.find_application(None)
-        self.assertIs(self.data.GcApplication, kept)
-
-    def test_the_loaded_system_is_seen_through_it(self):
-        self.poll()
-        self.poll()
-        self.assertEqual(self.lines(), [], "no application yet: no system")
+    def found(self) -> None:
+        """Do what NMS.py does when the game's state machine first changes state."""
         data = self.game._alloc(nms.cGcApplication.Data)
         data.mSimulation.mpSolarSystem = ctypes.cast(self.game.address, ctypes.POINTER(nms.cGcSolarSystem))
         data.mSimulation.mCurrentUA = UA
-        app, pointer = self.application()
+        app = self.game._alloc(nms.cGcApplication)
         app.mpData = ctypes.pointer(data)
-        self.capture.find_application(pointer)
+        self.data.GcApplication = app
+
+    def test_the_mod_never_sets_the_application_itself(self):
+        for _ in range(3):
+            self.poll()
+        self.assertIsNone(self.data.GcApplication)
+        self.assertEqual(self.lines(), [], "no application yet: no system")
+
+    def test_says_once_when_it_cant_see_the_game(self):
+        notice = mod.FIND_GAME_NOTICE_SECONDS
+        with self.assertNoLogs("TradeDepotCapture", "INFO"):
+            self.assertFalse(self.capture._watch_for_game(100.0))
+            self.assertFalse(self.capture._watch_for_game(100.0 + notice - 0.5))
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.assertFalse(self.capture._watch_for_game(100.0 + notice))
+            self.assertFalse(self.capture._watch_for_game(100.0 + notice * 3))
+        self.assertEqual(logs.output, [f"INFO:TradeDepotCapture:{mod.NOT_FOUND_YET}"])
+        self.assertEqual(self.capture.status, mod.NOT_FOUND_YET)
+        self.assertIn("galaxy map", mod.NOT_FOUND_YET)
+
+    def test_says_when_it_finds_the_game(self):
+        self.capture._watch_for_game(0.0)
+        with self.assertLogs("TradeDepotCapture", "INFO"):
+            self.capture._watch_for_game(mod.FIND_GAME_NOTICE_SECONDS)
+        self.found()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.assertTrue(self.capture._watch_for_game(mod.FIND_GAME_NOTICE_SECONDS + 1))
+        self.assertEqual(logs.output, ["INFO:TradeDepotCapture:Found the game. Recording from now on."])
+        self.assertEqual(self.capture.status, "Waiting for a star system to load.")
+        with self.assertNoLogs("TradeDepotCapture", "INFO"):
+            self.assertTrue(self.capture._watch_for_game(mod.FIND_GAME_NOTICE_SECONDS + 2))
+
+    def test_found_at_once_says_so_once(self):
+        self.found()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.assertTrue(self.capture._watch_for_game(0.0))
+            self.assertTrue(self.capture._watch_for_game(mod.FIND_GAME_NOTICE_SECONDS * 2))
+        self.assertEqual(logs.output, ["INFO:TradeDepotCapture:Found the game. Recording from now on."])
+        self.assertEqual(self.capture.status, "Waiting for a star system to load.")
+
+    def test_record_key_before_the_game_is_found_says_why(self):
+        self.capture.record_now()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture.on_frame()
+        self.assertIn(f"Couldn't record: {mod.NOT_FOUND_YET}", "\n".join(logs.output))
+        self.assertEqual(self.capture.status, mod.NOT_FOUND_YET)
+        self.assertEqual(self.sounds, ["problem"])
+
+    def test_label_before_the_game_is_found_says_why(self):
+        self.capture.exotic_squid()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture.on_frame()
+        self.assertIn(f"Couldn't note the exotic: {mod.NOT_FOUND_YET}", "\n".join(logs.output))
+        self.assertEqual(self.sounds, ["problem"])
+
+    def test_the_loaded_system_is_seen_once_nmspy_finds_the_game(self):
+        self.poll()
+        self.poll()
+        self.assertEqual(self.lines(), [], "no application yet: no system")
+        self.found()
         self.poll()
         self.poll()
         (record,) = [line for line in self.lines() if line["t"] == "sys"]

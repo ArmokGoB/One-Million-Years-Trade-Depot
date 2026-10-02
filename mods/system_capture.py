@@ -69,10 +69,10 @@ from pymhf import Mod
 from pymhf.core.hooking import on_key_release
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.5.1"
+MOD_VERSION = "0.5.2"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.5.1 only add fields, record types and controls, so they keep format 2.)
+# (0.3.0 to 0.5.2 only add fields, record types and controls, so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
@@ -105,6 +105,15 @@ SOUNDS = {
 # How often the main loop looks at the current system. The Generate hook
 # records systems as they are made; polling catches anything filled in later.
 POLL_SECONDS = 2.0
+# The mod sees the game through NMS.py, which finds the game at the game's
+# first change of state after pyMHF is in it. Launched by the mod, the game
+# changes state as it starts; attached to a game that's already running, it
+# may not for a while. After this long without, the mod says what to do.
+FIND_GAME_NOTICE_SECONDS = 15.0
+NOT_FOUND_YET = (
+    "The mod hasn't found the game yet. Attached to a game that's already running, it finds it when "
+    "the game next changes state: opening the galaxy map should do it."
+)
 # Query records (systems the game describes without loading them) are queued
 # and written from the main loop at most this often.
 FLUSH_SECONDS = 1.0
@@ -869,6 +878,11 @@ class TradeDepotCapture(Mod):
         self._next_flush = 0.0
         # Systems (universal address without the planet digit) whose arrival tone has played.
         self._chimed: set[int] = set()
+        # When the main loop first ran, whether the mod has said it can't see the game yet,
+        # and whether it has found it.
+        self._first_frame: float | None = None
+        self._waiting_for_game = False
+        self._game_found = False
         try:
             prepare_sounds()
         except Exception:
@@ -966,24 +980,6 @@ class TradeDepotCapture(Mod):
     # arguments, and one returned by an "after" detour as the function's
     # result, so every detour here deliberately returns nothing.
 
-    @nms.cGcApplication.Update.before
-    def find_application(self, this):
-        """Keep NMS.py's pointer to the game's application object set.
-
-        NMS.py learns it from the first state change of the game's state
-        machine after it loads. When the mod is attached to a game that is
-        already running, that may not happen for a long time, and until it
-        does the mod can't see the loaded system. The main loop runs on the
-        application object every frame, so take it from there.
-        """
-        try:
-            address = address_of(this)
-            current = gameData.GcApplication
-            if address and (current is None or ctypes.addressof(current) != address):
-                gameData.GcApplication = nms.cGcApplication.from_address(address)
-        except Exception:
-            self._report_once("application", "Couldn't find the game's application object.")
-
     @nms.cGcSolarSystem.Generate.before
     def before_generate(self, this, lbUseSettingsFile, lSeed):
         try:
@@ -1056,6 +1052,7 @@ class TradeDepotCapture(Mod):
     @main_loop.after
     def on_frame(self):
         try:
+            self._watch_for_game(time.monotonic())
             self._flush_pending()
             self._apply_label()
             self._poll()
@@ -1064,6 +1061,29 @@ class TradeDepotCapture(Mod):
             self._report_once("poll", "Couldn't read the current system.")
 
     # --- Internals ---
+
+    def _watch_for_game(self, now: float) -> bool:
+        """Whether NMS.py has found the game's application object, which the mod reads the game through.
+
+        The mod never sets that pointer itself. Version 0.5.1 took it from the
+        argument of the game's main loop function, and the game crashed; NMS.py
+        takes it from the game's state machine instead.
+        """
+        if gameData.GcApplication is not None:
+            if not self._game_found:
+                self._game_found = True
+                logger.info("Found the game. Recording from now on.")
+            if self._waiting_for_game:
+                self._waiting_for_game = False
+                self._status = "Waiting for a star system to load."
+            return True
+        if self._first_frame is None:
+            self._first_frame = now
+        elif not self._waiting_for_game and now - self._first_frame >= FIND_GAME_NOTICE_SECONDS:
+            self._waiting_for_game = True
+            logger.info(NOT_FOUND_YET)
+            self._status = NOT_FOUND_YET
+        return False
 
     def _trace(self, generator_pointer, label: str) -> None:
         """Note the RNG at a generation step, in the system being generated or looked up."""
@@ -1168,8 +1188,12 @@ class TradeDepotCapture(Mod):
         """Write a label line for the loaded system. True if its ship list has an exotic to pair with."""
         active = active_system()
         if active is None:
-            logger.info("Couldn't note the exotic: no star system is loaded yet.")
-            self._status = "No star system is loaded yet."
+            if gameData.GcApplication is None:
+                logger.info("Couldn't note the exotic: %s", NOT_FOUND_YET)
+                self._status = NOT_FOUND_YET
+            else:
+                logger.info("Couldn't note the exotic: no star system is loaded yet.")
+                self._status = "No star system is loaded yet."
             return False
         record = snapshot(active[0])
         record.update(self._where(None, active[0]))
@@ -1245,8 +1269,12 @@ class TradeDepotCapture(Mod):
         if active is None:
             self._last_seen = None
             if requested:
-                logger.info("Couldn't record: no star system is loaded yet.")
-                self._status = "No star system is loaded yet."
+                if gameData.GcApplication is None:
+                    logger.info("Couldn't record: %s", NOT_FOUND_YET)
+                    self._status = NOT_FOUND_YET
+                else:
+                    logger.info("Couldn't record: no star system is loaded yet.")
+                    self._status = "No star system is loaded yet."
                 play_sound("problem")
             return
         address, current_ua = active
