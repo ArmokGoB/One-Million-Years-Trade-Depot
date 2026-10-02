@@ -27,20 +27,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# mix is re-exported for the tests.
+from game_rng import MASK32, MASK64, MIX_A, MIX_B, mix, seeded_state, stream_states, unmix  # noqa: E402, F401
+
 SUPPORTED_FORMATS = {1, 2}
 ZERO_SEED = "0" * 16
-MASK32 = 0xFFFFFFFF
-MASK64 = (1 << 64) - 1
 PLANET_BITS = 0xF << 52
-
-# The game's multiply-with-carry random-number generator and the mixer that
-# turns two of its 32-bit draws into a 64-bit seed (nms_namegen prng.py and
-# system.py _bodySeed).
-MULTIPLIER = 0x5A76F899
-MIX_A = 0x64DD81482CBD31D7
-MIX_B = 0xE36AA5C613612997
-_MIX_A_INVERSE = pow(MIX_A, -1, 1 << 64)
-_MIX_B_INVERSE = pow(MIX_B, -1, 1 << 64)
 # How far into a system's stream to look for its ships.
 STREAM_LIMIT = 100_000
 
@@ -78,48 +71,6 @@ NAMEGEN_CONFLICT = {"Low": 1, "Default": 2, "High": 3}
 
 class CaptureFormatError(ValueError):
     pass
-
-
-# --- The game's random-number stream ---
-
-
-def mix(value: int) -> int:
-    value = (((value >> 33) ^ value) * MIX_A) & MASK64
-    value = (((value >> 33) ^ value) * MIX_B) & MASK64
-    return (value >> 33) ^ value
-
-
-def unmix(value: int) -> int:
-    """Inverse of mix(): the two 32-bit draws (high << 32 | low) behind a seed."""
-    value ^= value >> 33
-    value = (value * _MIX_B_INVERSE) & MASK64
-    value ^= value >> 33
-    value = (value * _MIX_A_INVERSE) & MASK64
-    return value ^ (value >> 33)
-
-
-def _swap16(value: int) -> int:
-    return ((value & 0xFFFF0000) >> 16) | ((value & 0x0000FFFF) << 16)
-
-
-def seeded_state(seed: int) -> int:
-    """Generator state the game builds from a 64-bit seed (as nms_namegen's planetSeeds does)."""
-    low = seed & MASK32
-    high = (_swap16(low) ^ low ^ (seed >> 32)) & MASK32
-    return ((high or 1) << 32) | low
-
-
-def step(state: int) -> int:
-    return (state & MASK32) * MULTIPLIER + (state >> 32)
-
-
-def stream_states(seed: int, count: int) -> list[int]:
-    """Generator state after each of the first ``count`` draws; a draw's output is the low 32 bits."""
-    state, states = seeded_state(seed), []
-    for _ in range(count):
-        state = step(state)
-        states.append(state)
-    return states
 
 
 # --- Records ---
@@ -705,17 +656,12 @@ def _region_name_candidates(seed: int) -> dict[str, str | None]:
         except Exception:  # some seeds make the generator raise
             return None
 
-    def generator_seed(register: int) -> int:
-        low = register & MASK32
-        high = (_swap16(low) ^ low ^ (register >> 32)) & MASK32
-        return ((high or 1) << 32) | low
-
     register = (seed * MIX_A) & MASK64
     register = (((register >> 33) ^ register) * MIX_B) & MASK64
     register ^= register >> 33
     return {
-        "before mixing": named(generator_seed(register)),
-        "after mixing": named(generator_seed(seed)),
+        "before mixing": named(seeded_state(register)),
+        "after mixing": named(seeded_state(seed)),
         "as the generator's seed": named(seed),
     }
 
@@ -910,6 +856,46 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
     return ["", f"nms_namegen against the game ({namegen})"] + tally_lines(list(t.values()), examples)
 
 
+def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
+    """Each system's ship seeds as ship_model.py predicts them from the address, against the game's."""
+    sys.path.insert(0, str(namegen.resolve()))
+    import ship_model
+
+    lines = ["", "Ship seeds predicted from the address alone (tools/captures/ship_model.py)"]
+    matched = checked = 0
+    misses: Counter[str] = Counter()
+    for r in sorted(captures.representative_by_system().values(), key=lambda r: (r.galaxy, r.portal)):
+        ships, crash = r.data.get("ships"), r.data.get("crashShip")
+        if not ships or not crash:
+            continue
+        prediction = ship_model.predict(r.ua & ~PLANET_BITS)
+        if prediction is None:
+            lines.append(f"  {r.label()}: not modelled (gas giant layout)")
+            continue
+        checked += 1
+        game = [int(row[0], 16) for row in ships]
+        same = sum(a == b for a, b in zip(prediction.ships, game))
+        if same == len(game) == len(prediction.ships) and prediction.crash == int(crash, 16):
+            matched += 1
+            note = f" (flagged: {prediction.uncertain})" if prediction.uncertain else ""
+            lines.append(f"  {r.label()}: all {len(game)} ships and the crashed ship match{note}")
+            continue
+        found = locate_ship_stream(r.ua, [row[0] for row in ships], crash, STREAM_LIMIT)
+        where = f"after {found.offset} draws" if found.offset is not None else "elsewhere"
+        reason = prediction.uncertain or "not explained by the model"
+        misses[reason] += 1
+        lines.append(
+            f"  {r.label()}: {same}/{len(game)} ships match; predicted the ships after {prediction.start} "
+            f"draws, the game drew them {where} ({reason})"
+        )
+    if checked:
+        summary = f"  {matched} of {checked} systems: every ship seed and the crashed ship's match"
+        if misses:
+            summary += "; misses: " + ", ".join(f"{n} with {reason}" for reason, n in misses.most_common())
+        lines.append(summary)
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -937,6 +923,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.namegen:
         lines += namegen_lines(captures, args.namegen, args.examples)
         lines += name_lines(captures, args.namegen, args.examples)
+        lines += ship_model_lines(captures, args.namegen)
     print("\n".join(lines))
     return 0
 

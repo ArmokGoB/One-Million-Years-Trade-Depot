@@ -17,6 +17,7 @@ import io
 import json
 import math
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -39,6 +40,8 @@ _spec = importlib.util.spec_from_file_location("capture_report", ROOT / "tools" 
 report = importlib.util.module_from_spec(_spec)
 sys.modules["capture_report"] = report
 _spec.loader.exec_module(report)
+import game_rng  # noqa: E402  (tools/captures is on the path once report.py is loaded)
+import ship_model  # noqa: E402
 
 # Portal 03E9F3545C3E in galaxy 1 (Hilbert Dimension), planet digit 0. In the
 # game a system's seed is its universal address.
@@ -345,10 +348,16 @@ class WiringTests(CaptureTestCase):
 
     def test_mod_registers_hooks_callback_and_gui(self):
         expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
-        expected |= {name for pair in STEPS for name in pair}
+        expected |= {name for pair in STEPS for name in pair} | {"find_application"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
         self.assertEqual(len(self.capture._gui_widgets), 10)
+
+    def test_application_hook_targets_the_main_loop(self):
+        hook = mod.TradeDepotCapture.find_application
+        self.assertEqual(hook._hook_func_name, "cGcApplication.Update")
+        self.assertEqual(hook._hook_time, DetourTime.BEFORE)
+        self.assertEqual(hook._hook_pattern, nms.cGcApplication.Update._signature)
 
     def test_hotkeys_are_registered_on_key_release(self):
         keys = {f.__name__: (f._hotkey, f._hotkey_press) for f in self.capture._hotkey_funcs}
@@ -1102,6 +1111,55 @@ class PollingTests(CaptureTestCase):
         self.assertEqual(self.sounds, ["problem"])
 
 
+class ApplicationTests(CaptureTestCase):
+    """Attached to a game that was already running, NMS.py hasn't found the application object."""
+
+    def setUp(self):
+        super().setUp()
+        from nmspy.common import GameData
+
+        self.data = GameData()
+        self._patch("gameData", self.data)
+
+    def application(self):
+        app = self.game._alloc(nms.cGcApplication)
+        return app, ctypes.cast(ctypes.addressof(app), ctypes.POINTER(nms.cGcApplication))
+
+    def test_the_main_loop_supplies_the_application(self):
+        app, pointer = self.application()
+        self.assertIsNone(self.data.GcApplication)
+        self.assertIsNone(self.capture.find_application(pointer))
+        self.assertEqual(ctypes.addressof(self.data.GcApplication), ctypes.addressof(app))
+
+    def test_a_different_pointer_is_replaced_and_the_right_one_kept(self):
+        wrong, _ = self.application()
+        self.data.GcApplication = wrong
+        app, pointer = self.application()
+        self.capture.find_application(pointer)
+        kept = self.data.GcApplication
+        self.assertEqual(ctypes.addressof(kept), ctypes.addressof(app))
+        self.capture.find_application(pointer)
+        self.assertIs(self.data.GcApplication, kept)
+        self.capture.find_application(None)
+        self.assertIs(self.data.GcApplication, kept)
+
+    def test_the_loaded_system_is_seen_through_it(self):
+        self.poll()
+        self.poll()
+        self.assertEqual(self.lines(), [], "no application yet: no system")
+        data = self.game._alloc(nms.cGcApplication.Data)
+        data.mSimulation.mpSolarSystem = ctypes.cast(self.game.address, ctypes.POINTER(nms.cGcSolarSystem))
+        data.mSimulation.mCurrentUA = UA
+        app, pointer = self.application()
+        app.mpData = ctypes.pointer(data)
+        self.capture.find_application(pointer)
+        self.poll()
+        self.poll()
+        (record,) = [line for line in self.lines() if line["t"] == "sys"]
+        self.assertEqual((record["via"], record["ua"], record["sim"]), ("poll", f"{UA:016X}", f"{UA:016X}"))
+        self.assertEqual(self.sounds, ["recorded"])
+
+
 class SoundTests(unittest.TestCase):
     def fake_winsound(self, play):
         return types.SimpleNamespace(SND_MEMORY=4, SND_NODEFAULT=2, PlaySound=play)
@@ -1227,6 +1285,44 @@ class LauncherTests(unittest.TestCase):
     def test_32_bit_python_is_stopped(self):
         (problem,) = mod.launcher_problems(self.PYTHON_ORG + r"\python.exe", (self.PYTHON_ORG,), 4)
         self.assertIn("32-bit", problem)
+
+    def test_attaching_to_a_running_game_is_allowed(self):
+        self.assertEqual(mod.attach_problems(running=True, taken=False), [])
+        self.assertEqual(mod.attach_problems(running=False, taken=False), [])
+
+    def test_pymhf_left_inside_the_game_is_stopped_with_a_fix(self):
+        (problem,) = mod.attach_problems(running=True, taken=True)
+        self.assertIn("already inside No Man's Sky", problem)
+        self.assertIn("quit the game", problem)
+        (problem,) = mod.attach_problems(running=False, taken=True)
+        self.assertIn(f"port {mod.PYMHF_PORT}", problem)
+
+    def test_port_taken_sees_a_listening_program(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen()
+            port = server.getsockname()[1]
+            self.assertTrue(mod.port_taken(port))
+        self.assertFalse(mod.port_taken(port))
+
+    def test_game_running_looks_for_the_game_process(self):
+        def processes(*names):
+            listing = [types.SimpleNamespace(info={"name": name}) for name in names]
+            return types.SimpleNamespace(process_iter=lambda attrs: iter(listing))
+
+        def broken(attrs):
+            raise RuntimeError("access denied")
+
+        cases = [
+            (processes("steam.exe", "NMS.exe"), True),
+            (processes("steam.exe", "nms.exe"), True),
+            (processes("steam.exe", None), False),
+            (types.SimpleNamespace(process_iter=broken), False),
+            (None, False),  # psutil can't be imported
+        ]
+        for psutil, expected in cases:
+            with self.subTest(psutil=psutil), mock.patch.dict(sys.modules, {"psutil": psutil}):
+                self.assertIs(mod.game_running(), expected)
 
 
 class ReportTests(CaptureTestCase):
@@ -1354,6 +1450,60 @@ class ReportTests(CaptureTestCase):
         self.assertIn("Ship seeds in the system seed's random-number stream", text)
 
 
+class ShipModelTests(unittest.TestCase):
+    """tools/captures/ship_model.py; the report checks it against real captures."""
+
+    Body = ship_model.Body
+
+    def test_ship_seeds_follow_the_layout_the_report_finds(self):
+        seeds, crash = ship_model.ship_seeds(UA, 123)
+        found = report.locate_ship_stream(UA, [f"{s:016X}" for s in seeds], f"{crash:016X}", 1000)
+        self.assertEqual(
+            (found.offset, found.found, found.layout), (123, 50, ["ships 0-41", "crash ship", "ships 42-49"])
+        )
+
+    def test_prime_planets_have_no_attractors(self):
+        system = [self.Body(0, -1, True), self.Body(3, 0, True), self.Body(2, -1, True)]
+        self.assertEqual(ship_model.ships_start(UA, system), 38 + 3)
+
+    def test_attractor_draws_around_a_lone_planet(self):
+        # Written out step by step: four draws per attempt, and a fifth unless the distance
+        # draw puts the attractor within 500 of the planet.
+        draws = game_rng.Stream(UA)
+        for _ in range(38):
+            draws.word()
+        expected = 38 + 1
+        for _ in range(30 + draws.below(36)):
+            draws.unit(), draws.unit()
+            too_close = draws.unit() * 40000 < 500
+            draws.word()
+            expected += 4
+            if not too_close:
+                draws.word()
+                expected += 1
+        self.assertEqual(ship_model.ships_start(UA, [self.Body(1, -1, False)]), expected + 3)
+
+    def test_draw_count_for_a_planet_with_a_moon_is_pinned(self):
+        Body = self.Body
+        system = [Body(1, -1, False), Body(0, -1, False), Body(3, 1, False), Body(2, -1, True)]
+        self.assertEqual(ship_model.ships_start(UA, system), 676)
+
+    def test_moon_positions(self):
+        planet, moon = self.Body(0, -1, False), self.Body(3, 0, False)
+        self.assertEqual(ship_model.moon_offsets([planet, moon]), {1: (225792.0, 0.0, 0.0)})
+        pair = ship_model.moon_offsets([planet, moon, moon])
+        for offset in pair.values():
+            self.assertAlmostEqual(math.dist((0, 0, 0), offset), 225792.0, places=3)
+        self.assertAlmostEqual(pair[1][1], 112896.0, places=3)
+        self.assertAlmostEqual(pair[2][1], -112896.0, places=3)
+
+    def test_two_moon_planets_are_flagged_unless_all_prime(self):
+        two = [self.Body(0, -1, False), self.Body(3, 0, False), self.Body(3, 0, False)]
+        self.assertIn("two moons", ship_model.uncertainty(two))
+        self.assertIsNone(ship_model.uncertainty([b._replace(prime=True) for b in two]))
+        self.assertIsNone(ship_model.uncertainty(two[:2]))
+
+
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")
 class NamegenComparisonTests(CaptureTestCase):
     """Systems built from nms_namegen's own predictions must score 100% in the report."""
@@ -1442,6 +1592,35 @@ class NamegenComparisonTests(CaptureTestCase):
         self.assertRegex(text, r"taking the seed before mixing\s+1/1\s+100.0%")
         self.assertRegex(text, r"taking the seed after mixing\s+0/1 ")
         self.assertRegex(text, r"region names that are the loaded system's region\s+1/1\s+100.0%")
+
+    def test_bodies_follow_the_generator(self):
+        sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
+        from nms_namegen.system import planetSeeds
+
+        for code, galaxy in self.ADDRESSES:
+            ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
+            system = ship_model.bodies(ua)  # raises if its draws stray from planetSeeds'
+            self.assertEqual(len(system), len(planetSeeds(code, galaxy)["planet_seeds"]))
+            for body in system:
+                self.assertIn(body.size, ship_model.BASE_RADIUS)
+                if body.parent >= 0:  # moons orbit large planets
+                    self.assertEqual((body.size, system[body.parent].size), (3, 0))
+
+    def test_predicted_ships_are_scored(self):
+        prediction = ship_model.predict(UA)
+        self.game.set_ships([(seed, FIGHTER, 0, 1, 0, "") for seed in prediction.ships])
+        self.game.system.mSolarSystemData.SentinelCrashSiteShipSeed.Seed = prediction.crash
+        self.game.generate(self.capture)
+        other = (0x079 << 40) | (0x00F3545C3E)
+        self.game.set_address(other)
+        self.game.fill(other, "Elsewhere")  # keeps the 50 ships, which aren't this system's
+        self.game.generate(mod.TradeDepotCapture())
+        text = "\n".join(
+            report.ship_model_lines(report.read_captures([mod.CAPTURE_FILE]), Path(os.environ["NMS_NAMEGEN"]))
+        )
+        self.assertIn("03E9F3545C3E galaxy 1 Abarof-Dulin: all 50 ships and the crashed ship match", text)
+        self.assertIn("079F3545C3E galaxy 0 Elsewhere: 0/50 ships match", text)
+        self.assertIn("1 of 2 systems: every ship seed and the crashed ship's match", text)
 
 
 if __name__ == "__main__":
