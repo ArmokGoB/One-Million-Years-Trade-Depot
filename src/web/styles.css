@@ -10,12 +10,12 @@
  */
 
 :root {
-  --night: #12163a;
-  --night-raised: #1a1f4b;
+  --night: #000000;
+  --night-raised: #3f3f3f;
   --rule: #2f3672;
-  --ink: #eef0ff;
-  --ink-muted: #a7aed6;
-  --error: #ff9b8f;
+  --ink: #e0b0b2;
+  --ink-muted: lightcoral;
+  --error: magenta;
 
   --star-yellow: #f4c542;
   --star-green: #63d690;
@@ -24,8 +24,8 @@
   --star-purple: #bb93ff;
   --star: var(--star-yellow);
 
-  --font-text: "Atkinson Hyperlegible Next Variable", "Atkinson Hyperlegible", system-ui, sans-serif;
-  --font-stencil: "Big Shoulders Stencil Display", "Arial Narrow", sans-serif-condensed, sans-serif;
+  --font-text: "Matrixtype", system-ui, sans-serif;
+  --font-stencil: "Facade-Ouest", sans-serif-condensed, sans-serif;
 
   --step--1: 0.875rem; /* 14px */
   --step-0: 1.125rem; /* 18px */
@@ -531,4 +531,14 @@ a:hover {
   .manifest dd {
     margin-bottom: 0.75rem;
   }
+}
+
+@font-face{
+  font-family: Matrixtype;
+  src: url(/fonts/Matrixtype.ttf) format("truetype");
+}
+
+@font-face{
+  font-family: Facade-Ouest;
+  src: url(/fonts/Facade-Ouest.ttf) format("truetype");
 }
