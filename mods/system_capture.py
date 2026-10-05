@@ -22,10 +22,11 @@ universal address, its seed, the game's own description of it (name, star,
 race, economy, planets) and ``SystemShips``, the list of ships the game
 prepares for the system. When the game builds the model of a ship from that
 list, the mod also records the parts the game picked for it, with the ship's
-seed; and when the game offers a multi-tool, to buy or as a gift or reward,
-the tool's seed and parts. The One Million Years Trade Depot uses these lines
-as ground truth for working out how the game picks a system's ships and
-multi-tools, and what a seed makes them look like.
+seed; and when the game offers an item, such as a multi-tool to buy or as a
+gift or reward, what the item holds: its inventories, and the seed and parts
+of its model. The One Million Years Trade Depot uses these lines as ground
+truth for working out how the game picks a system's ships and multi-tools,
+and what a seed makes them look like.
 
 The mod only reads. It changes nothing in the game or your save. Every read
 of game memory goes through ReadProcessMemory, so if NMS.py's struct layouts
@@ -71,10 +72,11 @@ from nmspy.decorators import main_loop
 from pymhf import Mod
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.8.1"
+MOD_VERSION = "0.8.2"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.8.1 only add or drop record types, fields and controls, so they keep format 2.)
+# (0.3.0 to 0.8.2 only add or drop record types, fields and controls, or let a field hold more
+# kinds of thing, as 0.8.2 does with an item's "tools", so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
@@ -86,11 +88,11 @@ CAPTURE_FILE = CAPTURE_DIR / "systems.jsonl"
 # everything it loads; set it to False if the game crashes or loads slowly
 # with the mod, and the mod won't touch that function at all.
 RECORD_SHIP_PARTS = True
-# Record the multi-tools the game offers: on a rack or at a merchant, or as a
-# gift or reward. Their seed and parts come through the same function as the
-# ships', so this needs RECORD_SHIP_PARTS too. Set it to False if the game
-# misbehaves near a multi-tool rack with the mod, and the mod won't watch the
-# function that updates items for sale.
+# Record the items the game offers, such as a multi-tool on a rack or at a
+# merchant, or as a gift or reward. The seed and parts of an item's model come
+# through the same function as the ships', so they need RECORD_SHIP_PARTS too.
+# Set it to False if the game misbehaves near a multi-tool rack with the mod,
+# and the mod won't watch the function that updates items for sale.
 RECORD_MULTITOOLS = True
 # Short tones tell you what happened while the log is hidden behind the game.
 PLAY_SOUNDS = True
@@ -141,23 +143,53 @@ RAW_DESCRIPTORS = 20
 # Names of other models with parts that the log mentions, to show what the
 # game builds that isn't a ship.
 OTHER_MODELS_LOGGED = 30
-# Multi-tool models: resources whose name holds one of these. The mod keeps
-# the seeds and parts of the latest few in memory only, and records one only
-# when an item the game offers holds its seed. (The game also builds the
-# multi-tools you and other players carry.)
+# Models the game built lately with a descriptor, kept in memory only, by seed
+# and by resource handle, so that an item the game offers can be paired with
+# its model. One is written to the file only as part of an item that holds its
+# seed or handle, and never if it's a ship outside the ship lists read lately:
+# the game also builds the ships and multi-tools you and other players have.
+MODELS_KEPT = 4096
+# An item is paired with a model by the item's resource handle only if the game
+# built the model this soon before the item held the handle, so a handle number
+# the game has since reused for something else doesn't pair the item with an
+# old model.
+HANDLE_FRESH_SECONDS = 5.0
+# Multi-tool models: resources whose name holds one of these. Each time the
+# game builds one, a "built" line notes when, its file, how many parts it has
+# and its resource handle, but not its seed or parts.
 MULTITOOL_MODEL_PATHS = ("MULTITOOL", "/WEAPONS/")
-MULTITOOL_MODELS_KEPT = 512
 MULTITOOL_NAMES_LOGGED = 10  # the log names the first few multi-tool model files
-# Items the game offers (multi-tools on a rack or at a merchant, gifts,
-# rewards): how often the mod looks at each one, and how long it waits for the
-# model of the multi-tool an item holds before recording the item without it.
-ITEM_CHECK_SECONDS = 1.0
-ITEM_WAIT_SECONDS = 20.0
+TOOL_BUILDS_RECORDED = 500  # "built" lines for multi-tool models, per session
+# Other models with parts that aren't ships get a "built" line the first time
+# the game builds each file in a session, for up to this many files.
+OTHER_BUILDS_RECORDED = 500
+# Items the game offers (a multi-tool on a rack or at a merchant, gifts,
+# rewards): how often the mod looks at each one. An item is recorded once what
+# it holds has looked the same twice in a row, so anything shown for about a
+# second or more, and again whenever that changes. A look at an item whose
+# bytes haven't changed skips decoding it, but not for longer than
+# ITEM_REFRESH_SECONDS, since what its inventories point to may change.
+ITEM_CHECK_SECONDS = 0.5
+ITEM_REFRESH_SECONDS = 5.0
+# An item that hasn't looked the same twice in this many looks is recorded as it is.
+ITEM_UNSETTLED_LOOKS = 20
+# An item the game hasn't updated for this long may be another item at the same address
+# now: the mod forgets which model it was paired with.
+ITEM_FORGET_SECONDS = 30.0
+# The most records for one item in one system: for each thing it offers, and in all.
+ITEM_RECORDS_PER_OFFER = 10
+ITEM_RECORDS_PER_PLACE = 100
 ITEMS_TRACKED = 4096
 MAX_ITEM_RECORDS = 5_000
-# The first few items of each kind in a session keep their raw bytes, to find
-# where the game keeps an offered multi-tool's class and slots.
-RAW_ITEMS_PER_TYPE = 3
+# Where an item's five inventories (cGcInventoryStore) seem to start, going by
+# the items 0.8.1 recorded; NMS.py doesn't place them. Text in the bytes before
+# them is recorded too, with your player name and title taken out.
+ITEM_STORES_AT = 0x4F0
+ITEM_STORES = 5
+MAX_STORE_ENTRIES = 256
+# An inventory bigger than this, or of a class beyond S, isn't one: its lists aren't read.
+MAX_STORE_SIDE = 16  # mxValidSlots has 16 rows of 16 bits
+NO_HANDLE = (0, 0xFFFFFFFF)  # resource handle values that mean no resource
 # When the log first counts the resources the game has loaded, and how often after
 # that while the count changes.
 FIRST_RESOURCE_COUNT_SECONDS = 60.0
@@ -188,6 +220,11 @@ VOXEL_COLUMNS = [
     "atlasStations", "blackHoles", "guideStarMinimum", "guideStarRenegades",
     "purpleSystems", "purpleStart", "insideGoalGap",
 ]  # fmt: skip
+# An inventory's entries (what's in its slots) and special slots, in item records.
+STORE_ENTRY_COLUMNS = [
+    "id", "x", "y", "amount", "maxAmount", "type", "damage", "addedAutomatically", "installed",
+]  # fmt: skip
+SPECIAL_SLOT_COLUMNS = ["x", "y", "type"]
 LOCATION_COLUMNS = ["galaxy", "voxelX", "voxelY", "voxelZ", "system", "planet"]
 STAR_FLAGS = ["AbandonedSystem", "IsGasGiantSystem", "IsGiantSystem", "IsPirateSystem", "IsSystemSafe"]
 
@@ -210,6 +247,10 @@ ENUM_SOURCES = {
     "biomeSubType": "cGcBiomeSubType",
     "planetClass": "cGcPlanetClass",
     "resourceType": "ResourceTypes",
+    "inventoryClass": "cGcInventoryClass",
+    "inventoryType": "cGcInventoryType",
+    "slotType": "cGcInventorySpecialSlotType",
+    "stackSizeGroup": "cGcInventoryStackSizeGroup",
 }
 
 # In-game names for the log, keyed by cGcSpaceshipClasses member name.
@@ -263,11 +304,16 @@ class Layout:
         self.simulation_ua = nms.cGcSimulation.mCurrentUA.offset
         self.location = nms.cGcPlayerState.mLocation.offset
         self.location_size = ctypes.sizeof(nmse.cGcUniverseAddressData)
+        # The player's name with title: read only to take it out of what the mod records.
+        self.player_name = nms.cGcPlayerState.mNameWithTitle.offset
+        self.player_name_size = ctypes.sizeof(basic.cTkFixedString0x100)
         # Where the player is (in the space station, on foot on a planet...), from the simulation.
         environment = nms.cGcSimulation.mEnvironment.offset + nms.cGcEnvironment.mPlayerEnvironment.offset
         self.player_where = environment + nms.cGcPlayerEnvironment.meLocation.offset
         self.player_planet = environment + nms.cGcPlayerEnvironment.miNearestPlanetIndex.offset
         self.item_size = ctypes.sizeof(nms.cGcPurchaseableItem)
+        self.item_text_from = nms.cGcPurchaseableItem.mbAddAdditionalItem.offset + 1
+        self.store_size = ctypes.sizeof(nms.cGcInventoryStore)
 
 
 LAYOUT = Layout()
@@ -706,15 +752,238 @@ def is_multitool_model(name: str) -> bool:
 
 def seeds_in(raw: bytes, wanted) -> list[tuple[int, int]]:
     """(offset, seed) for each 8-byte little-endian value in ``raw``, at any 4-byte boundary,
-    that is one of ``wanted``; each seed once, at its first offset."""
-    found: list[tuple[int, int]] = []
-    seen: set[int] = set()
-    view = memoryview(raw)
-    for offset in range(0, len(raw) - 7, 4):
-        value = int.from_bytes(view[offset : offset + 8], "little")
-        if value in wanted and value not in seen:
-            seen.add(value)
-            found.append((offset, value))
+    that is one of ``wanted``; each seed once, at its first offset, in order of offset.
+    ``wanted`` (a set or dict) is only asked about values, never walked, so another thread
+    may add to it meanwhile."""
+    first: dict[int, int] = {}
+    for start in (0, 4):
+        count = (len(raw) - start) // 8
+        if count <= 0:
+            continue
+        values = struct.unpack_from(f"<{count}Q", raw, start)
+        for value in set(values):
+            if value in wanted:
+                offset = start + 8 * values.index(value)
+                first[value] = min(offset, first.get(value, offset))
+    return sorted((offset, value) for value, offset in first.items())
+
+
+def _entries(vector, kind, row, problems: list[str], label: str) -> list:
+    """The entries of a TkStd::tk_vector copied out of the game, read through its pointer."""
+    count, allocated = as_int(vector.vector_size), as_int(vector.allocated_size)
+    if not count:
+        return []
+    pointer = address_of(vector._ptr)
+    if not pointer or not 0 < count <= min(allocated, MAX_STORE_ENTRIES):
+        problems.append(f"{label}: implausible list (count {count} of {allocated}, pointer {pointer:#x})")
+        return []
+    raw = read_memory(pointer, count * ctypes.sizeof(kind))
+    if raw is None:
+        problems.append(f"{label}: list at {pointer:#x} couldn't be read")
+        return []
+    return [row(entry) for entry in (kind * count).from_buffer_copy(raw)]
+
+
+def store_entry_row(entry) -> list:
+    """One cGcInventoryElement, in STORE_ENTRY_COLUMNS order."""
+    return [
+        text(entry.Id),
+        as_int(entry.Index.X),
+        as_int(entry.Index.Y),
+        as_int(entry.Amount),
+        as_int(entry.MaxAmount),
+        as_int(entry.Type),
+        number(entry.DamageFactor),
+        int(bool(entry.AddedAutomatically)),
+        int(bool(entry.FullyInstalled)),
+    ]
+
+
+def inventory_store(raw: bytes, offset: int) -> dict | None:
+    """What the cGcInventoryStore at ``offset`` in ``raw`` holds, following its lists into the
+    game's memory; None for an empty 1x1 (or 0x0) store, which is what an item's unused
+    inventories are, and {"implausible": 1} for bytes that can't be a store."""
+    store = nms.cGcInventoryStore.from_buffer_copy(raw, offset)
+    width, height, slots = as_int(store.miWidth), as_int(store.miHeight), as_int(store.miCapacity)
+    grade = as_int(store.mClass)
+    if not (
+        0 <= width <= MAX_STORE_SIDE
+        and 0 <= height <= MAX_STORE_SIDE
+        and 0 <= slots <= MAX_STORE_SIDE**2
+        and 0 <= grade <= 3
+    ):
+        return {"implausible": 1}  # its bytes are in the item's raw bytes
+    problems: list[str] = []
+    valid = [int(row.array[0]) for row in store.mxValidSlots]  # a bit per slot, a row at a time
+    while valid and not valid[-1]:
+        valid.pop()
+    layout = store.mLayoutDescriptor
+    element = nmse.cGcInventoryElement
+    lists = {
+        "entries": _entries(store.mStore, element, store_entry_row, problems, "entries"),
+        "history": _entries(store.mStoreHistory, element, store_entry_row, problems, "history"),
+        "special": _entries(
+            store.maSpecialSlots,
+            nmse.cGcInventorySpecialSlot,
+            lambda slot: [as_int(slot.Index.X), as_int(slot.Index.Y), as_int(slot.Type)],
+            problems,
+            "special slots",
+        ),
+        "stats": _entries(
+            store.maBaseStats,
+            nmse.cGcInventoryBaseStatEntry,
+            lambda stat: [text(stat.BaseStatID), number(stat.Value)],
+            problems,
+            "base stats",
+        ),
+    }
+    found = {
+        "size": [width, height, slots],
+        "valid": valid,
+        "class": grade,
+        "layout": [
+            hex64(layout.Seed.Seed),
+            as_int(layout.Seed.UseSeedValue),
+            as_int(layout.Level),
+            as_int(layout.Slots),
+        ],
+        "autoMax": int(bool(store.mbAutoMaxEnabled)),
+        "stack": as_int(store.meStackSizeGroup),
+    }
+    name = text(store.mInventoryName)
+    unused = found["size"] in ([1, 1, 1], [0, 0, 0]) and found["class"] == 0 and layout.Seed.Seed <= 1
+    if unused and not valid and not name and not any(lists.values()) and not problems:
+        return None
+    if name:
+        found["name"] = name
+    found.update((key, rows) for key, rows in lists.items() if rows)
+    if problems:
+        found["errors"] = problems
+    return found
+
+
+def item_stores(raw: bytes) -> list[dict]:
+    """The inventories an item the game offers holds, numbered by where they are in it."""
+    stores = []
+    for index in range(ITEM_STORES):
+        offset = ITEM_STORES_AT + index * LAYOUT.store_size
+        if offset + LAYOUT.store_size > len(raw):
+            break
+        if (store := inventory_store(raw, offset)) is not None:
+            stores.append({"i": index, **store})
+    return stores
+
+
+TEXT_RUN = re.compile(rb"[\x20-\x7e]{4,}")
+
+
+def item_texts(raw: bytes) -> list[list]:
+    """[offset, text] for each run of four or more printable characters, a letter among them, in an
+    item's bytes between its flags and its inventories."""
+    found = []
+    for match in TEXT_RUN.finditer(raw, LAYOUT.item_text_from, ITEM_STORES_AT):
+        run = match.group().decode("ascii")
+        if any(c.isalpha() for c in run):
+            found.append([match.start(), run])
+    return found
+
+
+# Short words a player's title may hold that aren't taken out of text on their own.
+COMMON_WORDS = {"the", "and", "of", "to", "in", "on", "at", "an", "de", "la", "le", "el", "du", "da", "di"}
+NAME_SEPARATORS = re.compile(r"[\s,.:;!?|/\\<>()\[\]{}\"'`]+")
+CONTROL_BYTES = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+WORD_BYTE = rb"[0-9A-Za-z\x80-\xff]"  # a letter or digit, or part of a non-ASCII character
+
+
+def name_pattern(name: bytes) -> re.Pattern[bytes] | None:
+    """What to take out of what the mod records: ``name`` (a player's name with title, UTF-8) and
+    each word in it, ignoring case, but for a few common short ones; two-character words only where
+    they stand alone. None if ``name`` is empty, isn't UTF-8 text, or has a one-character word other
+    than "a" or "I", which can't be taken out of bytes without taking out much else: then nothing
+    that might hold it is recorded."""
+    name = name.strip()
+    if not name or CONTROL_BYTES.search(name):
+        return None
+    try:
+        whole = name.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    words = [word for word in NAME_SEPARATORS.split(whole) if word]
+    if any(len(word) == 1 and word.lower() not in ("a", "i") for word in words):
+        return None
+    kept = {word for word in words if len(word) >= 2 and word.lower() not in COMMON_WORDS}
+    if len(whole) >= 2:
+        kept.add(whole)
+    alternatives = [re.escape(w.encode()) for w in sorted(kept, key=len, reverse=True) if len(w) >= 3]
+    alternatives += [
+        rb"(?<!" + WORD_BYTE + rb")" + re.escape(w.encode()) + rb"(?!" + WORD_BYTE + rb")"
+        for w in sorted(kept)
+        if len(w) == 2
+    ]
+    return re.compile(b"|".join(alternatives) if alternatives else rb"(?!)", re.IGNORECASE)
+
+
+def player_name_pattern() -> re.Pattern[bytes] | None:
+    """name_pattern() of the player's name with title, or None if it can't be read."""
+    try:
+        state = gameData.player_state
+    except (ValueError, AttributeError):
+        return None
+    if state is None:
+        return None
+    raw = read_memory(ctypes.addressof(state) + LAYOUT.player_name, LAYOUT.player_name_size)
+    return None if raw is None else name_pattern(raw.split(b"\0", 1)[0])
+
+
+def scrub(raw: bytes, pattern: re.Pattern[bytes]) -> tuple[bytes, int]:
+    """``raw`` with each match of ``pattern`` overwritten by as many asterisks, and how many there were."""
+    return pattern.subn(lambda match: b"*" * len(match.group()), raw)
+
+
+def scrub_text(value: str, pattern: re.Pattern[bytes]) -> str:
+    """scrub() for text the mod decoded."""
+    return scrub(value.encode("utf-8"), pattern)[0].decode("utf-8", "backslashreplace")
+
+
+def item_summary(offer: dict) -> str:
+    """An item's inventories and model, for the log."""
+    classes = ENUM_TABLES.get("inventoryClass", [])
+    stores = []
+    for store in offer.get("stores", []):
+        if "size" not in store:
+            stores.append(f"{store['i']} (not an inventory after all)")
+            continue
+        width, height, slots = store["size"]
+        grade = classes[store["class"]] if 0 <= store["class"] < len(classes) else store["class"]
+        stores.append(f"{store['i']} ({width}x{height}, {slots} slots, class {grade})")
+    said = ["inventories " + ", ".join(stores) if stores else "no inventories"]
+    if model := offer.get("model"):
+        said.append(f"model {model['name']}, seed {model['seed']}")
+    elif offer.get("handle", 0) not in NO_HANDLE:
+        said.append(f"a model the mod didn't see the game build just then (handle {offer['handle']})")
+    else:
+        said.append("no model")
+    return "; ".join(said)
+
+
+def offered_item(raw: bytes) -> dict:
+    """What a cGcPurchaseableItem holds, from its bytes and the lists its inventories point to."""
+    item = nms.cGcPurchaseableItem.from_buffer_copy(raw)
+    found = {
+        "itemType": as_int(item.mItemType),
+        "state": as_int(item.mePurchaseState),
+        "free": int(bool(item.mbIsFree)),
+        "gift": int(bool(item.mbIsGift)),
+        "reward": int(bool(item.mbIsReward)),
+        "extra": int(bool(item.mbAddAdditionalItem)),
+        "handle": as_int(item.mItemResource.miInternalHandle) & 0xFFFFFFFF,
+        "node": as_int(item.mItemNode.lookupInt),
+    }
+    if stores := item_stores(raw):
+        found["stores"] = stores
+    entitlement = [text(item.mLinkedEntitlementId), text(item.mLinkedEntitlementRewardId)]
+    if any(entitlement):
+        found["entitlement"] = entitlement
     return found
 
 
@@ -898,6 +1167,8 @@ def session_header(mod: Mod | None = None) -> dict:
             "traders": TRADER_COLUMNS,
             "voxel": VOXEL_COLUMNS,
             "loc": LOCATION_COLUMNS,
+            "storeEntries": STORE_ENTRY_COLUMNS,
+            "specialSlots": SPECIAL_SLOT_COLUMNS,
         },
         "enums": ENUM_TABLES,
     }
@@ -1000,7 +1271,7 @@ class TradeDepotCapture(Mod):
     __author__ = "One Million Years Trade Depot contributors"
     __description__ = (
         "Records each star system you visit, the ships the game prepares for it "
-        "and the parts it picks for them, and the multi-tools the game offers."
+        "and the parts it picks for them, and the items the game offers, such as multi-tools."
     )
     __version__ = MOD_VERSION
     __pymhf_required_version__ = "0.2.4"
@@ -1015,10 +1286,13 @@ class TradeDepotCapture(Mod):
     _model_count = 0
     _ship_models_seen = 0
     _tool_count = 0
+    _item_count = 0
 
     def __init__(self):
         super().__init__()
         self._lock = threading.Lock()
+        # Writing the capture file has a lock of its own, so no hook waits for the disk.
+        self._write_lock = threading.Lock()
         self._recorded_keys: set[str] = set()
         self._session_started = False
         self._reported: set[str] = set()
@@ -1054,19 +1328,24 @@ class TradeDepotCapture(Mod):
         self._other_models: set[str] = set()
         self._exotics_heard: set[str] = set()
         self._raw_descriptors = 0
-        # Multi-tools. Models built lately, in memory only, as seed -> [model]; when each item
-        # the game offers is next due a look, by address; what's known of each item, keyed by
-        # (address, item type, model handle); items written (by system and tools); raw item
-        # records per item type; item types the log has mentioned; tools whose tone has played.
-        self._tool_models: dict[int, list[dict]] = {}
-        self._item_due: dict[int, float] = {}
-        self._items: dict[tuple, dict] = {}
+        # Items and their models. Models built lately with a descriptor, in memory only, as
+        # seed -> [model] and resource handle -> (model, when it was built); models being
+        # built, by (thread, address of the handle the game fills in); "built" lines written,
+        # and the files they named; multi-tool files the log has named.
+        self._recent_models: dict[int, list[dict]] = {}
+        self._handle_models: dict[int, tuple[dict, float]] = {}
+        self._fresh_tools: dict[int, float] = {}  # handles of multi-tool models built in the last few seconds
+        self._building: dict[tuple[int, int], dict] = {}
+        self._tool_builds = 0
+        self._built_names: set[str] = set()
+        self._tool_model_names: set[str] = set()
+        # What the mod knows of each item the game offers, by address (see _item_updated);
+        # items written, by (system, what they held); item types the log has mentioned;
+        # multi-tools whose tone has played.
+        self._items: dict[int, dict] = {}
         self._item_keys: set[tuple] = set()
-        self._item_records = 0
-        self._raw_items: Counter = Counter()
         self._item_types_logged: set[int] = set()
         self._tools_heard: set[str] = set()
-        self._tool_model_names: set[str] = set()
         # Resources the game has loaded, and how many came with a descriptor, for the log.
         self._resources = 0
         self._described = 0
@@ -1079,8 +1358,8 @@ class TradeDepotCapture(Mod):
         logger.info("Trade Depot capture %s is recording to %s", MOD_VERSION, CAPTURE_FILE)
         if RECORD_MULTITOOLS and RECORD_SHIP_PARTS:
             logger.info(
-                "Multi-tools are recorded where the game offers them: go near a space station's "
-                "multi-tool merchant or a minor settlement's multi-tool rack."
+                "Multi-tools are recorded where the game offers them: go up to a space station's "
+                "multi-tool merchant or a minor settlement's multi-tool rack and look at what's for sale."
             )
 
     # --- GUI (read on the GUI thread, so these only return cached values) ---
@@ -1119,7 +1398,7 @@ class TradeDepotCapture(Mod):
             return "Off (RECORD_MULTITOOLS is False)"
         if not RECORD_SHIP_PARTS:
             return "Off: needs RECORD_SHIP_PARTS too"
-        return str(self._tool_count)
+        return f"{self._tool_count} (items recorded: {self._item_count})"
 
     @property
     @STRING("Last system")
@@ -1229,11 +1508,20 @@ class TradeDepotCapture(Mod):
         def before_add_resource(self, result, liType, lpcName, liFlags, lAlternateMaterialId, unknown):
             # Read before the game uses the descriptor, in case it moves the part list out.
             try:
-                self._model_requested(liType, lpcName, lAlternateMaterialId)
+                self._model_requested(liType, lpcName, lAlternateMaterialId, result)
             except Exception:
                 self._report_once("model", "Couldn't record a ship's parts.")
 
-    if RECORD_MULTITOOLS:  # otherwise the mod leaves this function alone
+    if RECORD_SHIP_PARTS and RECORD_MULTITOOLS:  # otherwise the mod leaves these functions alone
+        # Once AddResource returns, the handle it filled in names the model it built; an item
+        # the game offers holds the handle of its model.
+        @nms.Engine.AddResource.after
+        def after_add_resource(self, result, liType, lpcName, liFlags, lAlternateMaterialId, unknown):
+            try:
+                self._model_added(result)
+            except Exception:
+                self._report_once("model-handle", "Couldn't note which model a resource handle is.")
+
         # cGcPurchaseableItem::Update(float) runs each frame for each item the game offers: a
         # multi-tool on a rack or at a merchant, a gift or a reward. NMS.py declares two arguments
         # more than the function's mangled name shows; they go in registers it never reads.
@@ -1251,6 +1539,7 @@ class TradeDepotCapture(Mod):
             self._flush_pending()
             self._poll()
             self._count_resources(time.monotonic())
+            self._expire_fresh_tools(time.monotonic())
         except Exception:
             self._status = "Couldn't read the current system. See the log."
             self._report_once("poll", "Couldn't read the current system.")
@@ -1351,9 +1640,9 @@ class TradeDepotCapture(Mod):
         except Exception:
             self._report_once("name-hook", "Couldn't record a planet or region name.")
 
-    def _model_requested(self, type_value, name_pointer, descriptor_pointer) -> None:
+    def _model_requested(self, type_value, name_pointer, descriptor_pointer, result_pointer=None) -> None:
         """The game is about to build a model: note its parts if it's a ship from a system's ship list,
-        and keep them for a while if it's a multi-tool."""
+        and keep it in memory for a while, for an item the game offers to be paired with."""
         self._resources += 1  # counts for the log; a miss when threads race doesn't matter
         address = address_of(descriptor_pointer)
         if not address:
@@ -1366,8 +1655,10 @@ class TradeDepotCapture(Mod):
         if not name:
             return
         resource_type = as_int(type_value)
+        if RECORD_MULTITOOLS:
+            self._model_built(name, resource_type, descriptor, address_of(result_pointer))
         if is_multitool_model(name):
-            self._multitool_model_built(name, resource_type, descriptor)
+            self._multitool_model_built(name, len(descriptor["parts"]))
             return
         if not is_ship_model(name):
             if descriptor["parts"]:
@@ -1484,140 +1775,362 @@ class TradeDepotCapture(Mod):
             self._other_models.add(name)
         logger.info("Model %s: %s.", name, why)
 
-    def _multitool_model_built(self, name: str, resource_type: int, descriptor: dict) -> None:
-        """Keep a multi-tool model's seed and parts for a while, in memory only, in case an item
-        the game offers turns out to hold that seed. The game builds the multi-tools you and other
-        players carry too: they stay here unless an item on offer holds their seed."""
-        seed = int(descriptor["seed"], 16)
-        if seed < 1 << 32:  # too easily mistaken for other numbers in an item's bytes
-            return
-        entry = {"name": name, "type": resource_type}
-        entry.update((k, v) for k, v in descriptor.items() if k != "raw" or "errors" in descriptor)
+    def _multitool_model_built(self, name: str, parts: int) -> None:
+        """Name in the log the first few multi-tool model files the game builds."""
         with self._lock:
-            models = self._tool_models.pop(seed, [])
-            if not any(m["name"] == name and m["parts"] == entry["parts"] for m in models):
-                models.append(entry)
-            self._tool_models[seed] = models[-4:]
-            while len(self._tool_models) > MULTITOOL_MODELS_KEPT:
-                del self._tool_models[next(iter(self._tool_models))]
             if name in self._tool_model_names or len(self._tool_model_names) >= MULTITOOL_NAMES_LOGGED:
                 return
             self._tool_model_names.add(name)
         logger.info(
-            "Model %s: a multi-tool's (%d parts), recorded only when an item the game offers holds its seed.",
+            "Model %s: a multi-tool's (%d parts); its seed and parts are recorded only with an item the "
+            "game offers that holds it.",
             name,
-            len(entry["parts"]),
+            parts,
         )
 
+    def _model_built(self, name: str, resource_type: int, descriptor: dict, result: int) -> None:
+        """Keep a model the game builds from a descriptor in memory for a while, by its seed and, once
+        AddResource returns, by the resource handle it filled in at ``result``, in case an item the game
+        offers holds either."""
+        entry = {"name": name, "type": resource_type}
+        entry.update((k, v) for k, v in descriptor.items() if k != "raw" or "errors" in descriptor)
+        seed = int(descriptor["seed"], 16)
+        with self._lock:
+            if seed >= 1 << 32:  # a smaller one is too easily mistaken for other numbers in an item
+                models = self._recent_models.pop(seed, [])
+                if not any(m["name"] == name and m["parts"] == entry["parts"] for m in models):
+                    models.append(entry)
+                self._recent_models[seed] = models[-4:]
+                while len(self._recent_models) > MODELS_KEPT:
+                    del self._recent_models[next(iter(self._recent_models))]
+            if result:
+                self._building[(threading.get_ident(), result)] = entry
+                while len(self._building) > 256:  # in case AddResource ever returns without the after hook
+                    del self._building[next(iter(self._building))]
+
+    def _model_added(self, result_pointer) -> None:
+        """AddResource has returned. For a model built from a descriptor, note the resource handle it
+        filled in, and add a "built" line for a multi-tool model, or for another model file with parts
+        the first time: when, which file and how many parts, but not its seed or parts."""
+        if not self._building and not self._fresh_tools:  # most of what the game loads: nothing to do
+            return
+        result = address_of(result_pointer)
+        key = (threading.get_ident(), result)
+        entry = None
+        if key in self._building:  # asked without the lock, which this call then needn't wait for
+            with self._lock:
+                entry = self._building.pop(key, None)
+        if entry is None:
+            self._handle_reused(result)
+            return
+        raw = read_memory(result, 4)
+        handle = int.from_bytes(raw, "little") if raw is not None else 0
+        name = entry["name"]
+        now = time.monotonic()
+        with self._lock:
+            if handle not in NO_HANDLE:
+                self._handle_models.pop(handle, None)
+                self._handle_models[handle] = (entry, now)
+                while len(self._handle_models) > MODELS_KEPT:
+                    del self._handle_models[next(iter(self._handle_models))]
+                self._fresh_tools.pop(handle, None)
+                if is_multitool_model(name):
+                    self._fresh_tools[handle] = now
+            if is_multitool_model(name):
+                if self._tool_builds >= TOOL_BUILDS_RECORDED:
+                    return
+                self._tool_builds += 1
+            elif is_ship_model(name) or not entry["parts"] or name in self._built_names:
+                return
+            elif len(self._built_names) >= OTHER_BUILDS_RECORDED:
+                return
+            else:
+                self._built_names.add(name)
+            self._pending.append(
+                {
+                    "t": "built",
+                    "at": int(time.time()),
+                    "name": name,
+                    "type": entry["type"],
+                    "parts": len(entry["parts"]),
+                    "handle": handle,
+                }
+            )
+
+    def _handle_reused(self, result: int) -> None:
+        """For a few seconds after the game builds a multi-tool model, look at the handle of everything
+        it loads without a descriptor: if the game hands that model's handle to something else, forget
+        the model's, so no item holding the handle is paired with that multi-tool, which may be
+        another player's."""
+        if not self._fresh_tools or not result:
+            return
+        raw = read_memory(result, 4)
+        handle = int.from_bytes(raw, "little") if raw is not None else 0
+        if handle not in self._fresh_tools:  # asked without the lock, as above
+            return
+        with self._lock:
+            if self._fresh_tools.pop(handle, None) is not None:
+                self._handle_models.pop(handle, None)
+
+    def _expire_fresh_tools(self, now: float) -> None:
+        """Stop watching for the reuse of multi-tool handles a few seconds after their models were built."""
+        if not self._fresh_tools:
+            return
+        with self._lock:
+            for handle, built_at in list(self._fresh_tools.items()):
+                if now - built_at > HANDLE_FRESH_SECONDS:
+                    del self._fresh_tools[handle]
+
+    def _pairable(self, model: dict) -> bool:
+        """Whether a model may be written with an item that holds it: anything but a ship outside the
+        ship lists read lately, such as yours or another player's. The caller holds the lock."""
+        return not is_ship_model(model["name"]) or self._ship_place(model["seed"]) is not None
+
     def _item_updated(self, item_pointer, now: float | None = None) -> None:
-        """Look at an item the game offers, at most once a second per item. Once it holds the seed
-        of a multi-tool model built lately, record the item and the tool; if none turns up within
-        ITEM_WAIT_SECONDS, record the item's bytes alone, for the first few items of each kind."""
+        """Look at an item the game offers, twice a second, and record it once what it holds looks the
+        same two looks in a row, and again whenever that changes: its kind and flags, its inventories,
+        and the models whose resource handle or seed it holds, with the text in it."""
         now = time.monotonic() if now is None else now
         address = address_of(item_pointer)
         if not address:
             return
         with self._lock:
-            due = self._item_due.pop(address, None)
-            self._item_due[address] = now + ITEM_CHECK_SECONDS if due is None or now >= due else due
-            while len(self._item_due) > ITEMS_TRACKED:
-                del self._item_due[next(iter(self._item_due))]
-            if due is not None and now < due:
+            watch = self._items.get(address)
+            if watch is not None and now < watch["due"]:
                 return
+            if len(self._item_keys) >= MAX_ITEM_RECORDS:
+                self._report_once(
+                    "items-full", "Recorded %d items this session; no more until the next.", MAX_ITEM_RECORDS,
+                    with_traceback=False,
+                )  # fmt: skip
+                return
+            if watch is None:
+                # crc and decoded: (the item's bytes, the system) when last decoded, and when;
+                # candidate: what it held then, and unsettled: how many looks in a row that has
+                # changed; paired and settled: (handle, offer, model) of the last look, and of the
+                # last time it settled with a model; recorded: (system, what it held) last written;
+                # system, offers and records: how often it was written in that system, for each
+                # offer and in all.
+                watch = dict.fromkeys(
+                    ("crc", "decoded", "candidate", "paired", "settled", "recorded", "system")
+                )
+                watch.update(unsettled=0, offers={}, records=0)
+            else:
+                del self._items[address]  # to the end: the items looked at longest ago go first
+            self._items[address] = watch
+            while len(self._items) > ITEMS_TRACKED:
+                del self._items[next(iter(self._items))]
+            watch["due"] = now + ITEM_CHECK_SECONDS
         raw = read_memory(address, LAYOUT.item_size)
         if raw is None:
             return
-        item = nms.cGcPurchaseableItem.from_buffer_copy(raw)
-        item_type = as_int(item.mItemType)
-        key = (address, item_type, as_int(item.mItemResource.miInternalHandle))
-        with self._lock:
-            state = self._items.pop(key, None) or {"first": now, "done": False}
-            self._items[key] = state
-            while len(self._items) > ITEMS_TRACKED:
-                del self._items[next(iter(self._items))]
-            if state["done"]:
-                return
-            tools = [
-                dict(model, offset=offset)
-                for offset, seed in seeds_in(raw, self._tool_models)
-                for model in self._tool_models[seed]
-            ]
-            if not tools and now - state["first"] < ITEM_WAIT_SECONDS:
-                return
-            state["done"] = True
-        self._write_item(raw, item, tools)
-
-    def _write_item(self, raw: bytes, item, tools: list[dict]) -> None:
-        """Queue an item the game offers for the capture file, with the multi-tools it holds."""
-        item_type = as_int(item.mItemType)
         active = active_system()
         system = read_u64(active[0] + LAYOUT.ua) if active is not None else None
-        where, planet = player_environment()
-        tool_keys = tuple(sorted((t["name"], t["seed"], tuple(t["parts"])) for t in tools))
+        crc = (zlib.crc32(raw), system)
+        if crc == watch["crc"] and not watch["unsettled"] and now - watch["decoded"] < ITEM_REFRESH_SECONDS:
+            return  # the same bytes in the same system, settled, and decoded lately
+        offer = offered_item(raw)
+        pattern = self._without_player_name(offer)
+        hits = seeds_in(raw, self._recent_models)  # outside the lock: it only asks about seeds
         with self._lock:
-            if self._item_records >= MAX_ITEM_RECORDS:
+            if watch["decoded"] is not None and now - watch["decoded"] > ITEM_FORGET_SECONDS:
+                watch["paired"] = watch["settled"] = None
+            watch["crc"], watch["decoded"] = crc, now
+            handle = offer["handle"]
+            fields = ("i", "size", "class", "layout")
+            stores = [[store.get(k) for k in fields] for store in offer.get("stores", [])]
+            identity = dumps([offer["itemType"], stores])
+            model = self._paired_by_handle(watch["paired"], watch["settled"], handle, identity, now)
+            watch["paired"] = (handle, identity, model)
+            if model is not None and self._pairable(model):
+                offer["model"] = model
+            offer["tools"] = [
+                dict(found, offset=offset)
+                for offset, seed in hits
+                for found in self._recent_models.get(seed, ())
+                if self._pairable(found)
+            ]
+            # Not compared: the text, which is anything printable in bytes NMS.py doesn't name (and
+            # isn't read till the item is recorded); the scene node; and the handle, unless it's of a
+            # model the mod can't name.
+            compared = {k: v for k, v in offer.items() if k not in ("handle", "node")}
+            if "model" not in offer and handle not in NO_HANDLE:
+                compared["handle"] = handle
+            signature = hashlib.sha1(dumps(compared).encode()).hexdigest()
+            if signature != watch["candidate"]:
+                watch["candidate"] = signature
+                watch["unsettled"] += 1
+                if watch["unsettled"] < ITEM_UNSETTLED_LOOKS:
+                    return  # recorded if it looks the same next time
+                watch["unsettled"] = 0  # it keeps changing: record it as it is now
+                offer["unsettled"] = 1
+                self._report_once(
+                    f"item-unsettled:{address:x}",
+                    "An item the game offers hasn't looked the same twice in %d looks; it's recorded as it "
+                    "is every %d looks while that lasts.",
+                    ITEM_UNSETTLED_LOOKS,
+                    ITEM_UNSETTLED_LOOKS,
+                    with_traceback=False,
+                )
+            else:
+                watch["unsettled"] = 0
+                if "model" in offer:
+                    watch["settled"] = (handle, identity, model)
+            place = (system, signature)
+            if watch["recorded"] == place:
                 return
-            keep_raw = self._raw_items[item_type] < RAW_ITEMS_PER_TYPE
-            if tools:
-                if (system, tool_keys) in self._item_keys:
-                    return  # offered again, in the same system this session
-                self._item_keys.add((system, tool_keys))
-            elif not keep_raw:
-                return  # nothing more to learn from another one of these
-            record = {
-                "t": "item",
-                "at": int(time.time()),
-                "system": hex64(system) if system else None,
-                "where": where,
-                "planet": planet,
-                "loc": player_location(),
-                "itemType": item_type,
-                "state": as_int(item.mePurchaseState),
-                "free": int(bool(item.mbIsFree)),
-                "gift": int(bool(item.mbIsGift)),
-                "reward": int(bool(item.mbIsReward)),
-                "tools": tools,
-            }
-            if keep_raw:
-                self._raw_items[item_type] += 1
-                record["raw"] = packed(raw)
-            self._item_records += 1
+            watch["recorded"] = place
+            if place in self._item_keys:
+                return  # recorded already in this system, from this item or another
+            if watch["system"] != system:
+                watch["system"], watch["offers"], watch["records"] = system, {}, 0
+            offers = watch["offers"].get(identity, 0)
+            if offers >= ITEM_RECORDS_PER_OFFER or watch["records"] >= ITEM_RECORDS_PER_PLACE:
+                self._report_once(
+                    f"item-changes:{address:x}",
+                    "An item the game offers keeps changing here; the mod has stopped recording some of "
+                    "its changes in this system.",
+                    with_traceback=False,
+                )
+                return
+            watch["offers"][identity] = offers + 1
+            watch["records"] += 1
+            self._item_keys.add(place)
+        self._write_item(address, raw, offer, system, pattern)
+
+    def _paired_by_handle(
+        self, paired: tuple | None, settled: tuple | None, handle: int, identity: str, now: float
+    ) -> dict | None:
+        """The model an item that holds ``handle`` while offering ``identity`` (its kind and inventories)
+        is paired with by that handle. While it holds the same handle and offers the same thing as at
+        its last look, or as when it last settled with a model, that look's model, however long ago
+        the game built it, unless the game has since built another model with that handle. Otherwise a
+        model the game built moments ago with that handle, unless it's the one the item settled with
+        while offering something else: the last offer's model, still on while the item changes to the
+        next. ``paired`` and ``settled`` are (handle, offer, model) of the item's last look and of the
+        last time it settled with a model. The caller holds the lock."""
+        if handle in NO_HANDLE:
+            return None
+        known = self._handle_models.get(handle)
+        for kept in (paired, settled):
+            if kept is not None and kept[0] == handle and kept[1] == identity and kept[2] is not None:
+                if known is None or known[0] is kept[2]:
+                    return kept[2]
+        if known is None:
+            return None
+        model, built_at = known
+        if settled is not None and settled[2] is model:
+            return None
+        return model if now - built_at <= HANDLE_FRESH_SECONDS else None
+
+    def _without_player_name(self, offer: dict) -> re.Pattern[bytes] | None:
+        """Take the player's name and title out of the text in ``offer``, and return the pattern that
+        finds them, for the item's bytes; or, if the name can't be read, leave the text out and return
+        None."""
+        pattern = player_name_pattern()
+        if pattern is None:
+            self._report_once(
+                "player-name",
+                "Couldn't read your player name; until the mod can, items are recorded without the text "
+                "in them or their bytes.",
+                with_traceback=False,
+            )
+            for store in offer.get("stores", []):
+                store.pop("name", None)
+            offer.pop("entitlement", None)
+            offer["nameUnread"] = 1
+            return None
+        for store in offer.get("stores", []):
+            if "name" in store:
+                store["name"] = scrub_text(store["name"], pattern)
+        if "entitlement" in offer:
+            offer["entitlement"] = [scrub_text(value, pattern) for value in offer["entitlement"]]
+        return pattern
+
+    def _write_item(
+        self, address: int, raw: bytes, offer: dict, system: int | None, pattern: re.Pattern[bytes] | None
+    ) -> None:
+        """Queue an item the game offers for the capture file, with where you are, and with its text
+        and bytes after taking out the player's name and title (``pattern``), or without them if
+        that's None."""
+        shown, scrubbed = scrub(raw, pattern) if pattern is not None else (None, 0)
+        if shown is not None and (texts := item_texts(shown)):
+            offer["texts"] = texts
+        where, planet = player_environment()
+        location = player_location()
+        found = [m for m in [offer.get("model"), *offer["tools"]] if m is not None]
+        tools = [m for m in found if is_multitool_model(m["name"])]
+        record = {
+            "t": "item",
+            "at": int(time.time()),
+            "system": hex64(system) if system else None,
+            "where": where,
+            "planet": planet,
+            "loc": location,
+            "addr": f"{address:X}",
+            **offer,
+        }
+        if shown is not None:
+            record["raw"] = packed(shown)
+        if scrubbed:
+            record["scrubbed"] = scrubbed
+        with self._lock:
             self._pending.append(record)
-            new = [t for t in tools if t["seed"] not in self._tools_heard]
-            self._tools_heard.update(t["seed"] for t in tools)
+            self._item_count += 1
+            new = []  # by handle and by seed, an item can hold the same multi-tool twice
+            for tool in tools:
+                if tool["seed"] not in self._tools_heard:
+                    self._tools_heard.add(tool["seed"])
+                    new.append(tool)
             self._tool_count = len(self._tools_heard)
-            first_of_type = item_type not in self._item_types_logged
-            self._item_types_logged.add(item_type)
-        for tool in tools:
+            first_of_type = offer["itemType"] not in self._item_types_logged
+            self._item_types_logged.add(offer["itemType"])
+        for tool in new:
             parts = ", ".join(tool["parts"]) or "no parts"
             logger.info(
                 "Recorded a multi-tool the game offers (seed %s): %s: %s", tool["seed"], tool["name"], parts
+            )
+        if first_of_type:
+            logger.info(
+                "Recorded an item the game offers, of a kind new this session (type %d, state %d): %s.",
+                offer["itemType"],
+                offer["state"],
+                item_summary(offer),
             )
         if tools:
             self._status = "Recorded a multi-tool the game offers here."
             if new:
                 play_sound("multi-tool")
-        elif first_of_type:
-            logger.info(
-                "An item the game offers (type %d) held none of the multi-tool seeds seen lately; its bytes "
-                "are recorded for a closer look.",
-                item_type,
-            )
+        else:
+            self._status = "Recorded an item the game offers here."
 
     def _flush_pending(self) -> None:
-        """Write queued lookups, names, ship models and items (their hooks may run on any thread)."""
+        """Write queued lookups, names, models and items (their hooks may run on any thread)."""
         now = time.monotonic()
         if not self._pending or now < self._next_flush:
             return
         self._next_flush = now + FLUSH_SECONDS
+        # Where you were, for "built" lines: read here because the game may build models on any thread.
+        context = {"system": None, "where": None}
+        try:
+            active = active_system()
+            system = read_u64(active[0] + LAYOUT.ua) if active is not None else None
+            context = {"system": hex64(system) if system else None, "where": player_environment()[0]}
+        except Exception:
+            self._report_once("built-context", "Couldn't tell where you were when the game built a model.")
         with self._lock:
             pending, self._pending = self._pending, []
-            try:
+        for entry in pending:
+            if entry["t"] == "built":
+                entry.update(context)
+        try:
+            with self._write_lock:
                 self._append(*pending)
-            except Exception:
-                self._status = "Couldn't write the capture file. See the log."
-                raise
-            kinds = Counter(entry["t"] for entry in pending)
+        except Exception:
+            self._status = "Couldn't write the capture file. See the log."
+            raise
+        kinds = Counter(entry["t"] for entry in pending)
+        with self._lock:
             self._query_count += kinds["query"]
             self._name_count += kinds["name"]
             self._model_count += kinds["model"]
@@ -1736,12 +2249,16 @@ class TradeDepotCapture(Mod):
                     logger.info("Already recorded this session: %s", summary)
                     self._status = "Already recorded; nothing has changed."
                 return False
-            try:
+            self._recorded_keys.add(key)  # claimed, so no other thread writes it meanwhile
+        try:
+            with self._write_lock:
                 self._append(entry)
-            except Exception:
-                self._status = "Couldn't write the capture file. See the log."
-                raise
-            self._recorded_keys.add(key)
+        except Exception:
+            with self._lock:
+                self._recorded_keys.discard(key)
+            self._status = "Couldn't write the capture file. See the log."
+            raise
+        with self._lock:
             self._count += 1
         logger.info("Recorded %s", summary)
         self._last = summary
@@ -1764,6 +2281,8 @@ class TradeDepotCapture(Mod):
         return True
 
     def _append(self, *entries: dict) -> None:
+        """Write lines to the capture file, after the session's header the first time. The caller
+        holds self._write_lock."""
         lines = [] if self._session_started else [dumps(session_header(self))]
         lines.extend(dumps(entry) for entry in entries)
         CAPTURE_DIR.mkdir(parents=True, exist_ok=True)

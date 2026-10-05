@@ -4,12 +4,11 @@
 
 Prints what was recorded (systems, ship pools, exotics, the parts the game
 picked for the ships it built, each exotic's against ship_model.py's squid
-rule, and the multi-tools the game offered); checks the game's data against
-itself,
-which is where a struct layout that no longer matches the game shows up
-first; and finds each system's ship seeds in the game's random-number stream
-seeded by the system seed. Given a path to nms_namegen, it also measures how
-often the generator behind the site agrees with the game.
+rule, and the items the game offered, such as multi-tools); checks the game's
+data against itself, which is where a struct layout that no longer matches
+the game shows up first; and finds each system's ship seeds in the game's
+random-number stream seeded by the system seed. Given a path to nms_namegen,
+it also measures how often the generator behind the site agrees with the game.
 
 Usage:
     python3 tools/captures/report.py mods/captures/systems.jsonl
@@ -40,6 +39,10 @@ ZERO_SEED = "0" * 16
 PLANET_BITS = 0xF << 52
 # How far into a system's stream to look for its ships.
 STREAM_LIMIT = 100_000
+# A multi-tool's model file holds one of these (as in the capture mod).
+MULTITOOL_PATHS = ("MULTITOOL", "/WEAPONS/")
+# What an item record can say of the item, or of how it was recorded, as 0 or 1.
+ITEM_FLAGS = ("free", "gift", "reward", "extra", "unsettled", "nameUnread")
 
 SHIP_LABELS = {
     "Freighter": "Freighter",
@@ -142,6 +145,8 @@ class Captures:
     models: list[dict] = field(default_factory=list)
     # Items the game offered (multi-tools on racks and at merchants, gifts, rewards), with their session.
     items: list[tuple[dict, Session]] = field(default_factory=list)
+    # Multi-tool models the game built, and the first build of other model files: no seeds or parts.
+    built: list[tuple[dict, Session]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -208,6 +213,8 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                     captures.models.append(obj)
                 elif kind == "item":
                     captures.items.append((obj, session))
+                elif kind == "built":
+                    captures.built.append((obj, session))
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -258,7 +265,8 @@ def summary_lines(captures: Captures) -> list[str]:
         f"{len(files)} file(s), {len(captures.sessions)} session(s), "
         f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s), "
         f"{len(captures.names)} name(s), "
-        f"{len(captures.models)} ship model(s), {len(captures.items)} offered item(s)"
+        f"{len(captures.models)} ship model(s), {len(captures.items)} offered item(s), "
+        f"{len(captures.built)} model build note(s)"
     ]
     builds = Counter(
         (s.header.get("exe") or "unknown", s.header.get("steamBuild") or "?", s.header.get("nmspy") or "?")
@@ -643,38 +651,109 @@ def model_lines(captures: Captures) -> list[str]:
     return lines + squid_lines(exotics)
 
 
-def item_lines(captures: Captures) -> list[str]:
-    """Items the game offered (multi-tools on racks and at merchants, gifts, rewards), with the
-    multi-tools they held."""
-    if not captures.items:
-        return []
+def _is_multitool(name: str | None) -> bool:
+    """As the capture mod tells a multi-tool's model file."""
+    path = (name or "").replace("\\", "/").upper()
+    return "/SPACECRAFT/" not in path and any(part in path for part in MULTITOOL_PATHS)
+
+
+def _store_summary(store: dict, session: Session) -> str:
+    """One of an item's inventories: [index] size, slots, class, layout seed, contents and stats."""
+    if store.get("implausible"):
+        return f"[{store.get('i')}] not an inventory"
+    width, height, slots = (store.get("size") or [0, 0, 0])[:3]
+    grade = session.name("inventoryClass", store.get("class")) or store.get("class")
+    said = f"[{store.get('i')}] {width}x{height}, {slots} slots, class {grade}"
+    layout = store.get("layout") or []
+    if layout and (_hex_or_none(layout[0]) or 0) > 1:
+        said += f", layout seed {layout[0]}"
+    for key, label in (("entries", "in it"), ("history", "in its history"), ("special", "special slots")):
+        if rows := store.get(key):
+            said += f", {len(rows)} {label}"
+    if stats := store.get("stats"):
+        said += ", stats " + " ".join(f"{stat[0]}={stat[1]}" for stat in stats)
+    if store.get("errors"):
+        said += f", {len(store['errors'])} read error(s)"
+    return said
+
+
+def item_lines(captures: Captures, limit: int = 100) -> list[str]:
+    """Items the game offered (multi-tools on racks and at merchants, gifts, rewards): their
+    inventories, the models they held and the text in them; and the multi-tool models the game built."""
+    lines: list[str] = []
     systems = captures.representative_by_system()
-    with_tools = [(item, session) for item, session in captures.items if item.get("tools")]
-    types = Counter(str(item.get("itemType")) for item, _ in captures.items)
-    lines = [
-        "",
-        f"Items the game offered: {len(captures.items)}, {len(with_tools)} of them with a multi-tool "
-        f"(item types: {', '.join(f'{t} x{n}' for t, n in sorted(types.items()))})",
-    ]
-    tool_systems: dict[str, set[int]] = {}
-    for item, session in with_tools:
-        ua = int(item.get("system") or "0", 16)
+
+    def place(entry: dict) -> tuple[int, str]:
+        ua = int(entry.get("system") or "0", 16)
         record = systems.get(ua & ~PLANET_BITS)
-        place = record.label() if record is not None else (_portal_label(ua) if ua else "(no system)")
-        where = session.name("where", item.get("where")) or f"place {item.get('where')}"
-        flags = "".join(f", {flag}" for flag in ("free", "gift", "reward") if item.get(flag))
-        for tool in item["tools"]:
-            tool_systems.setdefault(tool["seed"], set()).add(ua)
-            parts = " ".join(tool.get("parts") or []) or "(no parts)"
-            lines.append(
-                f"  {place}, {where}, nearest planet {item.get('planet')}, item type {item.get('itemType')}"
-                f"{flags}: {_model_file(tool.get('name') or '')} {tool['seed']} (at byte "
-                f"{tool.get('offset', 0):#x} of the item): {parts}"
+        return ua, record.label() if record is not None else (_portal_label(ua) if ua else "(no system)")
+
+    if captures.items:
+        types = Counter(str(item.get("itemType")) for item, _ in captures.items)
+        described: list[str] = []
+        tool_systems: dict[str, set[int]] = {}
+        with_tool = 0
+        for item, session in captures.items:
+            ua, label = place(item)
+            models = [item["model"]] if item.get("model") else []
+            models += item.get("tools") or []
+            tools = [model for model in models if _is_multitool(model.get("name"))]
+            with_tool += bool(tools)
+            for tool in tools:
+                tool_systems.setdefault(tool["seed"], set()).add(ua)
+            where = session.name("where", item.get("where")) or f"place {item.get('where')}"
+            flags = "".join(f", {flag}" for flag in ITEM_FLAGS if item.get(flag))
+            said = []
+            if "stores" in item or "handle" in item:  # 0.8.2 on
+                stores = item.get("stores") or []
+                summary = "; ".join(_store_summary(store, session) for store in stores)
+                said.append(f"inventories {summary}" if stores else "no inventories")
+            elif "raw" in item:
+                said.append("bytes only")
+            if model := item.get("model"):
+                parts = " ".join(model.get("parts") or []) or "(no parts)"
+                said.append(f"model {_model_file(model.get('name') or '')} {model.get('seed')}: {parts}")
+            elif item.get("handle") not in (None, 0, 0xFFFFFFFF):
+                said.append(f"model handle {item['handle']}, not paired")
+            for tool in item.get("tools") or []:
+                parts = " ".join(tool.get("parts") or []) or "(no parts)"
+                said.append(
+                    f"seed of {_model_file(tool.get('name') or '')} {tool.get('seed')} at byte "
+                    f"{tool.get('offset', 0):#x}: {parts}"
+                )
+            if texts := item.get("texts"):
+                said.append("text " + "; ".join(repr(text) for _, text in texts))
+            described.append(
+                f"  {label}, {where}, nearest planet {item.get('planet')}, item type {item.get('itemType')}"
+                f"{flags}, state {item.get('state')}: {', '.join(said)}"
             )
-    repeated = sum(1 for seen in tool_systems.values() if len(seen) > 1)
-    lines.append(f"  multi-tools: {len(tool_systems)}; offered in more than one system: {repeated}")
-    if raw_only := sum(1 for item, _ in captures.items if not item.get("tools")):
-        lines.append(f"  items without a multi-tool, kept as raw bytes: {raw_only}")
+        lines += [
+            "",
+            f"Items the game offered: {len(captures.items)} record(s), {with_tool} with a multi-tool's model "
+            f"(item types: {', '.join(f'{t} x{n}' for t, n in sorted(types.items()))})",
+            *described[:limit],
+        ]
+        if len(described) > limit:
+            lines.append(f"  ... {len(described) - limit} more")
+        repeated = sum(1 for seen in tool_systems.values() if len(seen) > 1)
+        lines.append(f"  multi-tools: {len(tool_systems)}; offered in more than one system: {repeated}")
+    if captures.built:
+        tool_builds = [(b, session) for b, session in captures.built if _is_multitool(b.get("name"))]
+        files = Counter(_model_file(b.get("name") or "") for b, _ in tool_builds)
+        shown = ", ".join(f"{name} {n}" for name, n in files.most_common()) or "none"
+        lines += [
+            "",
+            f"Multi-tool models the game built (seeds and parts not recorded): {len(tool_builds)} ({shown})",
+            f"  other model files with parts, first build each: {len(captures.built) - len(tool_builds)}",
+        ]
+        for built, session in tool_builds[:limit]:
+            where = session.name("where", built.get("where")) or f"place {built.get('where')}"
+            lines.append(
+                f"    {place(built)[1]}, {where}: {_model_file(built.get('name') or '')}, "
+                f"{built.get('parts')} parts, handle {built.get('handle')}"
+            )
+        if len(tool_builds) > limit:
+            lines.append(f"    ... {len(tool_builds) - limit} more")
     return lines
 
 
