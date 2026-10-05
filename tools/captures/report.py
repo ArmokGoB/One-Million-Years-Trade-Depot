@@ -849,7 +849,7 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
         lines += [
             "",
             f"Multi-tool models the game built (seeds and parts not recorded): {len(tool_builds)} ({shown})",
-            f"  other model files with parts, first build each: {len(captures.built) - len(tool_builds)}",
+            f"  other model files with parts: {len(captures.built) - len(tool_builds)}",
         ]
         for built, session in tool_builds[:limit]:
             where = session.name("where", built.get("where")) or f"place {built.get('where')}"

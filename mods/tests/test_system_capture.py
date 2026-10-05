@@ -2086,7 +2086,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertIn("multi-tools: 1; offered in more than one system: 0", text)
         built = "Multi-tool models the game built (seeds and parts not recorded): 1 (MULTITOOL 1)"
         self.assertIn(built, text)
-        self.assertIn("other model files with parts, first build each: 0", text)
+        self.assertIn("other model files with parts: 0", text)
         self.assertIn("Abarof-Dulin, SpaceStation: MULTITOOL, 2 parts, handle 4660", text)
 
 

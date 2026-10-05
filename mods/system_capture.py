@@ -159,10 +159,10 @@ MULTITOOL_MODEL_DIR = "/WEAPONS/MULTITOOL/"
 NOT_MULTITOOL_DIRS = ("/MULTITOOLPARTS/",)  # the fishing rod's float, say
 # The multi-tools the game builds while it generates a system, on the thread
 # that generates it, are the system's own set: they're written with the
-# system, seeds, parts and all. Yours and other players' are built at other
-# times. Each other multi-tool model the game builds gets a "built" line: when,
-# its file, how many parts it has and its resource handle, but not its seed or
-# parts.
+# system, seeds, parts and all. In the captures so far, the game built yours and
+# other players' at other times. Each other multi-tool model the game builds
+# gets a "built" line: when, its file, how many parts it has and its resource
+# handle, but not its seed or parts.
 POOL_TOOLS = 64  # the most multi-tools in one system's set
 POOL_SECONDS = 60.0  # a generation that hasn't ended after this long is taken to have ended unseen
 MAX_POOL_RECORDS = 2_000
