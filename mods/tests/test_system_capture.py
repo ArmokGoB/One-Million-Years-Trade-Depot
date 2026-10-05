@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import array
 import base64
+import contextlib
 import ctypes
 import importlib.util
 import inspect
@@ -18,6 +19,7 @@ import json
 import math
 import os
 import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -192,6 +194,7 @@ class Game:
         voxel.GuideStarRenegadeCount = 30
         voxel.PurpleSystemsCount = 0x40
         voxel.PurpleSystemsStart = 0x3E8
+        voxel.RegionColourValue = 0.625
         star = attributes.mStar
         star.Type = 1
         star.Race = 2
@@ -355,7 +358,7 @@ class WiringTests(CaptureTestCase):
         expected |= {"before_add_resource", "after_add_resource", "before_item_update"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 10)
+        self.assertEqual(len(self.capture._gui_widgets), 13)
 
     def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
         hook = mod.TradeDepotCapture.before_add_resource
@@ -391,7 +394,8 @@ class WiringTests(CaptureTestCase):
             for w in self.capture._gui_widgets
             if type(getattr(w, "_widget_data", None)).__name__ == "ButtonWidgetData"
         ]
-        self.assertEqual(buttons, ["Record the current system now", "Open the captures folder"])
+        guilds = [f"Guild envoy here: {guild}" for guild in ("Merchants", "Explorers", "Mercenaries")]
+        self.assertEqual(buttons, ["Record the current system now", *guilds, "Open the captures folder"])
 
     def test_layout_reads_inside_the_structs(self):
         self.assertEqual(mod.LAYOUT.ua, nms.cGcSolarSystem.mUA.offset)
@@ -474,6 +478,7 @@ class GenerateTests(CaptureTestCase):
                 "wealth": 2,
                 "conflict": 0,
                 "anomaly": 0,
+                "regionColour": 0.625,
                 "planets": 3,
                 "prime": 1,
                 "spacePois": 7,
@@ -999,8 +1004,38 @@ class ModelTests(ModelHelpers, CaptureTestCase):
         disagrees = "disagrees: 03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001, first draw 0.853393"
         self.assertIn(disagrees, text)
 
+    def test_report_shows_how_many_part_options_each_ship_model_has_shown(self):
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B", "TEXTURE_TEMP"])
+        self.build(FIGHTER_MODEL.replace("_PROC", "_PROC_LOD1"), 0x1111111111111111, ["_COCKPIT_A"])  # a copy
+        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"])
+        self.models()
+        text = "\n".join(report.part_coverage_lines(report.read_captures([mod.CAPTURE_FILE])))
+        self.assertIn("  FIGHTER_PROC (Fighter): 1 models, 3 groups, 3 options seen, about 0 more", text)
+        self.assertIn("  S-CLASS_PROC (Exotic): 1 models, 2 groups, 2 options seen, about 0 more", text)
+        self.assertNotIn("LOD1", text)
+        # Groups by the game's naming, and how many options a group probably has that haven't shown up.
+        self.assertEqual([report.part_group(p) for p in ("_COCKPIT_C", "_COCKPITA_0NEW", "TEXTURE_TEMP", "_X")],
+                         ["_COCKPIT_", "_COCKPITA_", "TEXTURE", "_X"])  # fmt: skip
+        self.assertEqual(report.unseen_options(report.Counter({"A": 1, "B": 1, "C": 1, "D": 2})), 1.5)
+        self.assertEqual(report.unseen_options(report.Counter({"A": 9, "B": 4})), 0.0)
+        many = [
+            {"name": FIGHTER_MODEL, "seed": f"{i:016X}", "parts": [f"_ACC_{i}", "_WINGS_A"]} for i in range(4)
+        ]
+        lines = report.part_coverage_lines(report.Captures(models=many))
+        self.assertIn("  FIGHTER_PROC: 4 models, 2 groups, 5 options seen, about 6 more", lines)
+        self.assertIn("    likely to have more: _ACC_ 4 seen in 4 picks (about 6 more)", lines)
+
 
 MULTITOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/MULTITOOL.SCENE.MBIN"
+ROYAL_TOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/ROYALMULTITOOL.SCENE.MBIN"
+# A system's own multi-tools, as the game builds them while it generates the system: (file, seed,
+# parts, resource handle).
+SET = [
+    (MULTITOOL_MODEL, 0x5EED000000000001, ["_GUN_A", "_GRIP_A"], 0x31000),
+    (MULTITOOL_MODEL, 0x5EED000000000002, ["_GUN_B"], 0x31001),
+    (ROYAL_TOOL_MODEL, 0x5EED000000000003, ["_ROYAL_A"], 0x31002),
+]
 TOOL_SEED = 0x7A11C0DE5EED0001  # a multi-tool the game offers
 OTHER_TOOL_SEED = 0x0D0D0D0D0D0D0D0D  # another it offers later
 OWN_TOOL_SEED = 0x0123456789ABCDEF  # one the player carries, or another player does
@@ -1120,6 +1155,49 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.poll()
         return [line for line in self.lines() if line["t"] == "built"]
 
+    def pools(self) -> list[dict]:
+        self.poll()
+        return [line for line in self.lines() if line["t"] == "pool"]
+
+    @contextlib.contextmanager
+    def generation(self):
+        """The game generates the loaded system again: what's built inside happens meanwhile."""
+        self.assertIsNone(
+            self.capture.before_generate(self.game.this(), False, ctypes.pointer(self.game.seed))
+        )
+        yield
+        self.assertIsNone(self.game.generate(self.capture))
+
+    def build_set(self, tools=SET) -> None:
+        for name, seed, parts, handle in tools:
+            self.build(name, seed, parts, handle=handle)
+
+    def resource_table(self, resources: dict, one_based: bool = True):
+        """A resource manager in fake memory listing ``resources``, handle -> (file, seed or None,
+        parts, references), with the mod pointed at it; returns the manager."""
+        manager = self.game._alloc(nms.cTkResourceManager)
+        count = max(resources) + 2
+        pointers = (ctypes.c_uint64 * count)()
+        self.game.memory.keep(pointers)
+        self.game._keep.append(pointers)
+        self.resources = {}
+        for handle, (name, seed, parts, refs) in resources.items():
+            resource = self.resources[handle] = self.game._alloc(nms.cTkResource)
+            resource.miType = 1
+            resource.msName.value = name.encode()
+            resource.mHandle = handle
+            resource.muRefCount = refs
+            if seed is not None:
+                descriptor = self.descriptor(seed, parts).contents
+                ctypes.memmove(ctypes.addressof(resource.mDescriptor), ctypes.addressof(descriptor),
+                               ctypes.sizeof(descriptor))  # fmt: skip
+            pointers[handle - 1 if one_based else handle] = ctypes.addressof(resource)
+        vector = manager.mResources
+        vector.allocated_size = vector.vector_size = count
+        vector._ptr = ctypes.cast(ctypes.addressof(pointers), type(vector._ptr))
+        self._patch("resource_manager_address", lambda: ctypes.addressof(manager))
+        return manager
+
     def test_hooks_watch_the_items_the_game_offers_and_the_handles_of_models(self):
         hook = mod.TradeDepotCapture.before_item_update
         self.assertEqual(hook._hook_func_name, "cGcPurchaseableItem.Update")
@@ -1166,6 +1244,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             "seed": "7A11C0DE5EED0001",
             "useSeed": 1,
             "parts": ["_GUN_A", "_HANDLE_B"],
+            "handle": TOOL_HANDLE,
         }
         self.assertEqual(
             {k: v for k, v in record.items() if k != "at"},
@@ -1217,8 +1296,9 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertEqual(
             [line.split(":", 2)[2] for line in logs.output],
             [
-                f"Model {MULTITOOL_MODEL}: a multi-tool's (2 parts); its seed and parts are recorded "
-                "only with an item the game offers that holds it.",
+                f"Model {MULTITOOL_MODEL}: a multi-tool's (2 parts); its seed and parts are recorded with "
+                "the system's set if the game built it for the system, or with an item the game offers "
+                "that holds it.",
                 f"Recorded a multi-tool the game offers (seed 7A11C0DE5EED0001): {MULTITOOL_MODEL}: "
                 "_GUN_A, _HANDLE_B",
                 "Recorded an item the game offers, of a kind new this session (type 3, state 1): inventories "
@@ -1227,7 +1307,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             ],
         )
         self.assertEqual(self.sounds, ["multi-tool"])
-        self.assertEqual(self.capture.multitools, "1 (items recorded: 1)")
+        self.assertEqual(self.capture.multitools, "1 in 0 systems' sets; 1 on offer (items recorded: 1)")
         self.assertEqual(self.capture.status, "Recorded a multi-tool the game offers here.")
         self.assertEqual(self.lines()[0]["columns"]["storeEntries"][0], "id")
         self.assertEqual(self.lines()[0]["enums"]["inventoryClass"], ["C", "B", "A", "S"])
@@ -1384,11 +1464,23 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         cyrillic = mod.name_pattern("Жу Quorra".encode())  # characters, not bytes, count
         said = "Жу met quorra; ЖуЖу".encode()
         self.assertEqual(mod.scrub(said, cyrillic), ("**** met ******; ЖуЖу".encode(), 2))
-        # One character can't be taken out of bytes without taking out much else, so nothing is
-        # recorded that might hold it; nor if the name isn't text at all.
-        for unreadable in (b"", b"   ", b"\x01\x02\x03", b"Q", b"Q, Seeker of the Atlas", "Ж".encode(),
-                           "Ö Bob".encode(), b"\xff\xfe Bob"):  # fmt: skip
+        # A lone letter says nothing of who you are and can't be taken out of bytes without taking out
+        # much else: it's left, and the rest of the name taken out.
+        lettered = mod.name_pattern(b"Q, Seeker of the Atlas")
+        self.assertEqual(
+            mod.scrub(b"Q met the seeker Q of atlas", lettered), (b"Q met the ****** Q of *****", 2)
+        )
+        self.assertEqual(mod.scrub(b"Q, Seeker of the Atlas!", lettered), (b"*" * 22 + b"!", 1))
+        for single in (b"Q", "Ж".encode()):  # nothing to take out
+            self.assertEqual(mod.scrub(b"Q met \xd0\x96", mod.name_pattern(single)), (b"Q met \xd0\x96", 0))
+        self.assertEqual(mod.scrub("Ö met bob".encode(), mod.name_pattern("Ö Bob".encode())),
+                         ("Ö met ***".encode(), 1))  # fmt: skip
+        # Nothing is recorded that might hold a name that isn't text at all, and the log says why.
+        problems = {b"": "empty", b"   ": "empty", b"\x01\x02\x03": "not text", b"\xff\xfe Bob": "not UTF-8"}
+        for unreadable, problem in problems.items():
             self.assertIsNone(mod.name_pattern(unreadable), unreadable)
+            self.assertEqual(mod.name_problem(unreadable), problem)
+        self.assertIsNone(mod.name_problem(PLAYER))
 
     def test_without_the_players_name_items_are_recorded_without_text_or_bytes(self):
         self.game.player_state.mNameWithTitle.value = b""  # not loaded, or not where NMS.py says
@@ -1398,34 +1490,43 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
             self.look(item)
             self.look(self.item(item_type=4))
-        first, second = self.items()
-        for record in (first, second):
-            self.assertEqual(record["nameUnread"], 1)
+            self.game.player_state.mNameWithTitle.value = (
+                b"\x07\x13\x88garbage"  # NMS.py's place is out of date
+            )
+            self.look(self.item(item_type=5))
+            self.look(self.item(item_type=6))
+        first, second, third, fourth = self.items()
+        for record in (first, second, third, fourth):
             for left_out in ("texts", "raw", "entitlement"):
                 self.assertNotIn(left_out, record)
+        self.assertEqual([r["nameUnread"] for r in self.items()], ["empty", "empty", "not text", "not text"])
         self.assertEqual(first["stores"][0]["size"], [7, 3, 14])
         self.assertNotIn("name", first["stores"][0])
-        self.assertEqual(len(logs.output), 1)
-        self.assertIn("Couldn't read your player name", logs.output[0])
+        self.assertEqual(len(logs.output), 2, "once for each reason")
+        self.assertIn(
+            "Couldn't read your player name (empty); until the mod can, items are recorded", logs.output[0]
+        )
+        self.assertIn("Couldn't read your player name (not text)", logs.output[1])
         self.assertNotIn("someone", mod.CAPTURE_FILE.read_text(encoding="utf-8").lower())
+        self.assertNotIn("garbage", "\n".join(logs.output), "the log never says what it read")
 
-    def test_a_model_is_paired_by_handle_only_if_built_just_before_the_item_held_it(self):
-        self.build(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"], handle=TOOL_HANDLE)
-        self.now += mod.HANDLE_FRESH_SECONDS + 1  # the game may since have reused the handle
-        stale = self.item(handle=TOOL_HANDLE)
-        self.look(stale)
-        fresh = self.item(item_type=4, handle=TOOL_HANDLE + 1)
-        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE + 1)
-        self.store(fresh, 2, layout_seed=OTHER_TOOL_SEED)
-        self.look(fresh)
-        self.look(fresh, int(10 * mod.HANDLE_FRESH_SECONDS / mod.ITEM_CHECK_SECONDS))  # still paired: no news
-        self.store(fresh, 2, grade=2, layout_seed=OTHER_TOOL_SEED + 1)  # another, the handle kept
-        self.look(fresh)
-        first, second, third = self.items()
-        self.assertEqual((first["handle"], first.get("model")), (TOOL_HANDLE, None))
-        self.assertEqual(second["model"]["seed"], "7A11C0DE5EED0001")
-        self.assertEqual((third["handle"], third.get("model")), (TOOL_HANDLE + 1, None))
-        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+    def test_an_offer_is_paired_with_its_model_however_long_ago_the_game_built_it(self):
+        # The game builds a system's multi-tools as it loads the system and offers one minutes later;
+        # 0.8.2 paired an item only with a model built moments before, so it paired none.
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
+        self.now += 141.0
+        item = self.item(handle=TOOL_HANDLE)
+        self.store(item, 2, layout_seed=OTHER_TOOL_SEED)
+        self.look(item)
+        self.look(item, 100)  # still paired: no news
+        self.store(item, 2, grade=2, layout_seed=OTHER_TOOL_SEED + 1)  # another, the handle kept
+        self.look(item)
+        first, second = self.items()
+        self.assertEqual(first["model"]["seed"], "7A11C0DE5EED0001")
+        self.assertEqual(
+            (second["handle"], second.get("model")), (TOOL_HANDLE, None), "the last offer's model"
+        )
+        self.assertEqual(self.sounds, ["multi-tool"])
 
     def test_a_multi_tool_handle_the_game_hands_to_something_else_is_forgotten(self):
         self.build(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"], handle=0x500)  # another player's, say
@@ -1437,6 +1538,16 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertNotIn(f"{OWN_TOOL_SEED:016X}", recorded)
         self.assertNotIn("_GUN_C", recorded)
         self.assertEqual(self.sounds, [])
+        # Nor does an item that was paired keep the model once the game hands its handle on.
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
+        item = self.item(item_type=4, handle=TOOL_HANDLE)
+        self.look(item)
+        self.load(TOOL_HANDLE)
+        item.contents.mePurchaseState = 2
+        self.look(item)
+        self.assertEqual(
+            [r.get("model", {}).get("seed") for r in self.items()[1:]], ["7A11C0DE5EED0001", None]
+        )
 
     def test_handles_that_mean_no_resource_are_never_paired(self):
         for handle in mod.NO_HANDLE:
@@ -1459,8 +1570,21 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
         self.assertNotIn(f"{OWN_SHIP_SEED:016X}", recorded)
         self.assertNotIn("_COCKPIT_B", recorded)
-        self.assertTrue(mod.is_multitool_model("MODELS\\COMMON\\WEAPONS\\SOMETHING.SCENE.MBIN"))
-        self.assertFalse(mod.is_multitool_model(FIGHTER_MODEL))
+
+    def test_multi_tool_models_are_the_files_in_the_multi_tool_folder_but_its_parts(self):
+        # Files 0.8.2 saw the game build: it took the effects for multi-tools.
+        for name in (MULTITOOL_MODEL, ROYAL_TOOL_MODEL, "MODELS/COMMON/WEAPONS/MULTITOOL/ATLASMULTITOOL.SCENE.MBIN",
+                     "MODELS/COMMON/WEAPONS/MULTITOOL/SENTINELMULTITOOL.SCENE.MBIN",
+                     "MODELS\\COMMON\\WEAPONS\\MULTITOOL\\STAFFNPCMULTITOOL.SCENE.MBIN",
+                     "models/common/weapons/multitool/staffmultitool.scene.mbin"):  # fmt: skip
+            self.assertTrue(mod.is_multitool_model(name), name)
+        for name in ("MODELS/EFFECTS/WEAPONS/PLAYER/MUZZLEFLASH.SCENE.MBIN",
+                     "MODELS/EFFECTS/INEDITOR/MULTITOOL/STEAM/STEAM.SCENE.MBIN",
+                     "MODELS/COMMON/WEAPONS/MULTITOOL/MULTITOOLPARTS/FISHINGFLOAT.SCENE.MBIN",
+                     "MODELS/COMMON/WEAPONS/MULTITOOL.SCENE.MBIN", FIGHTER_MODEL):  # fmt: skip
+            self.assertFalse(mod.is_multitool_model(name), name)
+        self.assertEqual(mod.model_file(ROYAL_TOOL_MODEL), "ROYALMULTITOOL")
+        self.assertEqual(mod.model_file("MODELS\\A\\B.SCENE.MBIN"), "B")
 
     def test_multi_tools_no_item_holds_are_never_written(self):
         # Like the multi-tool the player carries: the game builds it, but no item on offer holds it.
@@ -1474,6 +1598,233 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         for where in (recorded, "\n".join(logs.output)):
             self.assertNotIn(f"{OWN_TOOL_SEED:016X}", where)
             self.assertNotIn("_GUN_C", where)
+
+    def test_the_multi_tools_built_while_a_system_generates_are_written_as_its_set(self):
+        creature = "MODELS/PLANETS/CREATURES/QUADRUPED/QUADRUPED.SCENE.MBIN"
+        self.build(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"], handle=OWN_TOOL_HANDLE)  # yours, built before
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            with self.generation():
+                self.build_set()
+                self.build(creature, 0x5555555555555555, ["_HEAD_A"], handle=50)  # not a multi-tool
+        self.build(MULTITOOL_MODEL, OWN_TOOL_SEED + 1, ["_GUN_D"], handle=OWN_TOOL_HANDLE + 1)  # and after
+        (pool,) = self.pools()
+        self.assertEqual(
+            {k: v for k, v in pool.items() if k != "at"},
+            {
+                "t": "pool",
+                "system": f"{UA:016X}",
+                "tools": [
+                    {
+                        "name": name,
+                        "type": 1,
+                        "seed": f"{seed:016X}",
+                        "useSeed": 1,
+                        "parts": parts,
+                        "handle": handle,
+                    }
+                    for name, seed, parts, handle in SET
+                ],
+            },
+        )
+        self.assertIn(
+            "INFO:TradeDepotCapture:Recorded the 3 multi-tools of the system at 03E9F3545C3E, galaxy 1 "
+            "(MULTITOOL 2, ROYALMULTITOOL 1).",
+            logs.output,
+        )
+        self.assertEqual(self.sounds, ["multi-tool"])
+        self.assertEqual(self.capture.multitools, "3 in 1 systems' sets; 0 on offer (items recorded: 0)")
+        # Built lines only for what isn't in the set, and never with a seed or parts.
+        self.assertEqual(
+            sorted(line["handle"] for line in self.built()), [50, OWN_TOOL_HANDLE, OWN_TOOL_HANDLE + 1]
+        )
+        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        for secret in (f"{OWN_TOOL_SEED:016X}", f"{OWN_TOOL_SEED + 1:016X}", "_GUN_C", "_GUN_D", "_HEAD_A"):
+            self.assertNotIn(secret, recorded)
+        self.assertEqual(self.capture._generating, {}, "nothing left open")
+
+    def test_multi_tools_another_thread_builds_while_a_system_generates_arent_its_own(self):
+        # Another player's, say, which the game may build on another thread meanwhile.
+        with self.generation():
+            self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
+            other = threading.Thread(target=self.build, args=(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"]),
+                                     kwargs={"handle": OWN_TOOL_HANDLE})  # fmt: skip
+            other.start()
+            other.join()
+        (pool,) = self.pools()
+        self.assertEqual([tool["seed"] for tool in pool["tools"]], ["7A11C0DE5EED0001"])
+        self.assertEqual(
+            pool["elsewhere"], 1, "counted, so a capture shows if the game builds them elsewhere"
+        )
+        self.assertEqual([line["handle"] for line in self.built()], [OWN_TOOL_HANDLE])
+        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        # Built only on another thread: noted for the system, with nothing taken for its own.
+        self.game.set_address(OTHER_UA)
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            with self.generation():
+                other = threading.Thread(target=self.build, args=(MULTITOOL_MODEL, TOOL_SEED + 1, ["_GUN_B"]))
+                other.start()
+                other.join()
+        noted = self.pools()[1]
+        self.assertEqual(
+            {k: v for k, v in noted.items() if k != "at"},
+            {"t": "pool", "system": f"{OTHER_UA:016X}", "tools": [], "elsewhere": 1},
+        )
+        self.assertIn(
+            "INFO:TradeDepotCapture:While the game generated the system at 01230EABCDEF, galaxy 1, it built 1 "
+            "multi-tools on other threads and none on its own, so none were taken for the system's.",
+            logs.output,
+        )
+        self.assertEqual(self.sounds.count("multi-tool"), 1, "no tone for the second")
+        self.assertEqual(self.capture.multitools, "1 in 1 systems' sets; 0 on offer (items recorded: 0)")
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        self.assertIn("1 system multi-tool set(s)", report.summary_lines(captures)[0])
+        self.assertIn(
+            "  generations during which other threads built multi-tools: 2 (2 multi-tools; 1 of them with none "
+            "on the generating thread)",
+            report.pool_lines(captures),
+        )
+
+    def test_a_systems_set_is_written_once_a_session_unless_it_changes(self):
+        for _ in range(2):  # the same system and set twice
+            with self.generation():
+                self.build_set()
+        with self.generation():  # the same system with another set
+            self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
+        with self.generation():  # nothing built: nothing written
+            pass
+        self.game.set_address(OTHER_UA)
+        for _ in range(2):  # another system with the first's set: its own record, once
+            with self.generation():
+                self.build_set()
+        self.assertEqual(
+            [(pool["system"], len(pool["tools"])) for pool in self.pools()],
+            [(f"{UA:016X}", 3), (f"{UA:016X}", 1), (f"{OTHER_UA:016X}", 3)],
+        )
+        self.assertEqual(self.sounds, ["multi-tool"] * 2, "once for each system")
+        self.assertEqual(self.capture.multitools, "4 in 2 systems' sets; 0 on offer (items recorded: 0)")
+
+    def test_an_offer_says_which_of_the_systems_multi_tools_it_is(self):
+        with self.generation():
+            self.build_set()
+        self.now += 140.0  # you walk up to the multi-tool case minutes later
+        item = self.item(item_type=1, handle=SET[1][3])
+        self.store(item, 2, size=(6, 3, 18), grade=2, layout_seed=0x33C46B92EF2FAB5F)
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.look(item)
+        (record,) = self.items()
+        expected = {
+            "name": MULTITOOL_MODEL,
+            "type": 1,
+            "seed": "5EED000000000002",
+            "useSeed": 1,
+            "parts": ["_GUN_B"],
+        }
+        self.assertEqual(record["model"], dict(expected, handle=SET[1][3], pool=1))
+        self.assertIn(
+            "INFO:TradeDepotCapture:Recorded a multi-tool the game offers (seed 5EED000000000002, number 2 of "
+            f"the system's set): {MULTITOOL_MODEL}: _GUN_B",
+            logs.output,
+        )
+        self.assertEqual(self.sounds, ["multi-tool", "multi-tool"], "for the set, then for the offer")
+        self.assertEqual(self.capture.multitools, "3 in 1 systems' sets; 1 on offer (items recorded: 1)")
+        self.assertIn(", number 2 of the system's set", mod.item_summary(record))
+
+    def test_a_systems_set_lists_each_model_once_and_is_bounded_in_size_and_time(self):
+        self._patch("POOL_TOOLS", 2)
+        with self.generation():
+            for i in range(3):  # one too many
+                self.build(MULTITOOL_MODEL, TOOL_SEED + i, ["_GUN_A"], handle=0x400 + i)
+            self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=0x400)  # built again: listed once
+        (pool,) = self.pools()
+        self.assertEqual(
+            [tool["seed"] for tool in pool["tools"]], [f"{TOOL_SEED:016X}", f"{TOOL_SEED + 1:016X}"]
+        )
+        self.assertEqual(self.capture._handle_models[0x400]["pool"], 0)
+        self.assertEqual([line["handle"] for line in self.built()], [0x402], "the one left out")
+        # A generation whose end the mod never sees stops gathering after a while.
+        self.capture.before_generate(self.game.this(), False, ctypes.pointer(self.game.seed))
+        self.now += mod.POOL_SECONDS + 1
+        self.build(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"], handle=OWN_TOOL_HANDLE)
+        self.assertNotIn("pool", self.capture._handle_models[OWN_TOOL_HANDLE])
+
+    def test_a_failure_recording_a_systems_set_is_reported_once_and_the_system_still_recorded(self):
+        self._patch("model_file", mock.Mock(side_effect=RuntimeError("boom")))
+        self.game.set_address(OTHER_UA)
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            for _ in range(2):
+                with self.generation():
+                    self.build_set(SET[:1])
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("Couldn't record a system's multi-tools.", logs.output[0])
+        self.assertEqual([line["ua"] for line in self.lines() if line["t"] == "sys"][-1], f"{OTHER_UA:016X}")
+        self.assertEqual(self.capture._generating, {})
+
+    def test_an_offer_notes_what_the_resource_manager_holds_for_its_handle(self):
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
+        self.resource_table({TOOL_HANDLE: (MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], 3)})
+        item = self.item(handle=TOOL_HANDLE)
+        self.look(item)
+        self.resources[TOOL_HANDLE].muRefCount = 4  # more things hold it now: no news
+        item.contents.mItemNode.lookupInt = 0x40001  # and the bytes change, so the mod looks again
+        self.look(item)
+        (record,) = self.items()
+        self.assertEqual(
+            record["resource"],
+            {"slot": TOOL_HANDLE - 1, "name": MULTITOOL_MODEL, "type": 1, "refs": 3,
+             "seed": "7A11C0DE5EED0001", "useSeed": 1, "parts": ["_GUN_A"]},
+        )  # fmt: skip
+        self.assertEqual(record["model"]["seed"], record["resource"]["seed"])
+
+    def test_the_resource_manager_is_read_only_where_a_resource_says_it_has_the_handle(self):
+        self.resource_table({0x40: (MULTITOOL_MODEL, None, [], 1), 0x41: (FIGHTER_MODEL, None, [], 2)},
+                            one_based=False)  # fmt: skip
+        self.assertEqual(
+            mod.resource_info(0x40), {"slot": 0x40, "name": MULTITOOL_MODEL, "type": 1, "refs": 1}
+        )
+        self.assertEqual(mod.resource_info(0x41)["name"], FIGHTER_MODEL, "not the one before it")
+        self.assertEqual(
+            mod.resource_info(0x42), {"error": "no resource with this handle", "seen": [0x41, None]}
+        )
+        self.assertEqual(mod.resource_info(0x10000), {"error": "no resource with this handle", "seen": []})
+        manager = self.resource_table({0x40: (MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], 1)})
+        manager.mResources.vector_size = manager.mResources.allocated_size + 1
+        self.assertRegex(
+            mod.resource_info(0x40)["error"], r"^implausible resource list \(count 67 of 66, pointer 0x"
+        )
+        self._patch("resource_manager_address", lambda: 0xDEAD0000)
+        self.assertEqual(mod.resource_info(0x40), {"error": "the resource list couldn't be read"})
+        self._patch("resource_manager_address", lambda: None)
+        self.assertIsNone(mod.resource_info(0x40))
+
+    def test_what_the_resource_manager_says_of_a_ship_outside_the_lists_keeps_no_seed(self):
+        self.resource_table({32: (FIGHTER_MODEL, OWN_SHIP_SEED, ["_COCKPIT_B"], 1)})
+        self.look(self.item(handle=32))
+        (record,) = self.items()
+        self.assertEqual(record["resource"], {"slot": 31, "name": FIGHTER_MODEL, "type": 1, "refs": 1})
+        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        self.assertNotIn(f"{OWN_SHIP_SEED:016X}", recorded)
+        self.assertNotIn("_COCKPIT_B", recorded)
+
+    def test_a_failure_reading_the_resource_manager_is_noted_and_logged_once(self):
+        self._patch("resource_info", mock.Mock(side_effect=RuntimeError("boom")))
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.look(self.item(handle=TOOL_HANDLE))
+            self.look(self.item(item_type=4, handle=TOOL_HANDLE))
+        self.assertEqual([r["resource"] for r in self.items()], [{"error": "RuntimeError: boom"}] * 2)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("Couldn't read what the game's resource manager holds for an item.", logs.output[0])
+        self.look(self.item(item_type=5))  # no handle: not looked up
+        self.assertNotIn("resource", self.items()[-1])
+
+    def test_the_resource_manager_is_found_where_pymhf_maps_the_games_pointer(self):
+        self.assertIsNone(mod.resource_manager_address(), "NMS.py hasn't found it outside the game")
+        manager = self.game._alloc(nms.cTkResourceManager)
+        pointer = ctypes.pointer(manager)  # stands for the game's own pointer, which pyMHF maps in place
+        self.game.memory.keep(pointer)
+        with mock.patch.object(nms.cEgModules, "mgpResourceManager", pointer, create=True):
+            self.assertEqual(mod.resource_manager_address(), ctypes.addressof(manager))
+            ctypes.c_uint64.from_address(ctypes.addressof(pointer)).value = 0  # the game hasn't set it yet
+            self.assertIsNone(mod.resource_manager_address())
 
     def test_built_lines_note_multi_tool_models_without_their_seed_or_parts(self):
         self._patch("TOOL_BUILDS_RECORDED", 2)
@@ -1571,14 +1922,14 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.look(item)
         self.assertEqual([r["model"]["seed"] for r in self.items()], ["7A11C0DE5EED0001"] * 2)
 
-    def test_a_pairing_made_moments_after_the_build_is_kept_while_the_offer_settles(self):
+    def test_a_pairing_is_kept_while_the_offer_settles(self):
         self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
-        self.now += mod.HANDLE_FRESH_SECONDS - 0.2  # first seen just in time
+        self.now += 300.0
         item = self.item(handle=TOOL_HANDLE)
         for state in (1, 2, 3, 3):  # something else settles only later
             item.contents.mePurchaseState = state
             self.look(item, 1)
-        self.now += mod.HANDLE_FRESH_SECONDS  # and the game stops updating it for a few seconds
+        self.now += 10.0  # and the game stops updating it for a few seconds
         item.contents.mePurchaseState = 4
         self.look(item)
         self.assertEqual([(r["state"], r["model"]["seed"]) for r in self.items()],
@@ -1599,8 +1950,8 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
         item = self.item(handle=TOOL_HANDLE)
         self.look(item)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"], handle=TOOL_HANDLE)  # the number reused
-        self.now += mod.HANDLE_FRESH_SECONDS + 1
+        self.build(FIGHTER_MODEL, OWN_SHIP_SEED, ["_COCKPIT_B"], handle=TOOL_HANDLE)  # the number reused
+        self.now += 60.0
         item.contents.mePurchaseState = 2
         self.look(item)
         self.assertEqual([r.get("model", {}).get("seed") for r in self.items()], ["7A11C0DE5EED0001", None])
@@ -1642,7 +1993,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             def __exit__(self, *exc):
                 return self.lock.__exit__(*exc)
 
-        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)  # watched for a few seconds
+        self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)  # a handle the mod watches
         self.capture._building[(threading.get_ident() + 1, 0x1000)] = {"name": "X", "parts": []}  # elsewhere
         lock = self.capture._lock = CountingLock(self.capture._lock)
         self.load(0x900)
@@ -1650,15 +2001,21 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.load(TOOL_HANDLE)  # the multi-tool's handle, reused: that needs the lock
         self.assertEqual(lock.taken, 1)
 
-    def test_handles_of_multi_tools_are_watched_only_for_a_few_seconds(self):
+    def test_every_handle_the_mod_has_a_model_for_is_watched_however_long_ago_it_was_built(self):
         self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
-        self.assertEqual(list(self.capture._fresh_tools), [TOOL_HANDLE])
-        self.now += mod.HANDLE_FRESH_SECONDS / 2
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"], handle=31)
+        self.now += 3600.0
         self.poll()
-        self.assertEqual(list(self.capture._fresh_tools), [TOOL_HANDLE])
-        self.now += mod.HANDLE_FRESH_SECONDS
-        self.poll()
-        self.assertEqual(self.capture._fresh_tools, {})
+        self.load(0x900)  # a handle the mod has no model for: nothing to forget
+        self.load(31)  # the ship's handle, handed to a texture
+        self.assertEqual(sorted(self.capture._handle_models), [31, TOOL_HANDLE])
+        self.assertIsNone(self.capture._handle_models[31])
+        self.assertEqual(self.capture._handle_models[TOOL_HANDLE]["seed"], "7A11C0DE5EED0001")
+        self.look(self.item(handle=31))
+        self.look(self.item(item_type=4, handle=TOOL_HANDLE))
+        self.assertEqual([r.get("model", {}).get("seed") for r in self.items()], [None, "7A11C0DE5EED0001"])
+        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_B"], handle=31)  # a model again
+        self.assertEqual(self.capture._handle_models[31]["seed"], "2222222222222222")
 
     def test_seeds_are_found_at_any_four_byte_boundary(self):
         raw = bytes(4) + (0x1122334455667788).to_bytes(8, "little") + bytes(20) + (9).to_bytes(8, "little")
@@ -1681,6 +2038,48 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertFalse(hooks & {"before_item_update", "after_add_resource"})
         self.assertIn("before_add_resource", hooks)
         self.assertEqual(capture.multitools, "Off (RECORD_MULTITOOLS is False)")
+        capture.before_generate(self.game.this(), False, ctypes.pointer(self.game.seed))
+        self.assertEqual(capture._generating, {}, "no system's set gathered")
+
+    def test_report_lists_each_systems_multi_tools_and_which_one_is_on_offer(self):
+        self.game.player_state.mNameWithTitle.value = b""
+        with self.generation():
+            self.build_set()
+        self.resource_table({SET[1][3]: (MULTITOOL_MODEL, SET[1][1], SET[1][2], 2)})
+        self.look(self.item(item_type=1, handle=SET[1][3]))
+        self.load(
+            SET[2][3]
+        )  # the game hands the royal's handle to something else, as far as the mod can tell
+        self.look(self.item(item_type=2, handle=SET[2][3]))
+        self.items()
+        with mod.CAPTURE_FILE.open("a", encoding="utf-8") as stream:  # the same set, recorded another time
+            stream.write(json.dumps(self.pools()[0]) + "\n")
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        self.assertIn("2 system multi-tool set(s), 2 offered item(s)", report.summary_lines(captures)[0])
+        text = "\n".join(report.pool_lines(captures))
+        self.assertIn(
+            "Systems' own multi-tools: 2 set(s) for 1 system(s), 6 multi-tools (MULTITOOL 4, ROYALMULTITOOL 2)",
+            text,
+        )
+        self.assertIn("  multi-tools per set: 3 x2", text)
+        self.assertIn("  systems recorded more than once: 1; with the same set each time: 1", text)
+        self.assertIn("  seeds in more than one system's set: 0", text)
+        self.assertIn(
+            "  03E9F3545C3E galaxy 1 Shown-Name: MULTITOOL 5EED000000000001 (2 parts), "
+            "MULTITOOL 5EED000000000002 (1 parts), ROYALMULTITOOL 5EED000000000003 (1 parts)",
+            text,
+        )
+        items = "\n".join(report.item_lines(captures))
+        self.assertIn(
+            "item type 1, nameUnread (empty), state 1: no inventories, model MULTITOOL 5EED000000000002 "
+            "(number 2 of the system's set): _GUN_B, resource MULTITOOL, 2 holding it, the same model",
+            items,
+        )
+        self.assertIn(
+            "item type 2, nameUnread (empty), state 1: no inventories, model handle 200706, not paired, "
+            "number 3 of the system's set by its handle",
+            items,
+        )
 
     def test_report_lists_the_items_offered_and_the_multi_tool_models_built(self):
         self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A", "_HANDLE_B"], handle=TOOL_HANDLE)
@@ -1713,7 +2112,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertIn("multi-tools: 1; offered in more than one system: 0", text)
         built = "Multi-tool models the game built (seeds and parts not recorded): 1 (MULTITOOL 1)"
         self.assertIn(built, text)
-        self.assertIn("other model files with parts, first build each: 0", text)
+        self.assertIn("other model files with parts: 0", text)
         self.assertIn("Abarof-Dulin, SpaceStation: MULTITOOL, 2 parts, handle 4660", text)
 
 
@@ -1841,7 +2240,8 @@ class LookupTests(CaptureTestCase):
         self.poll()
         placed, unplaced = self.lines()[1:]
         self.assertEqual(
-            placed["positions"], [[1000.2, -2.5, 300.0], [196541.6, 112896.0, 300.0], [-143186.3, -112896.0, 132386.5]]
+            placed["positions"],
+            [[1000.2, -2.5, 300.0], [196541.6, 112896.0, 300.0], [-143186.3, -112896.0, 132386.5]],
         )
         self.assertNotIn("positions", unplaced, "nothing placed: nothing recorded")
 
@@ -1987,7 +2387,9 @@ class PollingTests(CaptureTestCase):
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.capture.on_frame()
         expected = "INFO:TradeDepotCapture:Couldn't record: no star system is loaded yet."
-        self.assertEqual(logs.output, ["INFO:TradeDepotCapture:Found the game. Recording from now on.", expected])
+        self.assertEqual(
+            logs.output, ["INFO:TradeDepotCapture:Found the game. Recording from now on.", expected]
+        )
         self.assertEqual(self.capture.status, "No star system is loaded yet.")
         self.assertEqual(self.sounds, ["problem"])
 
@@ -2000,6 +2402,583 @@ class PollingTests(CaptureTestCase):
         with self.assertLogs("TradeDepotCapture", "WARNING"):
             self.capture.on_frame()
         self.assertEqual(self.sounds, ["problem"])
+
+
+# Code shaped like cGcSolarSystem::GetStarCount: the instructions STAR_COUNT_PATTERN shows, then the rest.
+STAR_FIELD = 0x2A70
+STAR_VALUE_AT = 0x100  # where the value the code reads from a fixed place is, from the code's start
+COMPARE = "0F2FD10F97C0FFC0C3"  # comiss xmm2, xmm1; seta al; inc eax; ret
+
+
+def star_code(rest: str, value_at: int = STAR_VALUE_AT, field: int = STAR_FIELD) -> bytes:
+    """movss xmm1, [rip + to ``value_at``]; xor eax, eax; movss xmm2, [rcx + ``field``]; then ``rest``."""
+    return (
+        bytes.fromhex("F30F100D")
+        + (value_at - 8).to_bytes(4, "little", signed=True)
+        + bytes.fromhex("33C0F30F1091")
+        + field.to_bytes(4, "little", signed=True)
+        + bytes.fromhex(rest)
+    )
+
+
+# Every instruction read_leaf knows, as GNU as encodes them, with registers and memory a function the
+# mod calls may use; objdump agreed on where each ends.
+KNOWN_INSTRUCTIONS = [
+    ("F30F100D34120000", "movss xmm1, [rip+0x1234]"),
+    ("31C0", "xor eax, eax"),
+    ("F30F1091702A0000", "movss xmm2, [rcx+0x2a70]"),
+    ("0F2FD1", "comiss xmm2, xmm1"),
+    ("0F97C0", "seta al"),
+    ("FFC0", "inc eax"),
+    ("F20F104110", "movsd xmm0, [rcx+0x10]"),
+    ("0F105920", "movups xmm3, [rcx+0x20]"),
+    ("0F286130", "movaps xmm4, [rcx+0x30]"),
+    ("660F106940", "movupd xmm5, [rcx+0x40]"),
+    ("660F28C5", "movapd xmm0, xmm5"),
+    ("F30F10CA", "movss xmm1, xmm2"),
+    ("0F14CA", "unpcklps xmm1, xmm2"),
+    ("0F154950", "unpckhps xmm1, [rcx+0x50]"),
+    ("0F54C1", "andps xmm0, xmm1"),
+    ("0F550540000000", "andnps xmm0, [rip+0x40]"),
+    ("0F56C1", "orps xmm0, xmm1"),
+    ("0F57C0", "xorps xmm0, xmm0"),
+    ("660F57C9", "xorpd xmm1, xmm1"),
+    ("0FC6C11B", "shufps xmm0, xmm1, 0x1b"),
+    ("F30F2AC0", "cvtsi2ss xmm0, eax"),
+    ("F3480F2AC0", "cvtsi2ss xmm0, rax"),
+    ("F20F2A4908", "cvtsi2sd xmm1, [rcx+0x8]"),
+    ("F30F2CC0", "cvttss2si eax, xmm0"),
+    ("F3480F2C4160", "cvttss2si rax, [rcx+0x60]"),
+    ("F30F2DD1", "cvtss2si edx, xmm1"),
+    ("F24C0F2CC2", "cvttsd2si r8, xmm2"),
+    ("0F2E4170", "ucomiss xmm0, [rcx+0x70]"),
+    ("660F2F0D88000000", "comisd xmm1, [rip+0x88]"),
+    ("660F2ECA", "ucomisd xmm1, xmm2"),
+    ("0F47C2", "cmova eax, edx"),
+    ("480F428180000000", "cmovb rax, [rcx+0x80]"),
+    ("440F450D00010000", "cmovne r9d, [rip+0x100]"),
+    ("F30F51C1", "sqrtss xmm0, xmm1"),
+    ("F30F588190000000", "addss xmm0, [rcx+0x90]"),
+    ("F30F59C1", "mulss xmm0, xmm1"),
+    ("F30F5AC1", "cvtss2sd xmm0, xmm1"),
+    ("F20F5A91A0000000", "cvtsd2ss xmm2, [rcx+0xa0]"),
+    ("F30F5CC1", "subss xmm0, xmm1"),
+    ("F30F5DC1", "minss xmm0, xmm1"),
+    ("F30F5EC1", "divss xmm0, xmm1"),
+    ("F30F5FC1", "maxss xmm0, xmm1"),
+    ("0F5881B0000000", "addps xmm0, [rcx+0xb0]"),
+    ("F30FC2C101", "cmpltss xmm0, xmm1"),
+    ("0FC281C000000001", "cmpltps xmm0, [rcx+0xc0]"),
+    ("660F6EC0", "movd xmm0, eax"),
+    ("66480F6ECA", "movq xmm1, rdx"),
+    ("660F6E91D0000000", "movd xmm2, [rcx+0xd0]"),
+    ("660F7EC0", "movd eax, xmm0"),
+    ("66480F7ECA", "movq rdx, xmm1"),
+    ("F30F7E99E0000000", "movq xmm3, [rcx+0xe0]"),
+    ("660F6F81F0000000", "movdqa xmm0, [rcx+0xf0]"),
+    ("F30F6F0D00020000", "movdqu xmm1, [rip+0x200]"),
+    ("660FEFC0", "pxor xmm0, xmm0"),
+    ("0FAFC2", "imul eax, edx"),
+    ("0FAF8100010000", "imul eax, [rcx+0x100]"),
+    ("0FB68110010000", "movzx eax, byte [rcx+0x110]"),
+    ("0FB79112010000", "movzx edx, word [rcx+0x112]"),
+    ("0FBE8114010000", "movsx eax, byte [rcx+0x114]"),
+    ("440FBF8116010000", "movsx r8d, word [rcx+0x116]"),
+    ("0FB6C0", "movzx eax, al"),
+    ("0F92C2", "setb dl"),
+    ("410F94C0", "sete r8b"),
+    ("0F95C4", "setne ah"),
+    ("0F1F00", "nop [rax]"),
+    ("660F1F0400", "nop word [rax+rax*1]"),
+    ("90", "nop"),
+    ("01D0", "add eax, edx"),
+    ("038120010000", "add eax, [rcx+0x120]"),
+    ("0405", "add al, 0x5"),
+    ("0545230100", "add eax, 0x12345"),
+    ("66053412", "add ax, 0x1234"),
+    ("09C2", "or edx, eax"),
+    ("11D0", "adc eax, edx"),
+    ("19C0", "sbb eax, eax"),
+    ("83E001", "and eax, 0x1"),
+    ("2B0500030000", "sub eax, [rip+0x300]"),
+    ("31D2", "xor edx, edx"),
+    ("4D31C0", "xor r8, r8"),
+    ("39D0", "cmp eax, edx"),
+    ("398130010000", "cmp [rcx+0x130], eax"),
+    ("3B8134010000", "cmp eax, [rcx+0x134]"),
+    ("3C03", "cmp al, 0x3"),
+    ("3D00010000", "cmp eax, 0x100"),
+    ("80B93801000002", "cmp byte [rcx+0x138], 0x2"),
+    ("81B93C01000000100000", "cmp [rcx+0x13c], 0x1000"),
+    ("48833D0004000001", "cmp [rip+0x400], 0x1"),
+    ("83B94001000007", "cmp [rcx+0x140], 0x7"),
+    ("48638144010000", "movsxd rax, [rcx+0x144]"),
+    ("69C200010000", "imul eax, edx, 0x100"),
+    ("6B814801000003", "imul eax, [rcx+0x148], 0x3"),
+    ("05FFFFFF7F", "add eax, 0x7fffffff"),
+    ("83EA01", "sub edx, 0x1"),
+    ("4981E1FFFF0000", "and r9, 0xffff"),
+    ("85C0", "test eax, eax"),
+    ("84814C010000", "test byte [rcx+0x14c], al"),
+    ("858150010000", "test [rcx+0x150], eax"),
+    ("A801", "test al, 0x1"),
+    ("A900000100", "test eax, 0x10000"),
+    ("F6815401000004", "test byte [rcx+0x154], 0x4"),
+    ("F7815801000000010000", "test [rcx+0x158], 0x100"),
+    ("89D0", "mov eax, edx"),
+    ("88D0", "mov al, dl"),
+    ("8B815C010000", "mov eax, [rcx+0x15c]"),
+    ("488B8160010000", "mov rax, [rcx+0x160]"),
+    ("8A9168010000", "mov dl, byte [rcx+0x168]"),
+    ("4C8B1500050000", "mov r10, [rip+0x500]"),
+    ("8D4201", "lea eax, [rdx+0x1]"),
+    ("488D0500060000", "lea rax, [rip+0x600]"),
+    ("4C8D5C9110", "lea r11, [rcx+rdx*4+0x10]"),
+    ("8D049510000000", "lea eax, [rdx*4+0x10]"),
+    ("488D845100010000", "lea rax, [rcx+rdx*2+0x100]"),
+    ("4F8D44EC7F", "lea r8, [r12+r13*8+0x7f]"),
+    ("4898", "cdqe"),
+    ("4899", "cqo"),
+    ("99", "cdq"),
+    ("B803000000", "mov eax, 0x3"),
+    ("B001", "mov al, 0x1"),
+    ("41B802000000", "mov r8d, 0x2"),
+    ("48B8F0DEBC9A78563412", "movabs rax, 0x123456789abcdef0"),
+    ("66B83412", "mov ax, 0x1234"),
+    ("C1E002", "shl eax, 0x2"),
+    ("D1EA", "shr edx, 1"),
+    ("41D3F8", "sar r8d, cl"),
+    ("D0C0", "rol al, 1"),
+    ("D3E0", "shl eax, cl"),
+    ("89C0", "mov eax, eax"),
+    ("F7D0", "not eax"),
+    ("F7DA", "neg edx"),
+    ("FEC2", "inc dl"),
+    ("49FFC9", "dec r9"),
+    ("FFC8", "dec eax"),
+    ("41BB07000000", "mov r11d, 0x7"),
+    ("C3", "ret"),
+]
+# Leaf functions as gcc compiles them for the Windows calling convention, from a struct with floats at
+# 0x2A70 and 0x2A74 and globals (their displacements left 0): (code, fields it reads, values it reads).
+COMPILED = {
+    "two thresholds": (
+        "F30F1081702A00000F2F0500000000B803000000770F31C00F2F05000000000F97C083C001C3",
+        [(0x2A70, 4)],
+        [(8, 15, 4), (24, 31, 4)],
+    ),
+    "two fields": (
+        "F30F10050000000031C00F2F81702A0000F30F1005000000000F97C083C0010F2F81742A0000760383C001C3",
+        [(0x2A70, 4), (0x2A74, 4)],
+        [(0, 8, 4), (17, 25, 4)],
+    ),
+    "a branch over padding": (
+        "F30F1081702A00000F2F0500000000721FF30F1081742A000031C00F2F05000000000F93C04883C002C3"
+        "660F1F440000B801000000C3",
+        [(0x2A70, 4), (0x2A74, 4)],
+        [(8, 15, 4), (27, 34, 4)],
+    ),
+}
+WRITES_KEPT = "a write to a register the function must put back at 0x0"
+READS_ELSEWHERE = "a read of memory other than the object's at 0x0"
+# Code the mod mustn't call, with why not.
+REFUSED = {
+    "E800000000C3": "instruction E8 at 0x0",  # call
+    "FF10C3": "instruction FF /2 at 0x0",  # call [rax]
+    "FF31C3": "instruction FF /6 at 0x0",  # push [rcx]
+    "535BC3": "instruction 53 at 0x0",  # push rbx; pop rbx
+    "C20800": "instruction C2 at 0x0",  # ret 8
+    "894110C3": "a write to memory at 0x0",  # mov [rcx + 0x10], eax
+    "890510000000C3": "a write to memory at 0x0",  # mov [rip + 0x10], eax
+    "0F29742410C3": "a write to memory at 0x0",  # movaps [rsp + 0x10], xmm6
+    "0F9401C3": "a write to memory at 0x0",  # sete [rcx]
+    "660F7E01C3": "a write to memory at 0x0",  # movd [rcx], xmm0
+    "BB01000000C3": WRITES_KEPT,  # mov ebx, 1
+    "31C9C3": WRITES_KEPT,  # xor ecx, ecx: rcx keeps the object's address
+    "B701C3": WRITES_KEPT,  # mov bh, 1
+    "0F92C5C3": WRITES_KEPT,  # setb ch
+    "40B601C3": WRITES_KEPT,  # mov sil, 1
+    "4D31E4C3": WRITES_KEPT,  # xor r12, r12
+    "F30F10F0C3": WRITES_KEPT,  # movss xmm6, xmm0
+    "F3440F10C0C3": WRITES_KEPT,  # movss xmm8, xmm0
+    "4883EC284883C428C3": WRITES_KEPT,  # sub rsp, 0x28; add rsp, 0x28
+    "488D5910C3": WRITES_KEPT,  # lea rbx, [rcx + 0x10]
+    "0F45D8C3": WRITES_KEPT,  # cmovne ebx, eax
+    "8B4204C3": READS_ELSEWHERE,  # mov eax, [rdx + 4]
+    "8B0491C3": READS_ELSEWHERE,  # mov eax, [rcx + rdx * 4]
+    "418B4110C3": READS_ELSEWHERE,  # mov eax, [r9 + 0x10]
+    "8B042500100000C3": READS_ELSEWHERE,  # mov eax, [0x1000]
+    "428B0421C3": READS_ELSEWHERE,  # mov eax, [rcx + r12]
+    "8B41F8C3": "a read outside the object at 0x0",  # mov eax, [rcx - 8]
+    "83C00175FBC3": "a jump back at 0x3",  # a loop
+    "EB01B8C3000000C3": "a jump into the middle of an instruction",
+    "7502C3CCC3": "instruction CC at 0x3",  # a jump past int3 padding
+    "7510C3": "it doesn't end within the 3 bytes read",  # a jump past the bytes read
+    "B801000000BA02000000": "it doesn't end within the 10 bytes read",  # no ret
+    "CCC3": "instruction CC at 0x0",  # int3
+    "0F0BC3": "instruction 0F 0B at 0x0",  # ud2
+    "0F05C3": "instruction 0F 05 at 0x0",  # syscall
+    "F00101C3": "instruction F0 at 0x0",  # lock add [rcx], eax
+    "65488B042530000000C3": "instruction 65 at 0x0",  # mov rax, gs:[0x30]
+    "F3A4C3": "instruction A4 after F2 or F3 at 0x0",  # rep movsb
+    "F20F6EC0C3": "instruction 0F 6E after F2 or F3 at 0x0",  # no such instruction
+    "F2660F6EC0C3": "instruction 0F 6E after F2 or F3 at 0x0",  # F2 picks the instruction, not 66
+    "4190C3": "instruction 90 at 0x0",  # xchg r8d, eax
+    "FDC3": "instruction FD at 0x0",  # std
+    "F7F1C3": "instruction F7 /6 at 0x0",  # div ecx
+    "92C3": "instruction 92 at 0x0",  # xchg eax, edx
+    "C5FA104110C3": "instruction C5 at 0x0",  # vmovss xmm0, [rcx + 0x10]
+    "D901C3": "instruction D9 at 0x0",  # fld [rcx]
+    "666690C3": "a repeated prefix at 0x0",
+    "F2F390C3": "both F2 and F3 at 0x0",
+}
+
+
+class StarCodeTests(unittest.TestCase):
+    """read_leaf: which code the mod may call, and what it reads."""
+
+    SIZE = ctypes.sizeof(nms.cGcSolarSystem)
+
+    def test_every_known_instruction_decodes_whole(self):
+        for code, text in KNOWN_INSTRUCTIONS:
+            with self.subTest(text):
+                code = bytes.fromhex(code)
+                end, flow, target, _ = mod.decode(code + b"\xcc" * 16, 0, self.SIZE)
+                self.assertEqual(end, len(code))
+                self.assertEqual(flow, "ret" if text == "ret" else "next")
+                self.assertIsNone(target)
+        whole = b"".join(bytes.fromhex(code) for code, _ in KNOWN_INSTRUCTIONS)
+        leaf = mod.read_leaf(whole, self.SIZE)
+        self.assertEqual(leaf.length, len(whole))
+
+    def test_reads_of_the_object_and_of_fixed_places(self):
+        for code, text in KNOWN_INSTRUCTIONS:
+            *_, read = mod.decode(bytes.fromhex(code), 0, self.SIZE)
+            if "rip" in text and not text.startswith("lea"):
+                displacement = int(text.split("rip+")[1].split("]")[0], 16)
+                self.assertEqual(read[:2], ("value", len(bytes.fromhex(code)) + displacement), text)
+            elif "[rcx" in text and not text.startswith(("lea", "nop")):
+                self.assertEqual(read[:2], ("field", int(text.split("rcx+")[1].split("]")[0], 16)), text)
+            else:
+                self.assertIsNone(read, text)
+
+    def test_code_shaped_like_the_star_count(self):
+        leaf = mod.read_leaf(star_code(COMPARE) + b"\xcc" * 16 + b"\xe8\x00", self.SIZE)
+        self.assertEqual(leaf.length, 27, "up to its ret, not the padding after it")
+        self.assertEqual(leaf.fields, [(STAR_FIELD, 4)])
+        self.assertEqual(leaf.values, [(0, STAR_VALUE_AT, 4)])
+
+    def test_a_field_read_twice_is_listed_once(self):
+        leaf = mod.read_leaf(star_code("F30F1081702A0000" + COMPARE), self.SIZE)  # movss xmm0, [rcx + 0x2A70]
+        self.assertEqual(leaf.fields, [(STAR_FIELD, 4)])
+
+    def test_forward_branches(self):
+        for rest, length in (
+            ("0F2FD17606B802000000C3B801000000C3", 35),  # jbe over a ret to another
+            ("0F2FD17607B802000000EB05B801000000C3", 36),  # jmp to a shared ret
+            ("0F2FD10F8606000000B802000000C3B801000000C3", 39),  # a jbe with 32 bits to go
+        ):
+            with self.subTest(rest):
+                self.assertEqual(mod.read_leaf(star_code(rest), self.SIZE).length, length)
+
+    def test_compiled_functions(self):
+        for name, (code, fields, values) in COMPILED.items():
+            with self.subTest(name):
+                leaf = mod.read_leaf(bytes.fromhex(code) + b"\xcc" * 8, self.SIZE)
+                self.assertEqual(leaf.length, len(bytes.fromhex(code)))
+                self.assertEqual((leaf.fields, leaf.values), (fields, values))
+
+    def test_refused(self):
+        for code, why in REFUSED.items():
+            with self.subTest(code):
+                self.assertEqual(mod.read_leaf(bytes.fromhex(code), self.SIZE), why)
+
+    def test_refused_after_the_patterns_instructions(self):
+        self.assertEqual(mod.read_leaf(star_code("E800000000C3"), self.SIZE), "instruction E8 at 0x12")
+
+    def test_reads_stay_inside_the_object(self):
+        self.assertIsInstance(mod.read_leaf(bytes.fromhex("8B81FC000000C3"), 0x100), mod.Leaf)
+        self.assertEqual(
+            mod.read_leaf(bytes.fromhex("8B81FD000000C3"), 0x100), "a read outside the object at 0x0"
+        )
+
+    def test_registers_a_function_may_change(self):
+        # xor eax, eax; xor edx, edx; xor r8, r8; xor r11, r11; mov ah, 1; mov al, dh; setne r9b;
+        # xorps xmm0, xmm0; xorps xmm5, xmm5; ret
+        code = bytes.fromhex("31C031D24D31C04D31DBB40188F0410F95C10F57C00F57EDC3")
+        self.assertIsInstance(mod.read_leaf(code, self.SIZE), mod.Leaf)
+
+
+class StarHelpers:
+    def install_stars(self, code: bytes, count=2, value: float = 0.5, offset: int = 0x1234):
+        """The game's star count function, as the mod finds it: ``code`` with ``value`` STAR_VALUE_AT
+        bytes in; calling it returns ``count``, or raises it if it's an exception. A new mod instance
+        finds it; returns the StarCount and the systems it was called with."""
+        buffer = (ctypes.c_ubyte * 0x200)()
+        buffer[: len(code)] = code
+        ctypes.c_float.from_buffer(buffer, STAR_VALUE_AT).value = value
+        address = self.game.memory.keep(buffer)
+        stars = mod.StarCount(address, offset, bytes(buffer[: mod.STAR_CODE_BYTES]))
+        calls = []
+
+        def function(system):
+            calls.append(system)
+            if isinstance(count, Exception):
+                raise count
+            return count
+
+        stars._function = function
+        self._patch("locate_star_count", lambda: stars)
+        self.capture = mod.TradeDepotCapture()
+        return stars, calls
+
+    def set_star_value(self, value: float) -> None:
+        ctypes.c_float.from_address(self.game.address + STAR_FIELD).value = value
+
+
+class StarTests(StarHelpers, CaptureTestCase):
+    def test_header_says_where_the_function_is_and_what_it_reads(self):
+        code = star_code(COMPARE)
+        self.install_stars(code)
+        self.poll()
+        self.poll()
+        info = self.lines()[0]["starCount"]
+        self.assertEqual(
+            info,
+            {
+                "offset": "1234",
+                "code": (code + bytes(mod.STAR_CODE_BYTES - len(code))).hex().upper(),
+                "field": STAR_FIELD,
+                "length": len(code),
+                "values": [[0, STAR_VALUE_AT, "0000003F"]],  # 0.5
+                "window": [
+                    STAR_FIELD - mod.STAR_FIELD_BEFORE,
+                    mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER,
+                ],
+                "callable": 1,
+            },
+        )
+
+    def test_polled_record_holds_the_count_and_the_bytes_around_what_it_compares(self):
+        _, calls = self.install_stars(star_code(COMPARE))
+        self.set_star_value(0.75)
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+            self.poll()
+        record = self.lines()[1]
+        self.assertEqual(record["stars"], 2)
+        raw = bytes.fromhex(record["starField"])
+        self.assertEqual(len(raw), mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER)
+        self.assertEqual(struct.unpack_from("<f", raw, mod.STAR_FIELD_BEFORE)[0], 0.75)
+        self.assertEqual(calls, [self.game.address], "called once, on the loaded system")
+        self.assertIn("Recorded Shown-Name (03E9F3545C3E, galaxy 1): 3 ships", "\n".join(logs.output))
+        self.assertIn("; 2 stars", "\n".join(logs.output))
+
+    def test_one_star_goes_without_saying(self):
+        self.install_stars(star_code(COMPARE), count=1)
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+            self.poll()
+        self.assertEqual(self.lines()[1]["stars"], 1)
+        self.assertNotIn("star", "\n".join(line for line in logs.output if "Recorded " in line))
+
+    def test_the_game_isnt_called_while_it_generates_a_system(self):
+        _, calls = self.install_stars(star_code(COMPARE))
+        self.game.generate(self.capture)
+        record = self.lines()[1]
+        self.assertEqual(record["via"], "gen")
+        self.assertNotIn("stars", record)
+        self.assertIn("starField", record)
+        self.assertEqual(calls, [])
+
+    def test_a_failed_call_is_reported_once_and_not_made_again(self):
+        stars, calls = self.install_stars(star_code(COMPARE), count=OSError("exception: access violation"))
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+            self.poll()
+            self.capture.record_now()
+            self.capture.on_frame()
+        self.assertNotIn("stars", self.lines()[1])
+        self.assertIn("starField", self.lines()[1])
+        self.assertEqual(sum("Couldn't count a system's stars" in line for line in logs.output), 1)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(stars.callable)
+
+    def test_an_unlikely_count_stops_the_calls(self):
+        stars, calls = self.install_stars(star_code(COMPARE), count=1234)
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+            self.poll()
+        self.assertNotIn("stars", self.lines()[1])
+        self.assertIn("said a system has 1234 stars", "\n".join(logs.output))
+        self.assertFalse(stars.callable)
+
+    def test_no_call_while_what_it_reads_cant_be_read(self):
+        stars, calls = self.install_stars(star_code(COMPARE))
+        unreadable = self.game.address + STAR_FIELD
+        read = self.game.memory.read
+        self._patch(
+            "read_memory", lambda address, size: None if address == unreadable else read(address, size)
+        )
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+            self.poll()
+        self.assertNotIn("stars", self.lines()[1])
+        self.assertIn("the solar system's values it reads couldn't be read", "\n".join(logs.output))
+        self.assertEqual(calls, [])
+        self.assertTrue(stars.callable, "it may be readable next time")
+
+    def test_code_the_mod_wont_call(self):
+        code = star_code("E800000000C3")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            stars, calls = self.install_stars(code)
+        self.assertIn("the mod won't call it (instruction E8 at 0x12)", "\n".join(logs.output))
+        self.poll()
+        self.poll()
+        header, record = self.lines()
+        self.assertEqual(header["starCount"]["callable"], 0)
+        self.assertEqual(header["starCount"]["why"], "instruction E8 at 0x12")
+        self.assertNotIn("length", header["starCount"])
+        self.assertEqual(header["starCount"]["values"], [[0, STAR_VALUE_AT, "0000003F"]], "the pattern's")
+        self.assertNotIn("stars", record)
+        self.assertIn("starField", record)
+        self.assertEqual(calls, [])
+
+    def test_a_value_it_reads_must_be_readable(self):
+        stars, _ = self.install_stars(star_code(COMPARE, value_at=0x1000))
+        self.assertFalse(stars.callable)
+        self.assertEqual(stars.info()["why"], "a value it reads couldn't be read")
+        self.assertEqual(stars.info()["values"], [[0, 0x1000, None]])
+
+    def test_window_spans_what_it_reads(self):
+        far = STAR_FIELD + 0x10
+        stars, _ = self.install_stars(star_code("F30F1081" + far.to_bytes(4, "little").hex() + COMPARE))
+        self.assertEqual(stars.leaf.fields, [(STAR_FIELD, 4), (far, 4)])
+        start = STAR_FIELD - mod.STAR_FIELD_BEFORE
+        self.assertEqual(stars.window, (start, far + 4 + mod.STAR_FIELD_AFTER - start))
+
+    def test_window_stays_by_the_patterns_field_if_the_reads_are_far_apart(self):
+        far = STAR_FIELD + mod.STAR_WINDOW_MAX
+        stars, _ = self.install_stars(star_code("F30F1081" + far.to_bytes(4, "little").hex() + COMPARE))
+        self.assertTrue(stars.callable)
+        self.assertEqual(
+            stars.window,
+            (STAR_FIELD - mod.STAR_FIELD_BEFORE, mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER),
+        )
+
+    def test_window_starts_at_the_system(self):
+        stars, _ = self.install_stars(star_code(COMPARE, field=0x10))
+        self.assertEqual(stars.window, (0, 0x14 + mod.STAR_FIELD_AFTER))
+
+    def test_not_found(self):
+        self._patch("locate_star_count", lambda: "its pattern isn't in this version of the game")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture = mod.TradeDepotCapture()
+        self.assertIn(
+            "Couldn't find the game's star count function (its pattern isn't in this version of the game): "
+            "stars aren't recorded.",
+            "\n".join(logs.output),
+        )
+        self.poll()
+        self.poll()
+        header, record = self.lines()
+        self.assertEqual(header["starCount"], "its pattern isn't in this version of the game")
+        self.assertNotIn("starField", record)
+
+    def test_looking_for_it_fails(self):
+        def broken():
+            raise OSError("no module")
+
+        self._patch("locate_star_count", broken)
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.capture = mod.TradeDepotCapture()
+        self.assertIn("Couldn't look for the game's star count function.", "\n".join(logs.output))
+        self.poll()
+        self.poll()
+        self.assertIsNone(self.lines()[0]["starCount"])
+
+    def test_located_only_inside_the_game_and_when_on(self):
+        with mock.patch("pymhf.core.memutils.find_pattern_in_binary") as find:
+            self.assertIsNone(mod.locate_star_count(), "outside the game")
+            with mock.patch.object(mod.pymhf_internal, "BASE_ADDRESS", 0x140000000, create=True):
+                self._patch("RECORD_STARS", False)
+                self.assertIsNone(mod.locate_star_count())
+        find.assert_not_called()
+
+    def test_located_in_the_game(self):
+        code = star_code(COMPARE)
+        buffer = (ctypes.c_ubyte * 0x200)()
+        buffer[: len(code)] = code
+        address = self.game.memory.keep(buffer)
+        base = address - 0x1234
+        with mock.patch.object(mod.pymhf_internal, "BASE_ADDRESS", base, create=True):
+            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=0x1234) as find:
+                stars = mod.locate_star_count()
+            find.assert_called_once_with(mod.STAR_COUNT_PATTERN, False)
+            self.assertEqual((stars.address, stars.offset), (address, 0x1234))
+            self.assertEqual(stars.code, bytes(buffer[: mod.STAR_CODE_BYTES]))
+            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=None):
+                self.assertEqual(mod.locate_star_count(), "its pattern isn't in this version of the game")
+            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=0x10_0000):
+                self.assertEqual(mod.locate_star_count(), "its code couldn't be read")
+
+
+class GuildTests(CaptureTestCase):
+    def test_a_guild_button_records_the_guild_with_where_you_are(self):
+        self.game.set_address(UA | (3 << 52))  # on the fourth planet
+        self.capture.guild_explorers()
+        self.assertEqual(self.capture.status, "Recording the Explorers Guild here...")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+        guilds = [line for line in self.lines() if line["t"] == "guild"]
+        self.assertEqual(len(guilds), 1)
+        self.assertEqual(guilds[0]["system"], f"{UA:016X}", "the system, without the planet digit")
+        self.assertEqual(guilds[0]["guild"], "Explorers")
+        self.assertEqual(guilds[0]["loc"], mod.player_location())
+        self.assertIn("where", guilds[0])
+        self.assertIn(
+            "Recorded the Explorers Guild for the region of 03E9F3545C3E, galaxy 1.", "\n".join(logs.output)
+        )
+        self.assertEqual(self.capture.status, "Recorded the Explorers Guild here.")
+        self.assertEqual(self.sounds, ["recorded"])
+
+    def test_each_button_names_its_guild(self):
+        for press, guild in (
+            (self.capture.guild_merchants, "Merchants"),
+            (self.capture.guild_explorers, "Explorers"),
+            (self.capture.guild_mercenaries, "Mercenaries"),
+        ):
+            press()
+            self.capture._record_guild()
+            self.assertEqual(self.capture._pending[-1]["guild"], guild)
+
+    def test_no_guild_without_a_system(self):
+        self.game.loaded = False
+        self.capture.guild_merchants()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+        self.assertIn(
+            "Couldn't record the Merchants Guild: no star system is loaded yet.", "\n".join(logs.output)
+        )
+        self.assertEqual(self.sounds, ["problem"])
+        self.assertEqual([line for line in self.lines() if line["t"] == "guild"], [])
+
+    def test_a_failure_is_reported(self):
+        def broken():
+            raise OSError("unreadable")
+
+        self._patch("active_system", broken)
+        self.capture.guild_mercenaries()
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+        self.assertIn("Couldn't record a guild.", "\n".join(logs.output))
+        self.assertIn("problem", self.sounds)
+
+    def test_one_frame_records_one_press(self):
+        self.capture.guild_merchants()
+        self.poll()
+        self.poll()
+        self.assertEqual(len([line for line in self.lines() if line["t"] == "guild"]), 1)
 
 
 class ApplicationTests(CaptureTestCase):
@@ -2244,7 +3223,7 @@ class LauncherTests(unittest.TestCase):
                 self.assertIs(mod.game_running(), expected)
 
 
-class ReportTests(CaptureTestCase):
+class ReportTests(StarHelpers, CaptureTestCase):
     def capture_systems(self) -> report.Captures:
         self.game.generate(self.capture)
         other = (0x079 << 40) | (1 << 32) | 0x01234567
@@ -2344,6 +3323,70 @@ class ReportTests(CaptureTestCase):
         found = report.locate_ship_stream(UA, [f"{s:016X}" for s in seeds], None, 100)
         self.assertEqual(found.layout, ["ships 0-1", "3 other draws", "ship 2"])
         self.assertIsNone(report.locate_ship_stream(UA, ["0123456789ABCDEF"], None, 100).offset)
+
+    def test_stars_and_guilds(self):
+        stars, _ = self.install_stars(star_code(COMPARE))
+        self.set_star_value(0.75)
+        self.poll()
+        self.poll()
+        for _ in range(2):
+            self.capture.guild_explorers()
+            self.poll()
+        other = (0x079 << 40) | (1 << 32) | 0x01234567  # in another region
+        self.game.set_address(other)
+        self.game.fill(other, "Abarof-Dulin")
+        stars._function = lambda system: 1
+        self.set_star_value(0.25)
+        self.poll()
+        self.poll()
+        self.capture.guild_merchants()
+        self.poll()
+        self.capture.guild_mercenaries()
+        self.poll()
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        self.assertIn("4 guild(s)", "\n".join(report.summary_lines(captures)))
+        lines = report.star_guild_lines(captures)
+        self.assertEqual(
+            lines,
+            [
+                "",
+                "Stars: systems by how many stars the game says they have: 1 x1, 2 x1",
+                "  the game's star count function: found at +1234, 27 bytes long, reads the system at +2A70; "
+                "values it reads: 0.5 (0000003F); called (1 session(s))",
+                "  the value it compares, in systems with 1 star(s): 0.25 to 0.25 (1 systems)",
+                "  the value it compares, in systems with 2 star(s): 0.75 to 0.75 (1 systems)",
+                "    03E9F3545C3E galaxy 1 Shown-Name: 2 stars, compared value 0.75",
+                "",
+                "Guilds recorded: 4 for 2 region(s)",
+                "  galaxy 1 region X -962, Y -13, Z 1349: Explorers x2; systems recorded there: 1, "
+                "by race: Explorers 1; region colour value 0.625",
+                "  galaxy 1 region X 1383, Y 1, Z 564: Merchants x1, Mercenaries x1; "
+                "systems recorded there: 1, by race: Explorers 1; region colour value 0.625",
+                "  regions recorded with more than one guild: 1",
+            ],
+        )
+
+    def test_star_count_function_not_found_or_not_called(self):
+        for info, text in (
+            (None, "not looked for (RECORD_STARS off)"),
+            (
+                "its pattern isn't in this version of the game",
+                "not found: its pattern isn't in this version of the game",
+            ),
+            (
+                {
+                    "offset": "10",
+                    "field": 16,
+                    "values": [[0, 8, None]],
+                    "callable": 0,
+                    "why": "instruction E8 at 0x12",
+                },
+                "found at +10, reads the system at +10; values it reads: unreadable; "
+                "not called: instruction E8 at 0x12",
+            ),
+        ):
+            with self.subTest(text):
+                self.assertEqual(report._star_function(info), text)
 
     def test_mix_and_unmix_are_inverses(self):
         for value in (0, 1, 0xDEADBEEFCAFEBABE, report.MASK64):
@@ -2555,7 +3598,10 @@ class NamegenComparisonTests(CaptureTestCase):
         # the first laid out the way the model guesses, the second the other way round.
         lookup = LookupTests.lookup.__get__(self)
         planet = (500000.0, 1200.0, -300000.0)
-        for code, galaxy, swapped in ((0x021B7BE06E75, 248, frozenset()), (0x6226B9E3A187, 0, frozenset({1}))):
+        for code, galaxy, swapped in (
+            (0x021B7BE06E75, 248, frozenset()),
+            (0x6226B9E3A187, 0, frozenset({1})),
+        ):
             ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
             system = ship_model.bodies(ua)
             self.assertEqual(ship_model.two_moon_planets(system), [1])
@@ -2590,9 +3636,11 @@ class NamegenComparisonTests(CaptureTestCase):
         planet_seed = 0xAAAA000000000001  # one of the fake system's planet seeds
         names("planet", planet_seed, planetName(planet_seed))
         names("planet", 0x1234, "Not-The-Generators-Name")
-        # The seed the game passes for a region, if it is the value before nms_namegen's mixing.
-        raw = (galaxy >> 1) ^ ((galaxy << 32) | (code & 0xFFFFFFFF))
-        names("region", raw, regionName(code, galaxy))
+        # The seed the game passes for a region: the galaxy and the portal code's low 32 bits, as
+        # nms_namegen's regionName() puts them together before it mixes them in with galaxy >> 1, which
+        # only galaxies from 2 on have (a galaxy 166 name, as recorded in Touchuork, says so).
+        names("region", (galaxy << 32) | (code & 0xFFFFFFFF), regionName(code, galaxy))
+        names("region", (166 << 32) | (code & 0xFFFFFFFF), regionName(code, 166))
         self.game.generate(self.capture)
         self.poll()
 
@@ -2603,9 +3651,9 @@ class NamegenComparisonTests(CaptureTestCase):
         self.assertIn("planet name = generator's name for the same seed", text)
         self.assertRegex(text, r"planet name = generator's name for the same seed\s+1/2 ")
         self.assertRegex(text, r"planet name seeds that are the loaded system's planet seeds\s+1/2 ")
-        self.assertRegex(text, r"taking the seed before mixing\s+1/1\s+100.0%")
-        self.assertRegex(text, r"taking the seed after mixing\s+0/1 ")
-        self.assertRegex(text, r"region names that are the loaded system's region\s+1/1\s+100.0%")
+        self.assertRegex(text, r"taking the seed before mixing\s+2/2\s+100.0%")
+        self.assertRegex(text, r"taking the seed after mixing\s+0/2 ")
+        self.assertRegex(text, r"region names that are the loaded system's region\s+1/2 ")
 
     def test_bodies_follow_the_generator(self):
         sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
