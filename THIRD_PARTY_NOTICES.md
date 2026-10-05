@@ -35,9 +35,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Fonts (SIL Open Font License 1.1)
+## Fonts
 
-Installed from npm and bundled into the built site; each package ships its full license text.
+The site's fonts are in `fonts/`, and the built site serves the ones it uses.
 
-- Big Shoulders Stencil Display, via `@fontsource/big-shoulders-stencil-display`.
-- Atkinson Hyperlegible Next, Copyright 2020-2024 The Atkinson Hyperlegible Next Project Authors, via `@fontsource-variable/atkinson-hyperlegible-next`.
+- Façade (`fonts/Facade-*.ttf`), Copyright © 2020 by Éléonore Fines, published by the Velvetyne Type Foundry (https://velvetyne.fr/fonts/facade/), under the SIL Open Font License 1.1. Its full text is in [`fonts/OFL.txt`](fonts/OFL.txt).
+- MatrixType and MatrixType Display (`fonts/Matrixtype*.ttf`) by GGBotNet (https://ggbot.itch.io/matrixtype-font-family), dedicated to the public domain under Creative Commons Zero v1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/).
+
+## Logo lettering
+
+The lettering in `images/1MaTD Logo.svg` and `images/1MaTD Logo Transparent.svg` is set in Butovo Mono by Okunkir (https://fontesk.com/butovo-mono-font/), which its designer offers free for commercial use.

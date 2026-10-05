@@ -92,7 +92,7 @@ Pushes to `main` deploy the site through GitHub Actions.
 
 - [nms_namegen](https://github.com/hadsh/nms_namegen) by Stuart Coyle, had.sh and GoodGuysFree (MIT): the generator this site ports, and the ground truth behind the accuracy figures.
 - [NMS.py](https://github.com/monkeyman192/NMS.py), [pyMHF](https://github.com/monkeyman192/pyMHF), [HGPAKtool](https://github.com/monkeyman192/HGPAKtool) and [MBINCompiler](https://github.com/monkeyman192/MBINCompiler) by monkeyman192 and contributors: the tools the next milestones build on.
-- Fonts: Big Shoulders Stencil Display and Atkinson Hyperlegible Next, both under the SIL Open Font License 1.1.
+- Fonts: [MatrixType](https://ggbot.itch.io/matrixtype-font-family) by GGBotNet (CC0 1.0) and [Façade](https://velvetyne.fr/fonts/facade/) by Éléonore Fines, published by the Velvetyne Type Foundry (SIL Open Font License 1.1). The logo's lettering is [Butovo Mono](https://fontesk.com/butovo-mono-font/) by Okunkir.
 
 ## License
 

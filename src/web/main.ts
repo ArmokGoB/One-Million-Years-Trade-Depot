@@ -3,9 +3,6 @@
 // The lookup page. All generation happens in ../core; this file only reads
 // the form, renders the description and keeps the URL shareable.
 
-import "@fontsource/big-shoulders-stencil-display/800";
-import "@fontsource/big-shoulders-stencil-display/900";
-import "@fontsource-variable/atkinson-hyperlegible-next";
 import "./styles.css";
 
 import {
