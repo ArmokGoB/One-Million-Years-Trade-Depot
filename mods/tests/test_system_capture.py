@@ -19,6 +19,7 @@ import json
 import math
 import os
 import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -193,6 +194,7 @@ class Game:
         voxel.GuideStarRenegadeCount = 30
         voxel.PurpleSystemsCount = 0x40
         voxel.PurpleSystemsStart = 0x3E8
+        voxel.RegionColourValue = 0.625
         star = attributes.mStar
         star.Type = 1
         star.Race = 2
@@ -356,7 +358,7 @@ class WiringTests(CaptureTestCase):
         expected |= {"before_add_resource", "after_add_resource", "before_item_update"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 10)
+        self.assertEqual(len(self.capture._gui_widgets), 13)
 
     def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
         hook = mod.TradeDepotCapture.before_add_resource
@@ -392,7 +394,8 @@ class WiringTests(CaptureTestCase):
             for w in self.capture._gui_widgets
             if type(getattr(w, "_widget_data", None)).__name__ == "ButtonWidgetData"
         ]
-        self.assertEqual(buttons, ["Record the current system now", "Open the captures folder"])
+        guilds = [f"Guild envoy here: {guild}" for guild in ("Merchants", "Explorers", "Mercenaries")]
+        self.assertEqual(buttons, ["Record the current system now", *guilds, "Open the captures folder"])
 
     def test_layout_reads_inside_the_structs(self):
         self.assertEqual(mod.LAYOUT.ua, nms.cGcSolarSystem.mUA.offset)
@@ -475,6 +478,7 @@ class GenerateTests(CaptureTestCase):
                 "wealth": 2,
                 "conflict": 0,
                 "anomaly": 0,
+                "regionColour": 0.625,
                 "planets": 3,
                 "prime": 1,
                 "spacePois": 7,
@@ -2400,6 +2404,583 @@ class PollingTests(CaptureTestCase):
         self.assertEqual(self.sounds, ["problem"])
 
 
+# Code shaped like cGcSolarSystem::GetStarCount: the instructions STAR_COUNT_PATTERN shows, then the rest.
+STAR_FIELD = 0x2A70
+STAR_VALUE_AT = 0x100  # where the value the code reads from a fixed place is, from the code's start
+COMPARE = "0F2FD10F97C0FFC0C3"  # comiss xmm2, xmm1; seta al; inc eax; ret
+
+
+def star_code(rest: str, value_at: int = STAR_VALUE_AT, field: int = STAR_FIELD) -> bytes:
+    """movss xmm1, [rip + to ``value_at``]; xor eax, eax; movss xmm2, [rcx + ``field``]; then ``rest``."""
+    return (
+        bytes.fromhex("F30F100D")
+        + (value_at - 8).to_bytes(4, "little", signed=True)
+        + bytes.fromhex("33C0F30F1091")
+        + field.to_bytes(4, "little", signed=True)
+        + bytes.fromhex(rest)
+    )
+
+
+# Every instruction read_leaf knows, as GNU as encodes them, with registers and memory a function the
+# mod calls may use; objdump agreed on where each ends.
+KNOWN_INSTRUCTIONS = [
+    ("F30F100D34120000", "movss xmm1, [rip+0x1234]"),
+    ("31C0", "xor eax, eax"),
+    ("F30F1091702A0000", "movss xmm2, [rcx+0x2a70]"),
+    ("0F2FD1", "comiss xmm2, xmm1"),
+    ("0F97C0", "seta al"),
+    ("FFC0", "inc eax"),
+    ("F20F104110", "movsd xmm0, [rcx+0x10]"),
+    ("0F105920", "movups xmm3, [rcx+0x20]"),
+    ("0F286130", "movaps xmm4, [rcx+0x30]"),
+    ("660F106940", "movupd xmm5, [rcx+0x40]"),
+    ("660F28C5", "movapd xmm0, xmm5"),
+    ("F30F10CA", "movss xmm1, xmm2"),
+    ("0F14CA", "unpcklps xmm1, xmm2"),
+    ("0F154950", "unpckhps xmm1, [rcx+0x50]"),
+    ("0F54C1", "andps xmm0, xmm1"),
+    ("0F550540000000", "andnps xmm0, [rip+0x40]"),
+    ("0F56C1", "orps xmm0, xmm1"),
+    ("0F57C0", "xorps xmm0, xmm0"),
+    ("660F57C9", "xorpd xmm1, xmm1"),
+    ("0FC6C11B", "shufps xmm0, xmm1, 0x1b"),
+    ("F30F2AC0", "cvtsi2ss xmm0, eax"),
+    ("F3480F2AC0", "cvtsi2ss xmm0, rax"),
+    ("F20F2A4908", "cvtsi2sd xmm1, [rcx+0x8]"),
+    ("F30F2CC0", "cvttss2si eax, xmm0"),
+    ("F3480F2C4160", "cvttss2si rax, [rcx+0x60]"),
+    ("F30F2DD1", "cvtss2si edx, xmm1"),
+    ("F24C0F2CC2", "cvttsd2si r8, xmm2"),
+    ("0F2E4170", "ucomiss xmm0, [rcx+0x70]"),
+    ("660F2F0D88000000", "comisd xmm1, [rip+0x88]"),
+    ("660F2ECA", "ucomisd xmm1, xmm2"),
+    ("0F47C2", "cmova eax, edx"),
+    ("480F428180000000", "cmovb rax, [rcx+0x80]"),
+    ("440F450D00010000", "cmovne r9d, [rip+0x100]"),
+    ("F30F51C1", "sqrtss xmm0, xmm1"),
+    ("F30F588190000000", "addss xmm0, [rcx+0x90]"),
+    ("F30F59C1", "mulss xmm0, xmm1"),
+    ("F30F5AC1", "cvtss2sd xmm0, xmm1"),
+    ("F20F5A91A0000000", "cvtsd2ss xmm2, [rcx+0xa0]"),
+    ("F30F5CC1", "subss xmm0, xmm1"),
+    ("F30F5DC1", "minss xmm0, xmm1"),
+    ("F30F5EC1", "divss xmm0, xmm1"),
+    ("F30F5FC1", "maxss xmm0, xmm1"),
+    ("0F5881B0000000", "addps xmm0, [rcx+0xb0]"),
+    ("F30FC2C101", "cmpltss xmm0, xmm1"),
+    ("0FC281C000000001", "cmpltps xmm0, [rcx+0xc0]"),
+    ("660F6EC0", "movd xmm0, eax"),
+    ("66480F6ECA", "movq xmm1, rdx"),
+    ("660F6E91D0000000", "movd xmm2, [rcx+0xd0]"),
+    ("660F7EC0", "movd eax, xmm0"),
+    ("66480F7ECA", "movq rdx, xmm1"),
+    ("F30F7E99E0000000", "movq xmm3, [rcx+0xe0]"),
+    ("660F6F81F0000000", "movdqa xmm0, [rcx+0xf0]"),
+    ("F30F6F0D00020000", "movdqu xmm1, [rip+0x200]"),
+    ("660FEFC0", "pxor xmm0, xmm0"),
+    ("0FAFC2", "imul eax, edx"),
+    ("0FAF8100010000", "imul eax, [rcx+0x100]"),
+    ("0FB68110010000", "movzx eax, byte [rcx+0x110]"),
+    ("0FB79112010000", "movzx edx, word [rcx+0x112]"),
+    ("0FBE8114010000", "movsx eax, byte [rcx+0x114]"),
+    ("440FBF8116010000", "movsx r8d, word [rcx+0x116]"),
+    ("0FB6C0", "movzx eax, al"),
+    ("0F92C2", "setb dl"),
+    ("410F94C0", "sete r8b"),
+    ("0F95C4", "setne ah"),
+    ("0F1F00", "nop [rax]"),
+    ("660F1F0400", "nop word [rax+rax*1]"),
+    ("90", "nop"),
+    ("01D0", "add eax, edx"),
+    ("038120010000", "add eax, [rcx+0x120]"),
+    ("0405", "add al, 0x5"),
+    ("0545230100", "add eax, 0x12345"),
+    ("66053412", "add ax, 0x1234"),
+    ("09C2", "or edx, eax"),
+    ("11D0", "adc eax, edx"),
+    ("19C0", "sbb eax, eax"),
+    ("83E001", "and eax, 0x1"),
+    ("2B0500030000", "sub eax, [rip+0x300]"),
+    ("31D2", "xor edx, edx"),
+    ("4D31C0", "xor r8, r8"),
+    ("39D0", "cmp eax, edx"),
+    ("398130010000", "cmp [rcx+0x130], eax"),
+    ("3B8134010000", "cmp eax, [rcx+0x134]"),
+    ("3C03", "cmp al, 0x3"),
+    ("3D00010000", "cmp eax, 0x100"),
+    ("80B93801000002", "cmp byte [rcx+0x138], 0x2"),
+    ("81B93C01000000100000", "cmp [rcx+0x13c], 0x1000"),
+    ("48833D0004000001", "cmp [rip+0x400], 0x1"),
+    ("83B94001000007", "cmp [rcx+0x140], 0x7"),
+    ("48638144010000", "movsxd rax, [rcx+0x144]"),
+    ("69C200010000", "imul eax, edx, 0x100"),
+    ("6B814801000003", "imul eax, [rcx+0x148], 0x3"),
+    ("05FFFFFF7F", "add eax, 0x7fffffff"),
+    ("83EA01", "sub edx, 0x1"),
+    ("4981E1FFFF0000", "and r9, 0xffff"),
+    ("85C0", "test eax, eax"),
+    ("84814C010000", "test byte [rcx+0x14c], al"),
+    ("858150010000", "test [rcx+0x150], eax"),
+    ("A801", "test al, 0x1"),
+    ("A900000100", "test eax, 0x10000"),
+    ("F6815401000004", "test byte [rcx+0x154], 0x4"),
+    ("F7815801000000010000", "test [rcx+0x158], 0x100"),
+    ("89D0", "mov eax, edx"),
+    ("88D0", "mov al, dl"),
+    ("8B815C010000", "mov eax, [rcx+0x15c]"),
+    ("488B8160010000", "mov rax, [rcx+0x160]"),
+    ("8A9168010000", "mov dl, byte [rcx+0x168]"),
+    ("4C8B1500050000", "mov r10, [rip+0x500]"),
+    ("8D4201", "lea eax, [rdx+0x1]"),
+    ("488D0500060000", "lea rax, [rip+0x600]"),
+    ("4C8D5C9110", "lea r11, [rcx+rdx*4+0x10]"),
+    ("8D049510000000", "lea eax, [rdx*4+0x10]"),
+    ("488D845100010000", "lea rax, [rcx+rdx*2+0x100]"),
+    ("4F8D44EC7F", "lea r8, [r12+r13*8+0x7f]"),
+    ("4898", "cdqe"),
+    ("4899", "cqo"),
+    ("99", "cdq"),
+    ("B803000000", "mov eax, 0x3"),
+    ("B001", "mov al, 0x1"),
+    ("41B802000000", "mov r8d, 0x2"),
+    ("48B8F0DEBC9A78563412", "movabs rax, 0x123456789abcdef0"),
+    ("66B83412", "mov ax, 0x1234"),
+    ("C1E002", "shl eax, 0x2"),
+    ("D1EA", "shr edx, 1"),
+    ("41D3F8", "sar r8d, cl"),
+    ("D0C0", "rol al, 1"),
+    ("D3E0", "shl eax, cl"),
+    ("89C0", "mov eax, eax"),
+    ("F7D0", "not eax"),
+    ("F7DA", "neg edx"),
+    ("FEC2", "inc dl"),
+    ("49FFC9", "dec r9"),
+    ("FFC8", "dec eax"),
+    ("41BB07000000", "mov r11d, 0x7"),
+    ("C3", "ret"),
+]
+# Leaf functions as gcc compiles them for the Windows calling convention, from a struct with floats at
+# 0x2A70 and 0x2A74 and globals (their displacements left 0): (code, fields it reads, values it reads).
+COMPILED = {
+    "two thresholds": (
+        "F30F1081702A00000F2F0500000000B803000000770F31C00F2F05000000000F97C083C001C3",
+        [(0x2A70, 4)],
+        [(8, 15, 4), (24, 31, 4)],
+    ),
+    "two fields": (
+        "F30F10050000000031C00F2F81702A0000F30F1005000000000F97C083C0010F2F81742A0000760383C001C3",
+        [(0x2A70, 4), (0x2A74, 4)],
+        [(0, 8, 4), (17, 25, 4)],
+    ),
+    "a branch over padding": (
+        "F30F1081702A00000F2F0500000000721FF30F1081742A000031C00F2F05000000000F93C04883C002C3"
+        "660F1F440000B801000000C3",
+        [(0x2A70, 4), (0x2A74, 4)],
+        [(8, 15, 4), (27, 34, 4)],
+    ),
+}
+WRITES_KEPT = "a write to a register the function must put back at 0x0"
+READS_ELSEWHERE = "a read of memory other than the object's at 0x0"
+# Code the mod mustn't call, with why not.
+REFUSED = {
+    "E800000000C3": "instruction E8 at 0x0",  # call
+    "FF10C3": "instruction FF /2 at 0x0",  # call [rax]
+    "FF31C3": "instruction FF /6 at 0x0",  # push [rcx]
+    "535BC3": "instruction 53 at 0x0",  # push rbx; pop rbx
+    "C20800": "instruction C2 at 0x0",  # ret 8
+    "894110C3": "a write to memory at 0x0",  # mov [rcx + 0x10], eax
+    "890510000000C3": "a write to memory at 0x0",  # mov [rip + 0x10], eax
+    "0F29742410C3": "a write to memory at 0x0",  # movaps [rsp + 0x10], xmm6
+    "0F9401C3": "a write to memory at 0x0",  # sete [rcx]
+    "660F7E01C3": "a write to memory at 0x0",  # movd [rcx], xmm0
+    "BB01000000C3": WRITES_KEPT,  # mov ebx, 1
+    "31C9C3": WRITES_KEPT,  # xor ecx, ecx: rcx keeps the object's address
+    "B701C3": WRITES_KEPT,  # mov bh, 1
+    "0F92C5C3": WRITES_KEPT,  # setb ch
+    "40B601C3": WRITES_KEPT,  # mov sil, 1
+    "4D31E4C3": WRITES_KEPT,  # xor r12, r12
+    "F30F10F0C3": WRITES_KEPT,  # movss xmm6, xmm0
+    "F3440F10C0C3": WRITES_KEPT,  # movss xmm8, xmm0
+    "4883EC284883C428C3": WRITES_KEPT,  # sub rsp, 0x28; add rsp, 0x28
+    "488D5910C3": WRITES_KEPT,  # lea rbx, [rcx + 0x10]
+    "0F45D8C3": WRITES_KEPT,  # cmovne ebx, eax
+    "8B4204C3": READS_ELSEWHERE,  # mov eax, [rdx + 4]
+    "8B0491C3": READS_ELSEWHERE,  # mov eax, [rcx + rdx * 4]
+    "418B4110C3": READS_ELSEWHERE,  # mov eax, [r9 + 0x10]
+    "8B042500100000C3": READS_ELSEWHERE,  # mov eax, [0x1000]
+    "428B0421C3": READS_ELSEWHERE,  # mov eax, [rcx + r12]
+    "8B41F8C3": "a read outside the object at 0x0",  # mov eax, [rcx - 8]
+    "83C00175FBC3": "a jump back at 0x3",  # a loop
+    "EB01B8C3000000C3": "a jump into the middle of an instruction",
+    "7502C3CCC3": "instruction CC at 0x3",  # a jump past int3 padding
+    "7510C3": "it doesn't end within the 3 bytes read",  # a jump past the bytes read
+    "B801000000BA02000000": "it doesn't end within the 10 bytes read",  # no ret
+    "CCC3": "instruction CC at 0x0",  # int3
+    "0F0BC3": "instruction 0F 0B at 0x0",  # ud2
+    "0F05C3": "instruction 0F 05 at 0x0",  # syscall
+    "F00101C3": "instruction F0 at 0x0",  # lock add [rcx], eax
+    "65488B042530000000C3": "instruction 65 at 0x0",  # mov rax, gs:[0x30]
+    "F3A4C3": "instruction A4 after F2 or F3 at 0x0",  # rep movsb
+    "F20F6EC0C3": "instruction 0F 6E after F2 or F3 at 0x0",  # no such instruction
+    "F2660F6EC0C3": "instruction 0F 6E after F2 or F3 at 0x0",  # F2 picks the instruction, not 66
+    "4190C3": "instruction 90 at 0x0",  # xchg r8d, eax
+    "FDC3": "instruction FD at 0x0",  # std
+    "F7F1C3": "instruction F7 /6 at 0x0",  # div ecx
+    "92C3": "instruction 92 at 0x0",  # xchg eax, edx
+    "C5FA104110C3": "instruction C5 at 0x0",  # vmovss xmm0, [rcx + 0x10]
+    "D901C3": "instruction D9 at 0x0",  # fld [rcx]
+    "666690C3": "a repeated prefix at 0x0",
+    "F2F390C3": "both F2 and F3 at 0x0",
+}
+
+
+class StarCodeTests(unittest.TestCase):
+    """read_leaf: which code the mod may call, and what it reads."""
+
+    SIZE = ctypes.sizeof(nms.cGcSolarSystem)
+
+    def test_every_known_instruction_decodes_whole(self):
+        for code, text in KNOWN_INSTRUCTIONS:
+            with self.subTest(text):
+                code = bytes.fromhex(code)
+                end, flow, target, _ = mod.decode(code + b"\xcc" * 16, 0, self.SIZE)
+                self.assertEqual(end, len(code))
+                self.assertEqual(flow, "ret" if text == "ret" else "next")
+                self.assertIsNone(target)
+        whole = b"".join(bytes.fromhex(code) for code, _ in KNOWN_INSTRUCTIONS)
+        leaf = mod.read_leaf(whole, self.SIZE)
+        self.assertEqual(leaf.length, len(whole))
+
+    def test_reads_of_the_object_and_of_fixed_places(self):
+        for code, text in KNOWN_INSTRUCTIONS:
+            *_, read = mod.decode(bytes.fromhex(code), 0, self.SIZE)
+            if "rip" in text and not text.startswith("lea"):
+                displacement = int(text.split("rip+")[1].split("]")[0], 16)
+                self.assertEqual(read[:2], ("value", len(bytes.fromhex(code)) + displacement), text)
+            elif "[rcx" in text and not text.startswith(("lea", "nop")):
+                self.assertEqual(read[:2], ("field", int(text.split("rcx+")[1].split("]")[0], 16)), text)
+            else:
+                self.assertIsNone(read, text)
+
+    def test_code_shaped_like_the_star_count(self):
+        leaf = mod.read_leaf(star_code(COMPARE) + b"\xcc" * 16 + b"\xe8\x00", self.SIZE)
+        self.assertEqual(leaf.length, 27, "up to its ret, not the padding after it")
+        self.assertEqual(leaf.fields, [(STAR_FIELD, 4)])
+        self.assertEqual(leaf.values, [(0, STAR_VALUE_AT, 4)])
+
+    def test_a_field_read_twice_is_listed_once(self):
+        leaf = mod.read_leaf(star_code("F30F1081702A0000" + COMPARE), self.SIZE)  # movss xmm0, [rcx + 0x2A70]
+        self.assertEqual(leaf.fields, [(STAR_FIELD, 4)])
+
+    def test_forward_branches(self):
+        for rest, length in (
+            ("0F2FD17606B802000000C3B801000000C3", 35),  # jbe over a ret to another
+            ("0F2FD17607B802000000EB05B801000000C3", 36),  # jmp to a shared ret
+            ("0F2FD10F8606000000B802000000C3B801000000C3", 39),  # a jbe with 32 bits to go
+        ):
+            with self.subTest(rest):
+                self.assertEqual(mod.read_leaf(star_code(rest), self.SIZE).length, length)
+
+    def test_compiled_functions(self):
+        for name, (code, fields, values) in COMPILED.items():
+            with self.subTest(name):
+                leaf = mod.read_leaf(bytes.fromhex(code) + b"\xcc" * 8, self.SIZE)
+                self.assertEqual(leaf.length, len(bytes.fromhex(code)))
+                self.assertEqual((leaf.fields, leaf.values), (fields, values))
+
+    def test_refused(self):
+        for code, why in REFUSED.items():
+            with self.subTest(code):
+                self.assertEqual(mod.read_leaf(bytes.fromhex(code), self.SIZE), why)
+
+    def test_refused_after_the_patterns_instructions(self):
+        self.assertEqual(mod.read_leaf(star_code("E800000000C3"), self.SIZE), "instruction E8 at 0x12")
+
+    def test_reads_stay_inside_the_object(self):
+        self.assertIsInstance(mod.read_leaf(bytes.fromhex("8B81FC000000C3"), 0x100), mod.Leaf)
+        self.assertEqual(
+            mod.read_leaf(bytes.fromhex("8B81FD000000C3"), 0x100), "a read outside the object at 0x0"
+        )
+
+    def test_registers_a_function_may_change(self):
+        # xor eax, eax; xor edx, edx; xor r8, r8; xor r11, r11; mov ah, 1; mov al, dh; setne r9b;
+        # xorps xmm0, xmm0; xorps xmm5, xmm5; ret
+        code = bytes.fromhex("31C031D24D31C04D31DBB40188F0410F95C10F57C00F57EDC3")
+        self.assertIsInstance(mod.read_leaf(code, self.SIZE), mod.Leaf)
+
+
+class StarHelpers:
+    def install_stars(self, code: bytes, count=2, value: float = 0.5, offset: int = 0x1234):
+        """The game's star count function, as the mod finds it: ``code`` with ``value`` STAR_VALUE_AT
+        bytes in; calling it returns ``count``, or raises it if it's an exception. A new mod instance
+        finds it; returns the StarCount and the systems it was called with."""
+        buffer = (ctypes.c_ubyte * 0x200)()
+        buffer[: len(code)] = code
+        ctypes.c_float.from_buffer(buffer, STAR_VALUE_AT).value = value
+        address = self.game.memory.keep(buffer)
+        stars = mod.StarCount(address, offset, bytes(buffer[: mod.STAR_CODE_BYTES]))
+        calls = []
+
+        def function(system):
+            calls.append(system)
+            if isinstance(count, Exception):
+                raise count
+            return count
+
+        stars._function = function
+        self._patch("locate_star_count", lambda: stars)
+        self.capture = mod.TradeDepotCapture()
+        return stars, calls
+
+    def set_star_value(self, value: float) -> None:
+        ctypes.c_float.from_address(self.game.address + STAR_FIELD).value = value
+
+
+class StarTests(StarHelpers, CaptureTestCase):
+    def test_header_says_where_the_function_is_and_what_it_reads(self):
+        code = star_code(COMPARE)
+        self.install_stars(code)
+        self.poll()
+        self.poll()
+        info = self.lines()[0]["starCount"]
+        self.assertEqual(
+            info,
+            {
+                "offset": "1234",
+                "code": (code + bytes(mod.STAR_CODE_BYTES - len(code))).hex().upper(),
+                "field": STAR_FIELD,
+                "length": len(code),
+                "values": [[0, STAR_VALUE_AT, "0000003F"]],  # 0.5
+                "window": [
+                    STAR_FIELD - mod.STAR_FIELD_BEFORE,
+                    mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER,
+                ],
+                "callable": 1,
+            },
+        )
+
+    def test_polled_record_holds_the_count_and_the_bytes_around_what_it_compares(self):
+        _, calls = self.install_stars(star_code(COMPARE))
+        self.set_star_value(0.75)
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+            self.poll()
+        record = self.lines()[1]
+        self.assertEqual(record["stars"], 2)
+        raw = bytes.fromhex(record["starField"])
+        self.assertEqual(len(raw), mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER)
+        self.assertEqual(struct.unpack_from("<f", raw, mod.STAR_FIELD_BEFORE)[0], 0.75)
+        self.assertEqual(calls, [self.game.address], "called once, on the loaded system")
+        self.assertIn("Recorded Shown-Name (03E9F3545C3E, galaxy 1): 3 ships", "\n".join(logs.output))
+        self.assertIn("; 2 stars", "\n".join(logs.output))
+
+    def test_one_star_goes_without_saying(self):
+        self.install_stars(star_code(COMPARE), count=1)
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+            self.poll()
+        self.assertEqual(self.lines()[1]["stars"], 1)
+        self.assertNotIn("star", "\n".join(line for line in logs.output if "Recorded " in line))
+
+    def test_the_game_isnt_called_while_it_generates_a_system(self):
+        _, calls = self.install_stars(star_code(COMPARE))
+        self.game.generate(self.capture)
+        record = self.lines()[1]
+        self.assertEqual(record["via"], "gen")
+        self.assertNotIn("stars", record)
+        self.assertIn("starField", record)
+        self.assertEqual(calls, [])
+
+    def test_a_failed_call_is_reported_once_and_not_made_again(self):
+        stars, calls = self.install_stars(star_code(COMPARE), count=OSError("exception: access violation"))
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+            self.poll()
+            self.capture.record_now()
+            self.capture.on_frame()
+        self.assertNotIn("stars", self.lines()[1])
+        self.assertIn("starField", self.lines()[1])
+        self.assertEqual(sum("Couldn't count a system's stars" in line for line in logs.output), 1)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(stars.callable)
+
+    def test_an_unlikely_count_stops_the_calls(self):
+        stars, calls = self.install_stars(star_code(COMPARE), count=1234)
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+            self.poll()
+        self.assertNotIn("stars", self.lines()[1])
+        self.assertIn("said a system has 1234 stars", "\n".join(logs.output))
+        self.assertFalse(stars.callable)
+
+    def test_no_call_while_what_it_reads_cant_be_read(self):
+        stars, calls = self.install_stars(star_code(COMPARE))
+        unreadable = self.game.address + STAR_FIELD
+        read = self.game.memory.read
+        self._patch(
+            "read_memory", lambda address, size: None if address == unreadable else read(address, size)
+        )
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+            self.poll()
+        self.assertNotIn("stars", self.lines()[1])
+        self.assertIn("the solar system's values it reads couldn't be read", "\n".join(logs.output))
+        self.assertEqual(calls, [])
+        self.assertTrue(stars.callable, "it may be readable next time")
+
+    def test_code_the_mod_wont_call(self):
+        code = star_code("E800000000C3")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            stars, calls = self.install_stars(code)
+        self.assertIn("the mod won't call it (instruction E8 at 0x12)", "\n".join(logs.output))
+        self.poll()
+        self.poll()
+        header, record = self.lines()
+        self.assertEqual(header["starCount"]["callable"], 0)
+        self.assertEqual(header["starCount"]["why"], "instruction E8 at 0x12")
+        self.assertNotIn("length", header["starCount"])
+        self.assertEqual(header["starCount"]["values"], [[0, STAR_VALUE_AT, "0000003F"]], "the pattern's")
+        self.assertNotIn("stars", record)
+        self.assertIn("starField", record)
+        self.assertEqual(calls, [])
+
+    def test_a_value_it_reads_must_be_readable(self):
+        stars, _ = self.install_stars(star_code(COMPARE, value_at=0x1000))
+        self.assertFalse(stars.callable)
+        self.assertEqual(stars.info()["why"], "a value it reads couldn't be read")
+        self.assertEqual(stars.info()["values"], [[0, 0x1000, None]])
+
+    def test_window_spans_what_it_reads(self):
+        far = STAR_FIELD + 0x10
+        stars, _ = self.install_stars(star_code("F30F1081" + far.to_bytes(4, "little").hex() + COMPARE))
+        self.assertEqual(stars.leaf.fields, [(STAR_FIELD, 4), (far, 4)])
+        start = STAR_FIELD - mod.STAR_FIELD_BEFORE
+        self.assertEqual(stars.window, (start, far + 4 + mod.STAR_FIELD_AFTER - start))
+
+    def test_window_stays_by_the_patterns_field_if_the_reads_are_far_apart(self):
+        far = STAR_FIELD + mod.STAR_WINDOW_MAX
+        stars, _ = self.install_stars(star_code("F30F1081" + far.to_bytes(4, "little").hex() + COMPARE))
+        self.assertTrue(stars.callable)
+        self.assertEqual(
+            stars.window,
+            (STAR_FIELD - mod.STAR_FIELD_BEFORE, mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER),
+        )
+
+    def test_window_starts_at_the_system(self):
+        stars, _ = self.install_stars(star_code(COMPARE, field=0x10))
+        self.assertEqual(stars.window, (0, 0x14 + mod.STAR_FIELD_AFTER))
+
+    def test_not_found(self):
+        self._patch("locate_star_count", lambda: "its pattern isn't in this version of the game")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.capture = mod.TradeDepotCapture()
+        self.assertIn(
+            "Couldn't find the game's star count function (its pattern isn't in this version of the game): "
+            "stars aren't recorded.",
+            "\n".join(logs.output),
+        )
+        self.poll()
+        self.poll()
+        header, record = self.lines()
+        self.assertEqual(header["starCount"], "its pattern isn't in this version of the game")
+        self.assertNotIn("starField", record)
+
+    def test_looking_for_it_fails(self):
+        def broken():
+            raise OSError("no module")
+
+        self._patch("locate_star_count", broken)
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.capture = mod.TradeDepotCapture()
+        self.assertIn("Couldn't look for the game's star count function.", "\n".join(logs.output))
+        self.poll()
+        self.poll()
+        self.assertIsNone(self.lines()[0]["starCount"])
+
+    def test_located_only_inside_the_game_and_when_on(self):
+        with mock.patch("pymhf.core.memutils.find_pattern_in_binary") as find:
+            self.assertIsNone(mod.locate_star_count(), "outside the game")
+            with mock.patch.object(mod.pymhf_internal, "BASE_ADDRESS", 0x140000000, create=True):
+                self._patch("RECORD_STARS", False)
+                self.assertIsNone(mod.locate_star_count())
+        find.assert_not_called()
+
+    def test_located_in_the_game(self):
+        code = star_code(COMPARE)
+        buffer = (ctypes.c_ubyte * 0x200)()
+        buffer[: len(code)] = code
+        address = self.game.memory.keep(buffer)
+        base = address - 0x1234
+        with mock.patch.object(mod.pymhf_internal, "BASE_ADDRESS", base, create=True):
+            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=0x1234) as find:
+                stars = mod.locate_star_count()
+            find.assert_called_once_with(mod.STAR_COUNT_PATTERN, False)
+            self.assertEqual((stars.address, stars.offset), (address, 0x1234))
+            self.assertEqual(stars.code, bytes(buffer[: mod.STAR_CODE_BYTES]))
+            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=None):
+                self.assertEqual(mod.locate_star_count(), "its pattern isn't in this version of the game")
+            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=0x10_0000):
+                self.assertEqual(mod.locate_star_count(), "its code couldn't be read")
+
+
+class GuildTests(CaptureTestCase):
+    def test_a_guild_button_records_the_guild_with_where_you_are(self):
+        self.game.set_address(UA | (3 << 52))  # on the fourth planet
+        self.capture.guild_explorers()
+        self.assertEqual(self.capture.status, "Recording the Explorers Guild here...")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+        guilds = [line for line in self.lines() if line["t"] == "guild"]
+        self.assertEqual(len(guilds), 1)
+        self.assertEqual(guilds[0]["system"], f"{UA:016X}", "the system, without the planet digit")
+        self.assertEqual(guilds[0]["guild"], "Explorers")
+        self.assertEqual(guilds[0]["loc"], mod.player_location())
+        self.assertIn("where", guilds[0])
+        self.assertIn(
+            "Recorded the Explorers Guild for the region of 03E9F3545C3E, galaxy 1.", "\n".join(logs.output)
+        )
+        self.assertEqual(self.capture.status, "Recorded the Explorers Guild here.")
+        self.assertEqual(self.sounds, ["recorded"])
+
+    def test_each_button_names_its_guild(self):
+        for press, guild in (
+            (self.capture.guild_merchants, "Merchants"),
+            (self.capture.guild_explorers, "Explorers"),
+            (self.capture.guild_mercenaries, "Mercenaries"),
+        ):
+            press()
+            self.capture._record_guild()
+            self.assertEqual(self.capture._pending[-1]["guild"], guild)
+
+    def test_no_guild_without_a_system(self):
+        self.game.loaded = False
+        self.capture.guild_merchants()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+        self.assertIn(
+            "Couldn't record the Merchants Guild: no star system is loaded yet.", "\n".join(logs.output)
+        )
+        self.assertEqual(self.sounds, ["problem"])
+        self.assertEqual([line for line in self.lines() if line["t"] == "guild"], [])
+
+    def test_a_failure_is_reported(self):
+        def broken():
+            raise OSError("unreadable")
+
+        self._patch("active_system", broken)
+        self.capture.guild_mercenaries()
+        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
+            self.poll()
+        self.assertIn("Couldn't record a guild.", "\n".join(logs.output))
+        self.assertIn("problem", self.sounds)
+
+    def test_one_frame_records_one_press(self):
+        self.capture.guild_merchants()
+        self.poll()
+        self.poll()
+        self.assertEqual(len([line for line in self.lines() if line["t"] == "guild"]), 1)
+
+
 class ApplicationTests(CaptureTestCase):
     """Until NMS.py finds the game's application object, the mod can't see the game."""
 
@@ -2642,7 +3223,7 @@ class LauncherTests(unittest.TestCase):
                 self.assertIs(mod.game_running(), expected)
 
 
-class ReportTests(CaptureTestCase):
+class ReportTests(StarHelpers, CaptureTestCase):
     def capture_systems(self) -> report.Captures:
         self.game.generate(self.capture)
         other = (0x079 << 40) | (1 << 32) | 0x01234567
@@ -2742,6 +3323,70 @@ class ReportTests(CaptureTestCase):
         found = report.locate_ship_stream(UA, [f"{s:016X}" for s in seeds], None, 100)
         self.assertEqual(found.layout, ["ships 0-1", "3 other draws", "ship 2"])
         self.assertIsNone(report.locate_ship_stream(UA, ["0123456789ABCDEF"], None, 100).offset)
+
+    def test_stars_and_guilds(self):
+        stars, _ = self.install_stars(star_code(COMPARE))
+        self.set_star_value(0.75)
+        self.poll()
+        self.poll()
+        for _ in range(2):
+            self.capture.guild_explorers()
+            self.poll()
+        other = (0x079 << 40) | (1 << 32) | 0x01234567  # in another region
+        self.game.set_address(other)
+        self.game.fill(other, "Abarof-Dulin")
+        stars._function = lambda system: 1
+        self.set_star_value(0.25)
+        self.poll()
+        self.poll()
+        self.capture.guild_merchants()
+        self.poll()
+        self.capture.guild_mercenaries()
+        self.poll()
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        self.assertIn("4 guild(s)", "\n".join(report.summary_lines(captures)))
+        lines = report.star_guild_lines(captures)
+        self.assertEqual(
+            lines,
+            [
+                "",
+                "Stars: systems by how many stars the game says they have: 1 x1, 2 x1",
+                "  the game's star count function: found at +1234, 27 bytes long, reads the system at +2A70; "
+                "values it reads: 0.5 (0000003F); called (1 session(s))",
+                "  the value it compares, in systems with 1 star(s): 0.25 to 0.25 (1 systems)",
+                "  the value it compares, in systems with 2 star(s): 0.75 to 0.75 (1 systems)",
+                "    03E9F3545C3E galaxy 1 Shown-Name: 2 stars, compared value 0.75",
+                "",
+                "Guilds recorded: 4 for 2 region(s)",
+                "  galaxy 1 region X -962, Y -13, Z 1349: Explorers x2; systems recorded there: 1, "
+                "by race: Explorers 1; region colour value 0.625",
+                "  galaxy 1 region X 1383, Y 1, Z 564: Merchants x1, Mercenaries x1; "
+                "systems recorded there: 1, by race: Explorers 1; region colour value 0.625",
+                "  regions recorded with more than one guild: 1",
+            ],
+        )
+
+    def test_star_count_function_not_found_or_not_called(self):
+        for info, text in (
+            (None, "not looked for (RECORD_STARS off)"),
+            (
+                "its pattern isn't in this version of the game",
+                "not found: its pattern isn't in this version of the game",
+            ),
+            (
+                {
+                    "offset": "10",
+                    "field": 16,
+                    "values": [[0, 8, None]],
+                    "callable": 0,
+                    "why": "instruction E8 at 0x12",
+                },
+                "found at +10, reads the system at +10; values it reads: unreadable; "
+                "not called: instruction E8 at 0x12",
+            ),
+        ):
+            with self.subTest(text):
+                self.assertEqual(report._star_function(info), text)
 
     def test_mix_and_unmix_are_inverses(self):
         for value in (0, 1, 0xDEADBEEFCAFEBABE, report.MASK64):

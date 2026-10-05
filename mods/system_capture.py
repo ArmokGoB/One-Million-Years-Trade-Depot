@@ -20,8 +20,11 @@ Each time the game generates a star system, this NMS.py mod appends one line
 to ``captures/systems.jsonl`` next to this file. The line holds the system's
 universal address, its seed, the game's own description of it (name, star,
 race, economy, planets) and ``SystemShips``, the list of ships the game
-prepares for the system. The multi-tools the game builds for the system while
-it generates it go on a line of their own, with each one's seed and parts.
+prepares for the system, and how many stars the game counts in it, if the mod
+finds the game's star count function safe to call (see read_leaf). The
+multi-tools the game builds for the system while it generates it go on a line
+of their own, with each one's seed and parts, and so does the guild whose
+envoy you say you saw, with the buttons on the mod's tab.
 When the game builds the model of a ship from the system's list, the mod also
 records the parts the game picked for it, with the ship's seed; and when the
 game offers an item, such as a multi-tool to buy or as a gift or reward, what
@@ -33,7 +36,10 @@ look like.
 The mod only reads. It changes nothing in the game or your save. Every read
 of game memory goes through ReadProcessMemory, so if NMS.py's struct layouts
 stop matching the game after an update, the mod logs a warning instead of
-crashing the game.
+crashing the game. Besides, on the game's main thread, it calls two of the
+game's own functions: the one that gives a system's name, and the one that
+counts a system's stars, which it calls only once it has read the function's
+code and found that the function can only read.
 
 Run it with ``py -3.13 system_capture.py``. Short tones say when it has
 recorded something, so you needn't leave the game. See README.md in this
@@ -74,10 +80,10 @@ from nmspy.decorators import main_loop
 from pymhf import Mod
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.9.0"
+MOD_VERSION = "0.10.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.9.0 only add or drop record types, fields and controls, or let a field hold more
+# (0.3.0 to 0.10.0 only add or drop record types, fields and controls, or let a field hold more
 # kinds of thing, as 0.8.2 does with an item's "tools", so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
@@ -97,6 +103,13 @@ RECORD_SHIP_PARTS = True
 # misbehaves near a multi-tool rack with the mod, and the mod won't watch the
 # function that updates items for sale.
 RECORD_MULTITOOLS = True
+# Record how many stars each system has. The mod finds the game's own function
+# for it, cGcSolarSystem::GetStarCount, which NMS.py names but can't hook, and
+# calls it on the game's main thread, as it does the function that gives a
+# system's name, if the function's code shows that calling it can't change
+# anything (see read_leaf). Set it to False if the game misbehaves once a system
+# loads, and the mod won't look for the function.
+RECORD_STARS = True
 # Short tones tell you what happened while the log is hidden behind the game.
 PLAY_SOUNDS = True
 # Also play the "recorded" tone once per system, a few seconds after you
@@ -172,6 +185,18 @@ TOOL_BUILDS_RECORDED = 500  # "built" lines for multi-tool models, per session
 # them. For each item the game offers, the mod reads the one the item's handle picks, as a check
 # on the model it paired the item with.
 MAX_RESOURCES = 1 << 22
+# cGcSolarSystem::GetStarCount, by the pattern NMS.py gives for it: it starts by loading a value
+# from a fixed place in the game and one from the solar system. The mod calls it only if its code
+# can't change anything (see read_leaf). Each session header holds the function's first bytes and
+# the values it reads from fixed places, so what it does can be checked, and each system's record
+# holds the bytes of the solar system around what the function reads of it, in case the other
+# stars' colours are kept there; up to STAR_WINDOW_MAX bytes from the first read to the last, or else
+# only around the value the pattern shows.
+STAR_COUNT_PATTERN = "F3 0F 10 0D ? ? ? ? 33 C0 F3 0F 10 91"
+STAR_CODE_BYTES = 128
+STAR_FIELD_BEFORE, STAR_FIELD_AFTER = 0x20, 0x60
+STAR_WINDOW_MAX = 0x200
+MAX_STARS = 8  # a count above this means the function isn't what the mod takes it for
 # Other models with parts that aren't ships get a "built" line the first time
 # the game builds each file in a session, for up to this many files.
 OTHER_BUILDS_RECORDED = 500
@@ -295,6 +320,7 @@ class Layout:
         generator = nms.cGcSolarSystemGenerator
         self.data = system.mSolarSystemData.offset
         self.data_size = ctypes.sizeof(data)
+        self.system_size = ctypes.sizeof(system)
         self.ua = system.mUA.offset
         self.attributes = system.mGalaxyAttributes.offset
         self.attributes_size = ctypes.sizeof(nms.cGcGalaxyAttributesAtAddress)
@@ -595,6 +621,8 @@ def galaxy_attributes(attributes) -> dict:
         "wealth": as_int(star.TradingData.WealthClass),
         "conflict": as_int(star.ConflictData),
         "anomaly": as_int(star.Anomaly),
+        # A value of the region the system is in, recorded to compare with the guild seen there.
+        "regionColour": number(voxel.RegionColourValue),
         "planets": as_int(star.NumberOfPlanets),
         "prime": as_int(star.NumberOfPrimePlanets),
         "spacePois": as_int(star.NumberOfSpacePois),
@@ -1157,6 +1185,364 @@ def system_display_name(address: int) -> str | None:
     return text(buffer) or None
 
 
+# --- Calling a function of the game ---
+# The mod calls a game function of its own accord only once read_leaf has found, from the function's
+# code, that calling it can't change anything. The Windows x64 calling convention lets a function
+# change rax, rcx, rdx, r8 to r11 and xmm0 to xmm5 without putting them back; a function the mod calls
+# may change all of these but rcx, which holds the address of the object it's called on, so that
+# every read through rcx is a read of that object.
+WRITABLE_REGISTERS = frozenset({0, 2, 8, 9, 10, 11})
+WRITABLE_XMM = frozenset(range(6))
+THIS_REGISTER = 1  # rcx
+# The opcodes read_leaf knows that come with a ModRM byte: one-byte ones, but for add, or, adc, sbb,
+# and, sub, xor and cmp (below 0x40), and those after 0F.
+MODRM_OPCODES = frozenset({
+    0x63, 0x69, 0x6B, 0x80, 0x81, 0x83, 0x84, 0x85, 0x88, 0x89, 0x8A, 0x8B, 0x8D,
+    0xC0, 0xC1, 0xC6, 0xC7, 0xD0, 0xD1, 0xD2, 0xD3, 0xF6, 0xF7, 0xFE, 0xFF,
+})  # fmt: skip
+ESCAPED_MODRM_OPCODES = frozenset({
+    0x10, 0x11, 0x14, 0x15, 0x1F, 0x28, 0x29, 0x2A, 0x2C, 0x2D, 0x2E, 0x2F, *range(0x40, 0x50),
+    0x51, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5C, 0x5D, 0x5E, 0x5F, 0x6E, 0x6F, 0x7E,
+    *range(0x90, 0xA0), 0xAF, 0xB6, 0xB7, 0xBE, 0xBF, 0xC2, 0xC6, 0xEF,
+})  # fmt: skip
+
+
+class Leaf:
+    """A function's code that read_leaf found can't change anything when called: ``length``, bytes from
+    the start of its first instruction to the end of its last; ``fields``, (offset in the object, bytes)
+    of each read of the object; ``values``, (offset in the code of the instruction, offset of the value
+    from the code's start, bytes) of each read of a value at a fixed place in the game."""
+
+    def __init__(self, length: int, fields: list[tuple[int, int]], values: list[tuple[int, int, int]]):
+        self.length, self.fields, self.values = length, fields, values
+
+
+def writable(register: int, byte: bool, rex: int) -> bool:
+    """Whether a function may write the general register numbered ``register``; ``byte``, as a byte
+    register, which without a REX prefix makes 4 to 7 ah, ch, dh and bh."""
+    if byte and not rex and 4 <= register <= 7:
+        register -= 4
+    return register in WRITABLE_REGISTERS
+
+
+class Operand:
+    """What an instruction's ModRM byte, with its SIB byte and displacement, names: a register, ``rm``
+    (``memory`` False), or memory at ``base`` (None if the address has no base register) plus
+    ``displacement``, plus a register ``index`` unless it's None; with ``rip``, the displacement is from
+    the end of the instruction. ``reg`` is the register in the reg field, and ``group`` that field
+    without REX, which picks the operation of a group opcode."""
+
+    def __init__(self, code: bytes, at: int, rex: int):
+        modrm = code[at]
+        at += 1
+        mode, rm = modrm >> 6, modrm & 7
+        self.group = modrm >> 3 & 7
+        self.reg = self.group | (rex & 4) << 1
+        self.rm = rm | (rex & 1) << 3
+        self.memory = mode != 3
+        self.base: int | None = self.rm
+        self.index: int | None = None
+        self.rip = False
+        size = (0, 1, 4, 0)[mode]
+        if self.memory and rm == 4:  # a SIB byte follows
+            sib = code[at]
+            at += 1
+            index = (sib >> 3 & 7) | (rex & 2) << 2
+            self.index = None if index == 4 else index
+            self.base = (sib & 7) | (rex & 1) << 3
+            if mode == 0 and sib & 7 == 5:
+                self.base, size = None, 4
+        elif mode == 0 and rm == 5:
+            self.base, self.rip, size = None, True, 4
+        if at + size > len(code):
+            raise IndexError(at + size)
+        self.displacement = int.from_bytes(code[at : at + size], "little", signed=True)
+        self.end = at + size
+
+
+def decode(code: bytes, at: int, object_size: int) -> tuple | str:
+    """The instruction at ``at`` of a function read_leaf is reading: (where the next one starts; how it
+    goes on: "next", "branch", "jump" or "ret"; where it jumps to, or None; what it reads: ("field",
+    offset in the object, bytes), ("value", offset in the code, bytes) or None), or why the mod won't
+    call a function with it in. Raises IndexError if it runs past the end of ``code``."""
+    prefixes: set[int] = set()
+    while code[at] in (0x66, 0xF2, 0xF3):
+        if code[at] in prefixes:
+            return "a repeated prefix"
+        prefixes.add(code[at])
+        at += 1
+    if {0xF2, 0xF3} <= prefixes:
+        return "both F2 and F3"
+    rex = code[at] if 0x40 <= code[at] <= 0x4F else 0
+    at += 1 if rex else 0
+    op = code[at]
+    at += 1
+    escaped = op == 0x0F
+    if escaped:
+        op = code[at]
+        at += 1
+        if op not in ESCAPED_MODRM_OPCODES and not 0x80 <= op <= 0x8F:
+            return f"instruction 0F {op:02X}"
+    elif prefixes & {0xF2, 0xF3} and op not in (0x90, 0xC3):
+        return f"instruction {op:02X} after F2 or F3"
+    operand = None
+    if (escaped and op in ESCAPED_MODRM_OPCODES) or (
+        not escaped and ((op < 0x40 and op & 7 < 4) or op in MODRM_OPCODES)
+    ):
+        operand = Operand(code, at, rex)
+        at = operand.end
+    group = operand.group if operand else None
+    word = 8 if rex & 8 else 2 if 0x66 in prefixes else 4  # the size of an operation on general registers
+    # After 0F, the prefix that picks the instruction: F3 or F2 if there is one, else 66 or none.
+    mandatory = next((prefix for prefix in (0xF3, 0xF2, 0x66) if prefix in prefixes), None)
+    plain = mandatory in (None, 0x66)  # neither F2 nor F3
+    scalar = {0xF3: 4, 0xF2: 8}.get(mandatory, 16)  # how many bytes an SSE instruction reads
+    # What the instruction writes besides flags, rax and rdx: "reg" or "rm", the register ModRM names
+    # in its reg or r/m field, or the memory its r/m field names; "xreg" or "xrm", the same with xmm
+    # registers; "op", the register in the opcode's low bits; "lea", the reg field's register. ``byte``:
+    # what it writes is a byte register. ``reads``: how many bytes it reads of the memory ModRM names.
+    writes, byte, reads, immediate, flow = "", False, 0, 0, "next"
+    if not escaped:
+        if op < 0x40 and op & 7 < 6:  # add, or, adc, sbb, and, sub, xor, cmp
+            kind = op & 7
+            byte = kind in (0, 2, 4)
+            writes = "" if op >= 0x38 or kind >= 4 else ("rm", "rm", "reg", "reg")[kind]
+            immediate = (0, 0, 0, 0, 1, min(word, 4))[kind]
+            reads = 1 if byte else word
+        elif op == 0x63:  # movsxd
+            writes, reads = "reg", 4
+        elif op in (0x69, 0x6B):  # imul with an immediate
+            writes, reads, immediate = "reg", word, 1 if op == 0x6B else min(word, 4)
+        elif 0x70 <= op <= 0x7F and not prefixes:  # conditional jump
+            immediate, flow = 1, "branch"
+        elif op in (0x80, 0x81, 0x83):  # add to cmp with an immediate
+            byte = op == 0x80
+            writes, reads = "" if group == 7 else "rm", 1 if byte else word
+            immediate = min(word, 4) if op == 0x81 else 1
+        elif op in (0x84, 0x85):  # test
+            byte = op == 0x84
+            reads = 1 if byte else word
+        elif 0x88 <= op <= 0x8B:  # mov
+            byte = op in (0x88, 0x8A)
+            writes, reads = "rm" if op < 0x8A else "reg", 1 if byte else word
+        elif op == 0x8D:  # lea: works an address out, reading nothing
+            writes = "lea"
+        elif (op == 0x90 and not rex & 1 and prefixes in ({0x66}, {0xF3}, set())) or op in (0x98, 0x99):
+            pass  # nop or pause; cdqe, cqo and the like
+        elif op in (0xA8, 0xA9):  # test al or eax with an immediate
+            immediate = 1 if op == 0xA8 else min(word, 4)
+        elif 0xB0 <= op <= 0xBF:  # mov a register an immediate
+            writes, byte = "op", op < 0xB8
+            immediate = 1 if byte else word
+        elif op in (0xC0, 0xC1, 0xD0, 0xD1, 0xD2, 0xD3) and group != 6:  # shifts and rotations
+            byte = op in (0xC0, 0xD0, 0xD2)
+            writes, immediate = "rm", 1 if op in (0xC0, 0xC1) else 0
+        elif op == 0xC3 and not prefixes - {0xF3}:  # ret
+            flow = "ret"
+        elif op in (0xC6, 0xC7) and group == 0:  # mov r/m an immediate
+            byte = op == 0xC6
+            writes, immediate = "rm", 1 if byte else min(word, 4)
+        elif op in (0xE9, 0xEB) and not prefixes:  # jmp
+            immediate, flow = 4 if op == 0xE9 else 1, "jump"
+        elif op in (0xF6, 0xF7) and group in (0, 2, 3):  # test with an immediate, not, neg
+            byte = op == 0xF6
+            if group == 0:
+                immediate, reads = (1, 1) if byte else (min(word, 4), word)
+            else:
+                writes = "rm"
+        elif op in (0xFE, 0xFF) and group in (0, 1):  # inc, dec
+            byte = op == 0xFE
+            writes = "rm"
+        else:
+            return f"instruction {op:02X}" + ("" if group is None else f" /{group}")
+    elif op == 0x10 or (op == 0x28 and plain) or (op == 0x6F and mandatory in (0x66, 0xF3)):  # loads
+        writes, reads = "xreg", scalar if op == 0x10 else 16
+    elif op == 0x11 or (op == 0x29 and plain):  # stores
+        writes = "xrm"
+    elif op in (0x14, 0x15, 0x54, 0x55, 0x56, 0x57, 0xC6) and plain:  # unpck, and, andn, or, xor, shuf
+        writes, reads, immediate = "xreg", 16, 1 if op == 0xC6 else 0
+    elif op == 0x2A and not plain:  # cvtsi2ss, cvtsi2sd
+        writes, reads = "xreg", 8 if rex & 8 else 4
+    elif op in (0x2C, 0x2D) and not plain:  # cvttss2si and the like
+        writes, reads = "reg", scalar
+    elif op in (0x2E, 0x2F) and plain:  # ucomiss, comiss and the like
+        reads = 8 if mandatory == 0x66 else 4
+    elif op in (0x51, 0x58, 0x59, 0x5A, 0x5C, 0x5D, 0x5E, 0x5F, 0xC2):
+        # sqrt, add, mul, cvt between single and double, sub, min, div, max, cmp
+        writes, reads, immediate = "xreg", scalar, 1 if op == 0xC2 else 0
+    elif op == 0x6E and mandatory == 0x66:  # movd or movq into xmm
+        writes, reads = "xreg", 8 if rex & 8 else 4
+    elif op == 0x7E and mandatory == 0x66:  # movd or movq out of xmm
+        writes = "rm"
+    elif op == 0x7E and mandatory == 0xF3:  # movq into xmm
+        writes, reads = "xreg", 8
+    elif op == 0xEF and mandatory == 0x66:  # pxor
+        writes, reads = "xreg", 16
+    elif not plain:  # the rest are general-purpose instructions, which don't go with F2 or F3
+        return f"instruction 0F {op:02X} after F2 or F3"
+    elif op == 0x1F:  # nop with an operand, which it doesn't read
+        pass
+    elif 0x40 <= op <= 0x4F:  # cmov
+        writes, reads = "reg", word
+    elif 0x80 <= op <= 0x8F and not prefixes:  # conditional jump
+        immediate, flow = 4, "branch"
+    elif 0x90 <= op <= 0x9F:  # setcc
+        writes, byte = "rm", True
+    elif op == 0xAF:  # imul
+        writes, reads = "reg", word
+    elif op in (0xB6, 0xB7, 0xBE, 0xBF):  # movzx, movsx
+        writes, reads = "reg", 1 if op in (0xB6, 0xBE) else 2
+    else:
+        return f"instruction 0F {op:02X}"
+    if at + immediate > len(code):
+        raise IndexError(at + immediate)
+    value = int.from_bytes(code[at : at + immediate], "little", signed=True)
+    at += immediate
+    if writes in ("rm", "xrm") and operand.memory:
+        return "a write to memory"
+    if writes == "lea" and not operand.memory:
+        return "instruction 8D"
+    if writes in ("reg", "lea"):
+        allowed = writable(operand.reg, byte, rex)
+    elif writes == "rm":
+        allowed = writable(operand.rm, byte, rex)
+    elif writes == "op":
+        allowed = writable((op & 7) | (rex & 1) << 3, byte, rex)
+    elif writes in ("xreg", "xrm"):
+        allowed = (operand.reg if writes == "xreg" else operand.rm) in WRITABLE_XMM
+    else:
+        allowed = True
+    if not allowed:
+        return "a write to a register the function must put back"
+    read = None
+    if reads and operand is not None and operand.memory:
+        if operand.rip:
+            read = ("value", at + operand.displacement, reads)
+        elif operand.base != THIS_REGISTER or operand.index is not None:
+            return "a read of memory other than the object's"
+        elif not 0 <= operand.displacement <= object_size - reads:
+            return "a read outside the object"
+        else:
+            read = ("field", operand.displacement, reads)
+    return at, flow, at + value if flow in ("branch", "jump") else None, read
+
+
+def read_leaf(code: bytes, object_size: int) -> Leaf | str:
+    """``code`` read as a function called with the address of an object ``object_size`` bytes long in
+    rcx: a Leaf if calling it can't change anything, or else why not, as "<what> at <offset>". Calling it
+    can't change anything if, every way through, it runs only instructions this knows, reading nothing
+    but the object and values at fixed places in the game, writing nothing but registers it may change
+    (see WRITABLE_REGISTERS), and jumping only forward, to the start of one of its own instructions, to
+    end in ret."""
+    starts: set[int] = set()
+    targets: set[int] = set()
+    fields: list[tuple[int, int]] = []
+    values: list[tuple[int, int, int]] = []
+    at = 0
+    while True:
+        try:
+            decoded = decode(code, at, object_size)
+        except IndexError:
+            return f"it doesn't end within the {len(code)} bytes read"
+        if isinstance(decoded, str):
+            return f"{decoded} at {at:#x}"
+        end, flow, target, read = decoded
+        if target is not None:
+            if target < end:
+                return f"a jump back at {at:#x}"
+            targets.add(target)
+        if read is not None:
+            if read[0] == "value":
+                values.append((at, *read[1:]))
+            elif read[1:] not in fields:
+                fields.append(read[1:])
+        starts.add(at)
+        at = end
+        if flow in ("jump", "ret") and all(target < at for target in targets):
+            break
+    if not targets <= starts:
+        return "a jump into the middle of an instruction"
+    return Leaf(at, fields, values)
+
+
+class StarCount:
+    """cGcSolarSystem::GetStarCount, found in the game by STAR_COUNT_PATTERN: where it is, its first
+    bytes, what it reads, and whether the mod may call it: only if read_leaf finds that calling it can't
+    change anything, and the values it reads from fixed places in the game can be read."""
+
+    def __init__(self, address: int, offset: int, code: bytes):
+        self.address, self.offset, self.code = address, offset, code
+        self.field = int.from_bytes(code[14:18], "little", signed=True)  # movss xmm2, [rcx + field]
+        leaf = read_leaf(code, LAYOUT.system_size)
+        self.leaf = leaf if isinstance(leaf, Leaf) else None
+        self.why = None if self.leaf else leaf  # why the mod won't call it
+        # (offset in the code of the instruction, of the value, the value's bytes or None) of each value
+        # it reads from a fixed place in the game.
+        if self.leaf:
+            reads = self.leaf.values
+        else:  # the pattern shows the first instruction reads one
+            reads = [(0, 8 + int.from_bytes(code[4:8], "little", signed=True), 4)]
+        self.values = [(at, where, read_memory(address + where, size)) for at, where, size in reads]
+        if self.leaf and any(raw is None for _, _, raw in self.values):
+            self.leaf, self.why = None, "a value it reads couldn't be read"
+        fields = (self.leaf.fields if self.leaf else []) or [(self.field, 4)]
+        low, high = min(field for field, _ in fields), max(field + size for field, size in fields)
+        if high - low > STAR_WINDOW_MAX:
+            low, high = self.field, self.field + 4
+        start, end = max(0, low - STAR_FIELD_BEFORE), min(LAYOUT.system_size, high + STAR_FIELD_AFTER)
+        self.window = (start, end - start) if end > start else None  # (offset, bytes) recorded with systems
+        self.callable = self.leaf is not None
+        self._function = None
+
+    def info(self) -> dict:
+        """What the session header says of the function."""
+        found = {"offset": f"{self.offset:X}", "code": self.code.hex().upper(), "field": self.field}
+        if self.leaf is not None:
+            found["length"] = self.leaf.length
+        found["values"] = [[at, where, raw.hex().upper() if raw else None] for at, where, raw in self.values]
+        if self.window is not None:
+            found["window"] = list(self.window)
+        found["callable"] = int(self.callable)
+        if self.why:
+            found["why"] = self.why
+        return found
+
+    def count(self, system: int) -> int:
+        """How many stars the game says the solar system at ``system`` has. Main thread only: this calls
+        the game. Raises CaptureError instead if the mod won't call it, or can't read what it reads."""
+        if not self.callable or self.leaf is None:
+            raise CaptureError("the mod doesn't call the game's star count function")
+        if any(read_memory(system + field, size) is None for field, size in self.leaf.fields):
+            raise CaptureError("the solar system's values it reads couldn't be read")
+        if self._function is None:
+            self._function = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p)(self.address)
+        return int(self._function(system))
+
+    def window_bytes(self, system: int) -> str | None:
+        """The solar system's bytes in ``window``, as hex."""
+        if self.window is None:
+            return None
+        raw = read_memory(system + self.window[0], self.window[1])
+        return None if raw is None else raw.hex().upper()
+
+
+def locate_star_count() -> StarCount | str | None:
+    """The game's GetStarCount, or why it couldn't be found; None if RECORD_STARS is off or the mod
+    isn't running inside the game."""
+    base = getattr(pymhf_internal, "BASE_ADDRESS", -1)
+    if not RECORD_STARS or not isinstance(base, int) or base <= 0:
+        return None
+    from pymhf.core.memutils import find_pattern_in_binary
+
+    offset = find_pattern_in_binary(STAR_COUNT_PATTERN, False)
+    if offset is None:
+        return "its pattern isn't in this version of the game"
+    code = read_memory(base + offset, STAR_CODE_BYTES)
+    if code is None:
+        return "its code couldn't be read"
+    return StarCount(base + offset, offset, code)
+
+
 def query_metadata(generation_data: int) -> dict:
     """What GenerateQueryInfo wrote into its cGcSolarSystemData."""
     pointer = read_u64(generation_data + LAYOUT.metadata) if generation_data else None
@@ -1264,6 +1650,8 @@ def session_header(mod: Mod | None = None) -> dict:
         "exe": str(getattr(pymhf_internal, "BINARY_HASH", "") or "") or None,
         "steamBuild": _guarded(steam_build, getattr(pymhf_internal, "BINARY_PATH", None)),
         "hooks": _guarded(hook_status, mod) if mod is not None else None,
+        # The game's star count function, or why it wasn't found (see StarCount).
+        "starCount": getattr(mod, "_star_info", None),
         "nmspy": package_version("nmspy"),
         "pymhf": package_version("pymhf"),
         "python": platform.python_version(),
@@ -1300,6 +1688,9 @@ def describe(record: dict) -> str:
         pool = f"{len(ships)} ships"
         if counts:
             pool += " (" + ", ".join(f"{ship_label(c)} {n}" for c, n in counts.most_common()) + ")"
+    stars = record.get("stars")
+    if isinstance(stars, int) and stars != 1:
+        pool += f"; {stars} stars"
     return f"{name} ({where}): {pool}"
 
 
@@ -1477,6 +1868,28 @@ class TradeDepotCapture(Mod):
                 "class and slots, go up to the space station's multi-tool case or a settlement's "
                 "multi-tool rack and look at what's for sale."
             )
+        # The game's star count function (see StarCount), and what the session header says of it.
+        self._stars: StarCount | None = None
+        self._star_info: dict | str | None = None
+        self._guild_requested: str | None = None
+        try:
+            found = locate_star_count()
+        except Exception:
+            found = None
+            self._report_once("stars-find", "Couldn't look for the game's star count function.")
+        if isinstance(found, StarCount):
+            self._stars, self._star_info = found, found.info()
+            if found.callable:
+                logger.info("Found the game's star count function: each system's stars are recorded.")
+            else:
+                logger.info(
+                    "Found the game's star count function, but the mod won't call it (%s), so it records "
+                    "only the bytes of each system the function reads.",
+                    found.why,
+                )
+        elif found is not None:
+            self._star_info = found
+            logger.info("Couldn't find the game's star count function (%s): stars aren't recorded.", found)
 
     # --- GUI (read on the GUI thread, so these only return cached values) ---
 
@@ -1534,6 +1947,20 @@ class TradeDepotCapture(Mod):
         # The game thread does the reading, on its next frame.
         self._record_requested = True
         self._status = "Recording the current system..."
+
+    # The guild envoy on a space station's upper level says which guild a region's stations have. The game
+    # decides it where the mod can't read it yet, so you say which, and the mod records it with the system.
+    @gui_button("Guild envoy here: Merchants")
+    def guild_merchants(self):
+        self._request_guild("Merchants")
+
+    @gui_button("Guild envoy here: Explorers")
+    def guild_explorers(self):
+        self._request_guild("Explorers")
+
+    @gui_button("Guild envoy here: Mercenaries")
+    def guild_mercenaries(self):
+        self._request_guild("Mercenaries")
 
     @gui_button("Open the captures folder")
     def open_folder(self):
@@ -1665,6 +2092,7 @@ class TradeDepotCapture(Mod):
     def on_frame(self):
         try:
             self._watch_for_game(time.monotonic())
+            self._record_guild()
             self._flush_pending()
             self._poll()
             self._count_resources(time.monotonic())
@@ -2399,6 +2827,7 @@ class TradeDepotCapture(Mod):
                 context["locators"] = locators
         except CaptureError as exc:
             context["locators"] = {"error": str(exc)}
+        context.update(self._star_context(address, call=False))  # not the main thread: no calling the game
         self._record(address, "gen", context)
 
     def _poll(self) -> None:
@@ -2439,6 +2868,46 @@ class TradeDepotCapture(Mod):
             self._arrived(seen)
         self._last_seen = seen
 
+    def _request_guild(self, guild: str) -> None:
+        """A guild button: the game thread records it on its next frame."""
+        self._guild_requested = guild
+        self._status = f"Recording the {guild} Guild here..."
+
+    def _record_guild(self) -> None:
+        """Record the guild whose envoy you said you saw, with the system you're in: the region's stations
+        all have the same one. The tone says whether it was recorded."""
+        guild, self._guild_requested = self._guild_requested, None
+        if guild is None:
+            return
+        try:
+            active = active_system()
+            ua = read_u64(active[0] + LAYOUT.ua) if active is not None else None
+            if not ua:
+                logger.info("Couldn't record the %s Guild: no star system is loaded yet.", guild)
+                self._status = "No star system is loaded yet."
+                play_sound("problem")
+                return
+            system = ua & ~PLANET_BITS
+            entry = {"t": "guild", "at": int(time.time()), "system": hex64(system), "guild": guild}
+            if (location := player_location()) is not None:
+                entry["loc"] = location
+            if (where := player_environment()[0]) is not None:
+                entry["where"] = where  # in a space station, say
+            with self._lock:
+                self._pending.append(entry)
+        except Exception:
+            self._report_once("guild", "Couldn't record a guild.")
+            play_sound("problem")
+            return
+        logger.info(
+            "Recorded the %s Guild for the region of %s, galaxy %d.",
+            guild,
+            portal_code(system),
+            galaxy_of(system),
+        )
+        self._status = f"Recorded the {guild} Guild here."
+        play_sound("recorded")
+
     def _arrived(self, seen: tuple | None, chime: bool = True) -> None:
         """The system has settled and is in the capture file: tone once per system per session."""
         if seen is None:
@@ -2464,6 +2933,42 @@ class TradeDepotCapture(Mod):
                     context["displayName"] = name
             except Exception:
                 self._report_once("name", "Couldn't get the system's name from the game.")
+            context.update(self._star_context(named_system, call=True))
+        return context
+
+    def _star_context(self, system: int, call: bool) -> dict:
+        """The bytes of the solar system around what the game counts its stars by, and with ``call`` (main
+        thread only), how many stars it has, if the mod may ask the game."""
+        stars = self._stars
+        if stars is None:
+            return {}
+        context: dict = {}
+        if (raw := stars.window_bytes(system)) is not None:
+            context["starField"] = raw
+        if not call or not stars.callable:
+            return context
+        try:
+            count = stars.count(system)
+        except CaptureError as exc:
+            self._report_once("stars-read", "Couldn't count a system's stars: %s.", exc, with_traceback=False)
+            return context
+        except Exception:
+            stars.callable = False
+            self._report_once(
+                "stars", "Couldn't count a system's stars; the mod won't ask the game again this session."
+            )
+            return context
+        if 0 <= count <= MAX_STARS:
+            context["stars"] = count
+        else:
+            stars.callable = False
+            self._report_once(
+                "stars-range",
+                "The game's star count function said a system has %d stars, so it isn't what the mod took it "
+                "for; the mod won't call it again this session.",
+                count,
+                with_traceback=False,
+            )
         return context
 
     def _record(self, address: int, via: str, context: dict, announce: bool = False) -> bool:

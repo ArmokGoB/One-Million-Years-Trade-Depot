@@ -24,6 +24,7 @@ import argparse
 import json
 import math
 import statistics
+import struct
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -152,6 +153,8 @@ class Captures:
     built: list[tuple[dict, Session]] = field(default_factory=list)
     # The multi-tools the game built while it generated a system: the system's own set.
     pools: list[tuple[dict, Session]] = field(default_factory=list)
+    # The guilds whose envoys the player said they saw, with the system they were in.
+    guilds: list[tuple[dict, Session]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -222,6 +225,8 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                     captures.built.append((obj, session))
                 elif kind == "pool":
                     captures.pools.append((obj, session))
+                elif kind == "guild":
+                    captures.guilds.append((obj, session))
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -274,7 +279,8 @@ def summary_lines(captures: Captures) -> list[str]:
         f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s), "
         f"{len(captures.names)} name(s), "
         f"{len(captures.models)} ship model(s), {sets} system multi-tool set(s), "
-        f"{len(captures.items)} offered item(s), {len(captures.built)} model build note(s)"
+        f"{len(captures.items)} offered item(s), {len(captures.built)} model build note(s), "
+        f"{len(captures.guilds)} guild(s)"
     ]
     builds = Counter(
         (s.header.get("exe") or "unknown", s.header.get("steamBuild") or "?", s.header.get("nmspy") or "?")
@@ -746,6 +752,121 @@ def _is_multitool(name: str | None) -> bool:
 def _set_key(pool: dict) -> list:
     """What tells one of a system's multi-tool sets from another: each tool's file, seed and parts, in order."""
     return [[tool.get("name"), tool.get("seed"), tool.get("parts")] for tool in pool.get("tools") or []]
+
+
+def _region(ua: int) -> tuple[int, int]:
+    """A system's region: its galaxy and voxel, the address bits other than the planet and system."""
+    return (ua >> 32) & 0xFF, ua & MASK32
+
+
+def _region_label(region: tuple[int, int]) -> str:
+    galaxy, voxel = region
+    signed = lambda value, bits: value - (1 << bits) if value >= 1 << (bits - 1) else value  # noqa: E731
+    x, z, y = signed(voxel & 0xFFF, 12), signed((voxel >> 12) & 0xFFF, 12), signed(voxel >> 24, 8)
+    return f"galaxy {galaxy} region X {x}, Y {y}, Z {z}"
+
+
+def _star_function(info: object) -> str:
+    """What a session header says of the game's star count function (see the mod's StarCount)."""
+    if info is None:
+        return "not looked for (RECORD_STARS off)"
+    if not isinstance(info, dict):
+        return f"not found: {info}"
+
+    def value(raw: str | None) -> str:
+        if not raw:
+            return "unreadable"
+        data = bytes.fromhex(raw)
+        return f"{struct.unpack('<f', data)[0]:g} ({raw})" if len(data) == 4 else raw
+
+    text = f"found at +{info.get('offset')}"
+    if info.get("length"):
+        text += f", {info['length']} bytes long"
+    text += f", reads the system at +{info.get('field', 0):X}"
+    if info.get("values"):
+        text += "; values it reads: " + ", ".join(value(raw) for _, _, raw in info["values"])
+    return text + ("; called" if info.get("callable") else f"; not called: {info.get('why')}")
+
+
+def _star_field_value(record: SystemRecord) -> float | None:
+    """The float the star count function reads from the system where the pattern shows, taken from the
+    bytes recorded around it."""
+    info = record.session.header.get("starCount")
+    raw = record.data.get("starField")
+    if not isinstance(info, dict) or not isinstance(raw, str) or not info.get("window"):
+        return None
+    at, data = info.get("field", 0) - info["window"][0], bytes.fromhex(raw)
+    return struct.unpack_from("<f", data, at)[0] if 0 <= at <= len(data) - 4 else None
+
+
+def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
+    """How many stars the game said each system has, with the value its star count function compares,
+    and the guild seen in each region, with what else the captures say of the region, to find what
+    decides either."""
+    lines: list[str] = []
+    found = Counter(
+        _star_function(s.header["starCount"]) for s in captures.sessions if "starCount" in s.header
+    )  # 0.10.0 on
+    systems = captures.representative_by_system()
+    stars: dict[int, int] = {}
+    fields: dict[int, float] = {}
+    for record in captures.records:
+        system = record.ua & ~PLANET_BITS
+        if isinstance(record.data.get("stars"), int):
+            stars[system] = record.data["stars"]
+        if (value := _star_field_value(record)) is not None:
+            fields[system] = value
+    if found or stars or fields:
+        counts = Counter(stars.values())
+        lines += [
+            "",
+            "Stars: systems by how many stars the game says they have: "
+            + (", ".join(f"{n} x{c}" for n, c in sorted(counts.items())) or "none recorded"),
+        ]
+        lines += [
+            f"  the game's star count function: {text} ({n} session(s))" for text, n in found.most_common()
+        ]
+        by_count: dict[int | None, list[float]] = {}
+        for system, value in fields.items():
+            by_count.setdefault(stars.get(system), []).append(value)
+        for count, values in sorted(by_count.items(), key=lambda item: (item[0] is None, item[0] or 0)):
+            finite = [value for value in values if math.isfinite(value)]
+            spread = f"{min(finite):g} to {max(finite):g}" if finite else "not finite"
+            label = "count not recorded" if count is None else f"{count} star(s)"
+            lines.append(
+                f"  the value it compares, in systems with {label}: {spread} ({len(values)} systems)"
+            )
+        for system in [system for system, n in stars.items() if n != 1][:examples]:
+            record = systems.get(system)
+            label = record.label() if record is not None else _portal_label(system)
+            value = f", compared value {fields[system]:g}" if system in fields else ""
+            lines.append(f"    {label}: {stars[system]} stars{value}")
+    if captures.guilds:
+        by_region: dict[tuple[int, int], list[dict]] = {}
+        for entry, _ in captures.guilds:
+            by_region.setdefault(_region(int(entry.get("system") or "0", 16)), []).append(entry)
+        regions_of: dict[tuple[int, int], list[SystemRecord]] = {}
+        for system, record in systems.items():
+            regions_of.setdefault(_region(system), []).append(record)
+        lines += ["", f"Guilds recorded: {len(captures.guilds)} for {len(by_region)} region(s)"]
+        mixed = 0
+        for region, entries in by_region.items():  # in the order first recorded
+            guilds = Counter(entry.get("guild") for entry in entries)
+            mixed += len(guilds) > 1
+            records = regions_of.get(region, [])
+            races = Counter(record.name("race", "race") or "?" for record in records)
+            colours = sorted(
+                {(record.data.get("galaxy") or {}).get("regionColour") for record in records} - {None}
+            )
+            said = ", ".join(f"{guild} x{n}" for guild, n in guilds.most_common())
+            said += f"; systems recorded there: {len(records)}"
+            if races:
+                said += ", by race: " + ", ".join(f"{race} {n}" for race, n in races.most_common())
+            if colours:
+                said += f"; region colour value {', '.join(f'{c:g}' for c in colours)}"
+            lines.append(f"  {_region_label(region)}: {said}")
+        lines.append(f"  regions recorded with more than one guild: {mixed}")
+    return lines
 
 
 def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
@@ -1311,6 +1432,7 @@ def main(argv: list[str] | None = None) -> int:
         + lookup_lines(captures)
         + model_lines(captures)
         + part_coverage_lines(captures)
+        + star_guild_lines(captures)
         + pool_lines(captures)
         + item_lines(captures)
     )
