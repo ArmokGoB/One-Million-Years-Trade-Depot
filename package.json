@@ -20,9 +20,5 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
     "vitest": "^5.0.3"
-  },
-  "dependencies": {
-    "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
-    "@fontsource/big-shoulders-stencil-display": "^5.3.0"
   }
 }

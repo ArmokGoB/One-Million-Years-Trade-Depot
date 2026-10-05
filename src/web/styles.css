@@ -4,18 +4,44 @@
  * Design notes
  * - The only accent colour is the star colour of the system on screen; it is
  *   data, not decoration (name, glow, focus rings, body numbers).
- * - Stencil type marks identity: the depot's name and the system's name.
- *   Everything else is set in Atkinson Hyperlegible Next for legibility.
+ * - Façade marks identity: the depot's name, the system's name and the body
+ *   numbers. Everything else is set in MatrixType, like a ship's readout.
  * - Unverified output is said in words next to the value, never only by colour.
  */
 
+/* Each face covers a range of weights, so the browser never thickens the
+ * dot-matrix or the stencil letters itself: MatrixType has a real bold, and
+ * Façade's one weight is used as it is for every weight asked of it. */
+@font-face {
+  font-family: Matrixtype;
+  src: url(../../fonts/Matrixtype.ttf) format("truetype");
+  font-weight: 100 599;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: Matrixtype;
+  src: url("../../fonts/Matrixtype Bold.ttf") format("truetype");
+  font-weight: 600 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: Facade-Ouest;
+  src: url(../../fonts/Facade-Ouest.ttf) format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 :root {
-  --night: #12163a;
-  --night-raised: #1a1f4b;
+  --night: #000000;
+  --night-raised: #282828;
   --rule: #2f3672;
-  --ink: #eef0ff;
-  --ink-muted: #a7aed6;
-  --error: #ff9b8f;
+  --ink: #e0b0b2;
+  --ink-muted: lightcoral;
+  --error: magenta;
+  /* The edge of a text field: at least 3:1 against the page, so the fields can be found. */
+  --field-edge: color-mix(in srgb, var(--ink-muted) 60%, var(--night));
 
   --star-yellow: #f4c542;
   --star-green: #63d690;
@@ -24,8 +50,8 @@
   --star-purple: #bb93ff;
   --star: var(--star-yellow);
 
-  --font-text: "Atkinson Hyperlegible Next Variable", "Atkinson Hyperlegible", system-ui, sans-serif;
-  --font-stencil: "Big Shoulders Stencil Display", "Arial Narrow", sans-serif-condensed, sans-serif;
+  --font-text: "Matrixtype", system-ui, sans-serif;
+  --font-stencil: "Facade-Ouest", sans-serif-condensed, sans-serif;
 
   --step--1: 0.875rem; /* 14px */
   --step-0: 1.125rem; /* 18px */
@@ -148,7 +174,7 @@ a:hover {
   width: 100%;
   min-height: 3.5rem;
   padding: 0.5rem 0.875rem;
-  border: 2px solid var(--rule);
+  border: 2px solid var(--field-edge);
   border-radius: var(--radius-control);
   background: var(--night-raised);
   color: var(--ink);
@@ -157,7 +183,7 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 .lookup__input:hover {
-  border-color: color-mix(in srgb, var(--star) 45%, var(--rule));
+  border-color: color-mix(in srgb, var(--star) 45%, var(--field-edge));
 }
 .lookup__input:focus-visible {
   border-color: var(--star);
