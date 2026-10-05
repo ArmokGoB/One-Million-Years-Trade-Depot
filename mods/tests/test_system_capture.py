@@ -1000,6 +1000,28 @@ class ModelTests(ModelHelpers, CaptureTestCase):
         disagrees = "disagrees: 03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001, first draw 0.853393"
         self.assertIn(disagrees, text)
 
+    def test_report_shows_how_many_part_options_each_ship_model_has_shown(self):
+        self.game.generate(self.capture)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B", "TEXTURE_TEMP"])
+        self.build(FIGHTER_MODEL.replace("_PROC", "_PROC_LOD1"), 0x1111111111111111, ["_COCKPIT_A"])  # a copy
+        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"])
+        self.models()
+        text = "\n".join(report.part_coverage_lines(report.read_captures([mod.CAPTURE_FILE])))
+        self.assertIn("  FIGHTER_PROC (Fighter): 1 models, 3 groups, 3 options seen, about 0 more", text)
+        self.assertIn("  S-CLASS_PROC (Exotic): 1 models, 2 groups, 2 options seen, about 0 more", text)
+        self.assertNotIn("LOD1", text)
+        # Groups by the game's naming, and how many options a group probably has that haven't shown up.
+        self.assertEqual([report.part_group(p) for p in ("_COCKPIT_C", "_COCKPITA_0NEW", "TEXTURE_TEMP", "_X")],
+                         ["_COCKPIT_", "_COCKPITA_", "TEXTURE", "_X"])  # fmt: skip
+        self.assertEqual(report.unseen_options(report.Counter({"A": 1, "B": 1, "C": 1, "D": 2})), 1.5)
+        self.assertEqual(report.unseen_options(report.Counter({"A": 9, "B": 4})), 0.0)
+        many = [
+            {"name": FIGHTER_MODEL, "seed": f"{i:016X}", "parts": [f"_ACC_{i}", "_WINGS_A"]} for i in range(4)
+        ]
+        lines = report.part_coverage_lines(report.Captures(models=many))
+        self.assertIn("  FIGHTER_PROC: 4 models, 2 groups, 5 options seen, about 6 more", lines)
+        self.assertIn("    likely to have more: _ACC_ 4 seen in 4 picks (about 6 more)", lines)
+
 
 MULTITOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/MULTITOOL.SCENE.MBIN"
 ROYAL_TOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/ROYALMULTITOOL.SCENE.MBIN"

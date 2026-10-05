@@ -659,6 +659,79 @@ def model_lines(captures: Captures) -> list[str]:
     return lines + squid_lines(exotics)
 
 
+def part_group(part: str) -> str:
+    """The group a part ID is one of the options of, by the game's naming: _COCKPIT_C is an option of
+    _COCKPIT_, and _COCKPITA_0NEW of _COCKPITA_; an ID without a leading underscore, such as
+    TEXTURE_TEMP, of its first word's group."""
+    if part.startswith("_"):
+        end = part.find("_", 1)
+        return part[: end + 1] if end > 0 else part
+    return part.split("_", 1)[0]
+
+
+def unseen_options(counts: Counter) -> float:
+    """About how many options of a group no capture has shown yet, from how many showed up once and how
+    many twice (Chao1, bias-corrected). A lower bound: options the game rarely picks are easily missed."""
+    once = sum(1 for n in counts.values() if n == 1)
+    twice = sum(1 for n in counts.values() if n == 2)
+    return once * (once - 1) / (2 * (twice + 1))
+
+
+def part_coverage_lines(captures: Captures, groups_shown: int = 6) -> list[str]:
+    """For each ship model the game picks parts for (the *_PROC files, but for their lower-detail
+    copies), the parts recorded so far: how many options each group has shown, and about how many more
+    it probably has, so the ship types that need more captures stand out. The game's own option lists
+    aren't in the captures, so the totals are estimates."""
+    systems = captures.representative_by_system()
+    by_file: dict[str, dict[tuple, dict]] = {}
+    kinds: dict[str, set[str]] = {}
+    for model in captures.models:
+        file = _model_file(model.get("name") or "")
+        if not model.get("parts") or "_PROC" not in file or "_LOD" in file:
+            continue
+        record = systems.get(int(model.get("system") or "0", 16) & ~PLANET_BITS)
+        slot = model.get("slot")
+        ships = (record.data.get("ships") or []) if record is not None else []
+        if record is not None and isinstance(slot, int) and 0 <= slot < len(ships):
+            name = record.session.name("shipClass", ships[slot][2])
+            kinds.setdefault(file, set()).add(SHIP_LABELS.get(name or "", name or f"class {ships[slot][2]}"))
+        elif slot == "crash":
+            kinds.setdefault(file, set()).add("Sentinel crash-site ship")
+        by_file.setdefault(file, {})[(model.get("name"), model.get("seed"))] = model  # each model once
+    if not by_file:
+        return []
+    lines = [
+        "",
+        "Ship parts recorded, by model: the options seen in each group of its parts, and about how many more "
+        "the game probably has, from how many options showed up only once or twice (a lower bound; the "
+        "game's own lists of options would give the totals)",
+    ]
+    for file, models in sorted(by_file.items(), key=lambda item: -len(item[1])):
+        groups: dict[str, Counter] = {}
+        for model in models.values():
+            for part in model["parts"]:
+                groups.setdefault(part_group(part), Counter())[part] += 1
+        seen = sum(len(counts) for counts in groups.values())
+        more = {group: unseen_options(counts) for group, counts in groups.items()}
+        used_by = f" ({', '.join(sorted(kinds[file]))})" if file in kinds else ""
+        lines.append(
+            f"  {file}{used_by}: {len(models)} models, {len(groups)} groups, {seen} options seen, "
+            f"about {round(sum(more.values()))} more"
+        )
+        open_groups = sorted((group for group in groups if round(more[group]) >= 1), key=lambda g: -more[g])
+        if open_groups:
+            said = ", ".join(
+                f"{group} {len(groups[group])} seen in {sum(groups[group].values())} picks "
+                f"(about {round(more[group])} more)"
+                for group in open_groups[:groups_shown]
+            )
+            others = len(open_groups) - groups_shown
+            lines.append(
+                f"    likely to have more: {said}" + (f", and {others} more groups" if others > 0 else "")
+            )
+    return lines
+
+
 def _is_multitool(name: str | None) -> bool:
     """As the capture mod tells a multi-tool's model file since 0.9.0. Before, it took effects in
     weapon folders for multi-tools too, which this leaves out of what those versions recorded."""
@@ -1237,6 +1310,7 @@ def main(argv: list[str] | None = None) -> int:
         + trace_lines(captures)
         + lookup_lines(captures)
         + model_lines(captures)
+        + part_coverage_lines(captures)
         + pool_lines(captures)
         + item_lines(captures)
     )
