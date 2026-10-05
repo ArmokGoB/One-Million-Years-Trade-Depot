@@ -4,7 +4,8 @@
 
 Prints what was recorded (systems, ship pools, exotics, the parts the game
 picked for the ships it built, each exotic's against ship_model.py's squid
-rule, and the items the game offered, such as multi-tools); checks the game's
+rule, each system's own multi-tools, and the items the game offered, such as
+multi-tools); checks the game's
 data against itself, which is where a struct layout that no longer matches
 the game shows up first; and finds each system's ship seeds in the game's
 random-number stream seeded by the system seed. Given a path to nms_namegen,
@@ -39,9 +40,11 @@ ZERO_SEED = "0" * 16
 PLANET_BITS = 0xF << 52
 # How far into a system's stream to look for its ships.
 STREAM_LIMIT = 100_000
-# A multi-tool's model file holds one of these (as in the capture mod).
-MULTITOOL_PATHS = ("MULTITOOL", "/WEAPONS/")
-# What an item record can say of the item, or of how it was recorded, as 0 or 1.
+# A multi-tool's model file is in this folder, but not in these (as in the capture mod since 0.9.0).
+MULTITOOL_DIR = "/WEAPONS/MULTITOOL/"
+NOT_MULTITOOL_DIRS = ("/MULTITOOLPARTS/",)
+# What an item record can say of the item, or of how it was recorded: 0 or 1, or why (nameUnread
+# since 0.9.0 says why the player's name couldn't be read).
 ITEM_FLAGS = ("free", "gift", "reward", "extra", "unsettled", "nameUnread")
 
 SHIP_LABELS = {
@@ -147,6 +150,8 @@ class Captures:
     items: list[tuple[dict, Session]] = field(default_factory=list)
     # Multi-tool models the game built, and the first build of other model files: no seeds or parts.
     built: list[tuple[dict, Session]] = field(default_factory=list)
+    # The multi-tools the game built while it generated a system: the system's own set.
+    pools: list[tuple[dict, Session]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -215,6 +220,8 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                     captures.items.append((obj, session))
                 elif kind == "built":
                     captures.built.append((obj, session))
+                elif kind == "pool":
+                    captures.pools.append((obj, session))
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -261,12 +268,13 @@ def tally_lines(tallies: list[Tally], examples: int) -> list[str]:
 def summary_lines(captures: Captures) -> list[str]:
     systems = captures.representative_by_system()
     files = sorted({s.source for s in captures.sessions})
+    sets = sum(1 for pool, _ in captures.pools if pool.get("tools"))
     lines = [
         f"{len(files)} file(s), {len(captures.sessions)} session(s), "
         f"{len(captures.records)} record(s), {len(systems)} system(s), {len(captures.queries)} lookup(s), "
         f"{len(captures.names)} name(s), "
-        f"{len(captures.models)} ship model(s), {len(captures.items)} offered item(s), "
-        f"{len(captures.built)} model build note(s)"
+        f"{len(captures.models)} ship model(s), {sets} system multi-tool set(s), "
+        f"{len(captures.items)} offered item(s), {len(captures.built)} model build note(s)"
     ]
     builds = Counter(
         (s.header.get("exe") or "unknown", s.header.get("steamBuild") or "?", s.header.get("nmspy") or "?")
@@ -652,9 +660,90 @@ def model_lines(captures: Captures) -> list[str]:
 
 
 def _is_multitool(name: str | None) -> bool:
-    """As the capture mod tells a multi-tool's model file."""
-    path = (name or "").replace("\\", "/").upper()
-    return "/SPACECRAFT/" not in path and any(part in path for part in MULTITOOL_PATHS)
+    """As the capture mod tells a multi-tool's model file since 0.9.0. Before, it took effects in
+    weapon folders for multi-tools too, which this leaves out of what those versions recorded."""
+    path = "/" + (name or "").replace("\\", "/").upper()
+    return (
+        MULTITOOL_DIR in path
+        and not any(folder in path for folder in NOT_MULTITOOL_DIRS)
+        and "/SPACECRAFT/" not in path
+    )
+
+
+def _set_key(pool: dict) -> list:
+    """What tells one of a system's multi-tool sets from another: each tool's file, seed and parts, in order."""
+    return [[tool.get("name"), tool.get("seed"), tool.get("parts")] for tool in pool.get("tools") or []]
+
+
+def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
+    """Each system's own multi-tools, which the game builds while it generates the system: their files,
+    seeds and parts; whether a system's set came out the same each time it was recorded; and any seed in
+    more than one system's set, which wouldn't be a system's own."""
+    if not captures.pools:
+        return []
+    systems = captures.representative_by_system()
+    sets = [pool for pool, _ in captures.pools if pool.get("tools")]
+    by_system: dict[int, list[dict]] = {}
+    for pool in sets:
+        by_system.setdefault(int(pool.get("system") or "0", 16) & ~PLANET_BITS, []).append(pool)
+    tools = [tool for pool in sets for tool in pool["tools"]]
+    files = Counter(_model_file(tool.get("name") or "") for tool in tools)
+    sizes = Counter(len(pool["tools"]) for pool in sets)
+    lines = [
+        "",
+        f"Systems' own multi-tools: {len(sets)} set(s) for {len(by_system)} system(s), "
+        f"{len(tools)} multi-tools ({', '.join(f'{name} {n}' for name, n in files.most_common())})",
+        "  multi-tools per set: " + ", ".join(f"{size} x{n}" for size, n in sorted(sizes.items())),
+    ]
+    elsewhere = [pool for pool, _ in captures.pools if pool.get("elsewhere")]
+    if elsewhere:
+        lines.append(
+            f"  generations during which other threads built multi-tools: {len(elsewhere)} "
+            f"({sum(pool['elsewhere'] for pool in elsewhere)} multi-tools; "
+            f"{sum(1 for pool in elsewhere if not pool.get('tools'))} of them with none on the generating thread)"
+        )
+    again = [pools for pools in by_system.values() if len(pools) > 1]
+    same = sum(1 for pools in again if len({json.dumps(_set_key(pool)) for pool in pools}) == 1)
+    lines.append(f"  systems recorded more than once: {len(again)}; with the same set each time: {same}")
+    systems_of: dict[str, set[int]] = {}
+    for system, pools in by_system.items():
+        for pool in pools:
+            for tool in pool.get("tools") or []:
+                systems_of.setdefault(str(tool.get("seed")), set()).add(system)
+    shared = sorted(seed for seed, where in systems_of.items() if len(where) > 1)
+    examples = f" ({', '.join(shared[:5])})" if shared else ""
+    lines.append(f"  seeds in more than one system's set: {len(shared)}{examples}")
+    if late := sum(1 for pool, _ in captures.pools if pool.get("late")):
+        lines.append(f"  sets of generations that took longer than the mod waited: {late}")
+    if errors := sum(1 for tool in tools if tool.get("errors")):
+        lines.append(f"  multi-tools with read errors: {errors}")
+    described = []
+    for system, pools in sorted(by_system.items(), key=lambda item: ((item[0] >> 32) & 0xFF, item[0])):
+        record = systems.get(system)
+        label = record.label() if record is not None else _portal_label(system)
+        said = ", ".join(
+            f"{_model_file(tool.get('name') or '')} {tool.get('seed')} ({len(tool.get('parts') or [])} parts)"
+            for tool in pools[-1].get("tools") or []
+        )
+        described.append(f"  {label}: {said}")
+    lines += described[:limit]
+    if len(described) > limit:
+        lines.append(f"  ... {len(described) - limit} more")
+    return lines
+
+
+def _resource_summary(resource: dict, model: dict | None) -> str:
+    """What the game's resource manager held for an item's handle, against the model the mod paired."""
+    if "error" in resource:
+        return f"resource manager: {resource['error']}"
+    said = f"resource {_model_file(resource.get('name') or '')}, {resource.get('refs')} holding it"
+    if "seed" not in resource:
+        return said + (f", {len(resource['errors'])} read error(s)" if resource.get("errors") else "")
+    if model is not None:
+        same = all(resource.get(key) == model.get(key) for key in ("name", "seed", "parts"))
+        return said + (", the same model" if same else f", another model: {resource.get('seed')}")
+    parts = " ".join(resource.get("parts") or []) or "(no parts)"
+    return said + f", seed {resource.get('seed')}: {parts}"
 
 
 def _store_summary(store: dict, session: Session) -> str:
@@ -688,6 +777,12 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
         record = systems.get(ua & ~PLANET_BITS)
         return ua, record.label() if record is not None else (_portal_label(ua) if ua else "(no system)")
 
+    # The systems' own multi-tools by (session, system, resource handle), for items the mod didn't pair.
+    pooled = {
+        (id(session), int(pool.get("system") or "0", 16) & ~PLANET_BITS, tool.get("handle")): number
+        for pool, session in captures.pools
+        for number, tool in enumerate(pool.get("tools") or [], start=1)
+    }
     if captures.items:
         types = Counter(str(item.get("itemType")) for item, _ in captures.items)
         described: list[str] = []
@@ -702,7 +797,11 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
             for tool in tools:
                 tool_systems.setdefault(tool["seed"], set()).add(ua)
             where = session.name("where", item.get("where")) or f"place {item.get('where')}"
-            flags = "".join(f", {flag}" for flag in ITEM_FLAGS if item.get(flag))
+            flags = "".join(
+                f", {flag}" if item[flag] in (1, True) else f", {flag} ({item[flag]})"
+                for flag in ITEM_FLAGS
+                if item.get(flag)
+            )
             said = []
             if "stores" in item or "handle" in item:  # 0.8.2 on
                 stores = item.get("stores") or []
@@ -712,9 +811,15 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
                 said.append("bytes only")
             if model := item.get("model"):
                 parts = " ".join(model.get("parts") or []) or "(no parts)"
-                said.append(f"model {_model_file(model.get('name') or '')} {model.get('seed')}: {parts}")
+                number = f" (number {model['pool'] + 1} of the system's set)" if "pool" in model else ""
+                file = _model_file(model.get("name") or "")
+                said.append(f"model {file} {model.get('seed')}{number}: {parts}")
             elif item.get("handle") not in (None, 0, 0xFFFFFFFF):
-                said.append(f"model handle {item['handle']}, not paired")
+                number = pooled.get((id(session), ua & ~PLANET_BITS, item["handle"]))
+                in_set = f", number {number} of the system's set by its handle" if number else ""
+                said.append(f"model handle {item['handle']}, not paired{in_set}")
+            if resource := item.get("resource"):
+                said.append(_resource_summary(resource, model or None))
             for tool in item.get("tools") or []:
                 parts = " ".join(tool.get("parts") or []) or "(no parts)"
                 said.append(
@@ -826,7 +931,9 @@ def _region_name_candidates(seed: int) -> dict[str, str | None]:
         except Exception:  # some seeds make the generator raise
             return None
 
-    register = (seed * MIX_A) & MASK64
+    # regionName() starts from (galaxy >> 1) ^ ((galaxy << 32) | the portal code's low 32 bits): the
+    # game's seed holds the galaxy where regionName() puts it, so the first term comes from it too.
+    register = (((((seed >> 32) & 0xFF) >> 1) ^ seed) * MIX_A) & MASK64
     register = (((register >> 33) ^ register) * MIX_B) & MASK64
     register ^= register >> 33
     return {
@@ -1049,7 +1156,9 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
             continue
         if hits:
             other += 1
-            lines.append(f"  {r.label()}: all {len(game)} ships and the crashed ship match the other moon arrangement")
+            lines.append(
+                f"  {r.label()}: all {len(game)} ships and the crashed ship match the other moon arrangement"
+            )
             continue
         same = sum(a == b for a, b in zip(prediction.ships, game))
         found = locate_ship_stream(r.ua, [row[0] for row in ships], crash, STREAM_LIMIT)
@@ -1075,7 +1184,9 @@ def moon_layout_lines(captures: Captures, namegen: Path, examples: int) -> list[
     sys.path.insert(0, str(namegen.resolve()))
 
     sources = [(r.ua & ~PLANET_BITS, r.data.get("positions")) for r in captures.records]
-    sources += [(int(q["seed"], 16) & ~PLANET_BITS, q.get("positions")) for q in captures.queries if q.get("seed")]
+    sources += [
+        (int(q["seed"], 16) & ~PLANET_BITS, q.get("positions")) for q in captures.queries if q.get("seed")
+    ]
     ways: Counter[str] = Counter()
     odd: list[str] = []
     seen: set[int] = set()
@@ -1126,6 +1237,7 @@ def main(argv: list[str] | None = None) -> int:
         + trace_lines(captures)
         + lookup_lines(captures)
         + model_lines(captures)
+        + pool_lines(captures)
         + item_lines(captures)
     )
     if args.namegen:
