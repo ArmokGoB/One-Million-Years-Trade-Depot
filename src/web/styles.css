@@ -11,7 +11,7 @@
 
 :root {
   --night: #000000;
-  --night-raised: #3f3f3f;
+  --night-raised: #282828;
   --rule: #2f3672;
   --ink: #e0b0b2;
   --ink-muted: lightcoral;
@@ -535,10 +535,10 @@ a:hover {
 
 @font-face{
   font-family: Matrixtype;
-  src: url(/fonts/Matrixtype.ttf) format("truetype");
+  src: url(../../fonts/Matrixtype.ttf) format("truetype");
 }
 
 @font-face{
   font-family: Facade-Ouest;
-  src: url(/fonts/Facade-Ouest.ttf) format("truetype");
+  src: url(../../fonts/Facade-Ouest.ttf) format("truetype");
 }
