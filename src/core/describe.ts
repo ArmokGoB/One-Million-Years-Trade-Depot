@@ -2,10 +2,11 @@
 //
 // One call that gathers everything the site shows about a system.
 
-import { formatPortalCode, portalParts, toGalacticCoordinates, withPlanet } from "./address";
+import { formatPortalCode, portalParts, toGalacticCoordinates, universalAddress, withPlanet } from "./address";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
 import { shipPool, type ShipGroup, type SquidCall } from "./ships";
+import { starCount } from "./stars";
 import { planetSeeds, systemAttributesDetailed, systemName, type SystemAttributes } from "./system";
 import { hex64 } from "./u64";
 
@@ -65,6 +66,13 @@ export const SHIP_ACCURACY = { matched: 62, recorded: 66, twoMoons: { firstGuess
 export const SQUID_CHECKS = { recorded: 12, squids: 6 } as const;
 
 /**
+ * How the star count fares against the game's own: the same in every one of
+ * the `counted` systems whose stars the capture mod counted as the game does,
+ * `several` of them with more than one star.
+ */
+export const STAR_CHECKS = { counted: 19, several: 2 } as const;
+
+/**
  * How often the civilian slots held a solar ship in the systems recorded:
  * [solar, slots] for the shuttle slots outside and inside outlaw systems,
  * and for the other civilian slots inside them. Outside outlaw systems
@@ -115,6 +123,8 @@ export interface SystemDescription {
   name: string;
   region: string;
   starColour: (typeof STAR_COLOURS)[number];
+  /** How many stars the system has: 1, or 2 in a binary system and 3 in a trinary one. */
+  stars: 1 | 2 | 3;
   faction: string;
   economy: string;
   wealth: string;
@@ -177,6 +187,7 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     name: systemName(systemCode, galaxy),
     region: regionName(systemCode, galaxy),
     starColour: STAR_COLOURS[a.star_type] ?? "Yellow",
+    stars: starCount(universalAddress(systemCode, galaxy)),
     faction,
     economy: a.uncharted ? "None" : ECONOMIES[a.economy_type] ?? "Unknown",
     wealth: a.uncharted ? "None" : TIERS[a.wealth] ?? "Unknown",

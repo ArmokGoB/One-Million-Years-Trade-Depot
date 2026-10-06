@@ -21,10 +21,10 @@
 // Whether the exotic is a squid comes from the exotic's own seed: see
 // exoticSquid().
 
-import { withPlanet } from "./address";
-import { PRNG } from "./prng";
+import { universalAddress, withPlanet } from "./address";
+import { seededPRNG } from "./prng";
 import { planetSeeds, systemAttributes, type Body } from "./system";
-import { MASK32, mix64, swap16 } from "./u64";
+import { mix64 } from "./u64";
 
 /** Base radius of a planet's attractor shell, by size (0 large, 1 medium, 2 small, 3 moon). */
 const BASE_RADIUS: readonly number[] = [195072, 147456, 96768, 23040];
@@ -104,14 +104,6 @@ export interface SquidCall {
   close: boolean;
 }
 
-/** The generator state the game builds from a 64-bit seed. */
-function seeded(seed: bigint): PRNG {
-  const low = seed & MASK32;
-  let high = (swap16(low) ^ low ^ (seed >> 32n)) & MASK32;
-  if (high === 0n) high = 1n;
-  return new PRNG((high << 32n) | low);
-}
-
 function distance(a: Vec3, b: Vec3): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
@@ -155,7 +147,7 @@ export function shipUncertainty(bodies: readonly Body[]): string | null {
  */
 export function drawsBeforeShips(ua: bigint, bodies: readonly Body[], swapped: ReadonlySet<number> = new Set()): number {
   const offsets = moonOffsets(bodies, swapped);
-  const rng = seeded(ua);
+  const rng = seededPRNG(ua);
   let draws = 0;
   const word = () => {
     draws += 1;
@@ -197,7 +189,7 @@ export function drawsBeforeShips(ua: bigint, bodies: readonly Body[], swapped: R
 
 /** The 50 ship seeds and the crash-site seed, drawn after `start` draws. */
 export function shipSeeds(ua: bigint, start: number): { ships: bigint[]; crashSite: bigint } {
-  const rng = seeded(ua);
+  const rng = seededPRNG(ua);
   for (let k = 0; k < start; k++) rng.updateSeed();
   const seeds: bigint[] = [];
   for (let k = 0; k <= SHIP_COUNT; k++) {
@@ -220,7 +212,7 @@ export const SQUID_EDGES = { notSquid: 4088215205, squid: 4093481076 } as const;
 
 /** The first draw the game makes from a ship's seed, which picks the first part of the ship's model. */
 export function firstDraw(seed: bigint): number {
-  return seeded(seed).randi();
+  return seededPRNG(seed).randi();
 }
 
 /**
@@ -338,7 +330,7 @@ export function shipPool(code: bigint, galaxy: number): ShipPool {
   const systemCode = withPlanet(code, 0);
   const attributes = systemAttributes(systemCode, galaxy);
   const { bodies } = planetSeeds(systemCode, galaxy);
-  const ua = (((systemCode >> 32n) & 0xfffn) << 40n) | (BigInt(galaxy & 0xff) << 32n) | (systemCode & MASK32);
+  const ua = universalAddress(systemCode, galaxy);
   const planets = twoMoonPlanets(bodies);
   // In the Python model's order: the last planet's moons flip first.
   const arrangements = Array.from({ length: 2 ** planets.length }, (_, n) =>

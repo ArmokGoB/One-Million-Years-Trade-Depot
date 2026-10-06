@@ -78,7 +78,7 @@ from nmspy.decorators import main_loop
 from pymhf import Mod
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.11.0"
+MOD_VERSION = "0.11.1"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
 # (0.3.0 to 0.11.0 only add or drop record types, fields and controls, or let a field hold more
@@ -1533,6 +1533,22 @@ def describe(record: dict) -> str:
     return f"{name} ({where}): {pool}"
 
 
+# What the mod's tab says of a system's stars, by how many.
+STAR_LABELS = {1: "1", 2: "2, a binary system", 3: "3, a trinary system"}
+
+
+def stars_label(record: dict) -> str:
+    """How many stars a recorded system has, as the mod's tab says it."""
+    stars = record.get("stars")
+    if isinstance(stars, int):
+        return STAR_LABELS.get(stars, str(stars))
+    if record.get("starsUnknown"):
+        return f"Unknown: in game mode {record.get('gameMode')} the game can count them another way"
+    if not RECORD_STARS:
+        return "Off (RECORD_STARS is False)"
+    return "Not worked out; the log says why"
+
+
 def tone(notes: list[tuple[float, float]], volume: float = SOUND_VOLUME, rate: int = 22050) -> bytes:
     """A WAV file (mono, 16-bit) playing ``notes``, as bytes."""
     volume = min(max(volume, 0.0), 1.0)
@@ -1617,6 +1633,7 @@ class TradeDepotCapture(Mod):
     # still being set up.
     _status = "Waiting for a star system to load."
     _last = "None yet."
+    _stars_here = "None yet."
     _count = 0
     _query_count = 0
     _name_count = 0
@@ -1778,6 +1795,11 @@ class TradeDepotCapture(Mod):
     @STRING("Last system")
     def last_system(self):
         return self._last
+
+    @property
+    @STRING("Stars in the last system")
+    def stars_here(self):
+        return self._stars_here
 
     @property
     @STRING("Capture file")
@@ -2877,6 +2899,7 @@ class TradeDepotCapture(Mod):
             self._count += 1
         logger.info("Recorded %s", summary)
         self._last = summary
+        self._stars_here = stars_label(entry)
         self._status = "Recording."
         if record.get("unusual"):
             self._report_once(

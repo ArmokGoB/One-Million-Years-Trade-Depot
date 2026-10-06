@@ -55,6 +55,15 @@ export function withPlanet(code: bigint, planet: number): bigint {
 }
 
 /**
+ * The system's universal address, which the game also uses as the system's
+ * seed: its index, the galaxy, then the region's Y, Z and X. The planet
+ * digit is left out.
+ */
+export function universalAddress(code: bigint, galaxy: number): bigint {
+  return (((code >> 32n) & 0xfffn) << 40n) | (BigInt(galaxy & 0xff) << 32n) | (code & 0xffff_ffffn);
+}
+
+/**
  * Signal-booster "galactic coordinates", e.g. `HUKYA:046A:0081:0D6D:0038`
  * (the leading letters are optional). Booster X/Y/Z are corner-origin, so
  * they are shifted into portal frame: X and Z by 0x801, Y by 0x81, wrapped.

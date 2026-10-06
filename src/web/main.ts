@@ -17,6 +17,7 @@ import {
   SOLAR_COUNTS,
   SQUID_CHECKS,
   SQUID_EDGES,
+  STAR_CHECKS,
   type ShipGroup,
   type ShipsInfo,
   type SquidCall,
@@ -77,6 +78,15 @@ function clearError(): void {
   addressInput.removeAttribute("aria-invalid");
   galaxyInput.removeAttribute("aria-invalid");
 }
+
+/** What a system with more than one star is called, by how many. */
+const MULTIPLE_STARS: Record<number, string> = { 2: "Binary", 3: "Trinary" };
+
+/** Only the system's star colour is known, so a system with more than one star says so of the others. */
+const OTHER_STARS: Record<number, string> = {
+  2: "The other star's colour isn't worked out yet.",
+  3: "The other two stars' colours aren't worked out yet.",
+};
 
 /** The order and headings of the full ship list. */
 const SHIP_GROUPS: readonly (readonly [ShipGroup, string])[] = [
@@ -244,6 +254,7 @@ function render(d: SystemDescription): void {
   const region = el("p", "result__region", `${d.region}, galaxy ${galaxyLabel(d.galaxy)}`);
 
   const flags: string[] = [];
+  if (d.stars > 1) flags.push(`${MULTIPLE_STARS[d.stars]} star system`);
   if (d.blackHole) flags.push("Black hole system");
   if (d.atlasInterface) flags.push("Atlas Interface system");
   if (d.gasGiant) flags.push("Gas giant layout");
@@ -257,7 +268,8 @@ function render(d: SystemDescription): void {
     manifest.append(el("dt", undefined, term), dd);
   };
 
-  row("Star", el("span", undefined, el("span", "swatch"), d.starColour));
+  row("Star colour", el("span", undefined, el("span", "swatch"), d.starColour));
+  row("Stars", String(d.stars), OTHER_STARS[d.stars]);
   row("Faction", d.faction);
   if (!d.uncharted) {
     row("Economy", d.economy);
@@ -285,7 +297,10 @@ function render(d: SystemDescription): void {
     `Star colour, faction, economy, wealth, conflict and body counts each match at least ${pct(lowest)} ` +
       `of 1,000 systems players recorded in game ` +
       `(star colour and faction ${pct(a.starColour)}, economy ${pct(a.economy)}, ` +
-      `wealth ${pct(a.wealth)}, conflict ${pct(a.conflict)}, planet and moon counts ${pct(a.planetAndMoonCounts)}).`,
+      `wealth ${pct(a.wealth)}, conflict ${pct(a.conflict)}, planet and moon counts ${pct(a.planetAndMoonCounts)}). ` +
+      `The number of stars is worked out the way the game counts them, with its chances of a second star ` +
+      `(1 in 5) and a third (1 in 20), and matched the game in all ${STAR_CHECKS.counted} systems whose stars ` +
+      `the capture mod counted, ${count(STAR_CHECKS.several)} of them with more than one.`,
   );
 
   const bodies = el("ol", "bodies");

@@ -8,7 +8,7 @@ export * from "./describe";
 export { indexPrimedPRNG } from "./iprng";
 export { generateName } from "./namegen";
 export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";
-export { MULTIPLIER, PRNG } from "./prng";
+export { MULTIPLIER, PRNG, seededPRNG } from "./prng";
 export { regionName } from "./region";
 export {
   drawsBeforeShips,
@@ -26,6 +26,7 @@ export {
   type ShipPool,
   type SquidCall,
 } from "./ships";
+export { nebulaSeed, STAR_CHANCES, starCount, starsFromNebula } from "./stars";
 export {
   planetSeeds,
   systemAttributes,
