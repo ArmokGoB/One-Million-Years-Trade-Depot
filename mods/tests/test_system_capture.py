@@ -3313,6 +3313,37 @@ class ReportTests(StarHelpers, CaptureTestCase):
             lines,
         )
 
+    def test_giant_planets_by_kind(self):
+        enums = {
+            "size": ["Large", "Medium", "Small", "Moon", "Giant"],
+            "biome": ["Lush", "Toxic"] + ["?"] * 13 + ["GasGiant"],
+            "biomeSubType": ["None_", "Standard"] + ["?"] * 11 + ["HydroGarden"],
+        }
+        session = report.Session({"enums": enums, "columns": {"bodies": ["seed", "biome", "biomeSubType", "size"]}}, "t")
+
+        def system(index: int, flags: list[str], giant: tuple[int, int] | None) -> report.SystemRecord:
+            bodies = [["0", 1, 1, 3]] + ([["0", giant[0], giant[1], 4]] if giant else [])
+            ua = (index << 40) | 0xF3545C3E
+            return report.SystemRecord({"ua": f"{ua:016X}", "galaxy": {"flags": flags}, "bodies": bodies}, session, 1)
+
+        records = [
+            system(0x3F0, ["IsGasGiantSystem", "IsGiantSystem"], (15, 1)),
+            system(0x3F1, ["IsGiantSystem"], (0, 13)),
+            system(0x3F2, ["IsGiantSystem"], None),
+            system(0x010, [], None),
+        ]
+        lines = report.giant_lines(report.Captures(sessions=[session], records=records))
+        self.assertEqual(
+            lines,
+            [
+                "",
+                "Systems with a giant planet: 3, 1 of them gas giants",
+                "  not a gas giant: 03F1F3545C3E galaxy 0 (unnamed): Lush/HydroGarden",
+                "  not a gas giant: 03F2F3545C3E galaxy 0 (unnamed): no giant among its recorded bodies",
+            ],
+        )
+        self.assertEqual(report.giant_lines(report.Captures(sessions=[session], records=records[3:])), [])
+
     def test_a_regions_colour_comes_from_whichever_record_has_it(self):
         session = report.Session({"enums": {}}, "test")
         records = [
@@ -3558,7 +3589,7 @@ class NamegenComparisonTests(CaptureTestCase):
             star.NumberOfPrimePlanets = attrs["prime_planet_count"]
             star.AbandonedSystem = attrs["abandoned"]
             star.IsPirateSystem = attrs["pirate"]
-            star.IsGasGiantSystem = attrs["gas_giant"]
+            star.IsGiantSystem = star.IsGasGiantSystem = attrs["gas_giant"]
             for i in range(16):
                 star.PlanetSeeds[i].Seed = seeds[i] if i < len(seeds) else 0
             voxel.AtlasStationCount = va["atlas_station_count"]

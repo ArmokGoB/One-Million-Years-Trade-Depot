@@ -32,7 +32,7 @@ WANTED = [
     "a prime planet with moons",
     "six bodies",
     "purple star",
-    "gas giant layout",
+    "giant planet layout",
     "another galaxy, with a planet digit",
     "two planets with two moons each",
 ]
@@ -55,7 +55,7 @@ def main() -> int:
         bodies = ship_model.bodies(ua)
         if attributes["star_type"] == 4:
             # Every body of a purple system is a prime body, so none has attractors.
-            return {"gas giant layout" if bodies is None else "purple star"}
+            return {"giant planet layout" if bodies is None else "purple star"}
         found = set()
         moons = {k: [j for j, b in enumerate(bodies) if b.parent == k] for k in range(len(bodies))}
         inhabited = not attributes["abandoned"] and not attributes["uncharted"]

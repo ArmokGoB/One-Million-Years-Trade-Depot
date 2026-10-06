@@ -19,7 +19,7 @@ ships:
    Sentinel ship's seed drawn between ships 41 and 42.
 
 The planets' sizes, moons and prime flags come from nms_namegen. Every body
-of a purple system is a prime planet or moon, gas giant layouts included, so
+of a purple system is a prime planet or moon, giant planet layouts included, so
 none of them has attractors. A moon sits 225,792 from its parent; a lone
 moon along +x. A planet's two moons sit at +30 and -30 degrees of elevation,
 the first above, at azimuths 0 and 137.5 degrees (the golden angle), but
@@ -86,7 +86,7 @@ class SquidCall(NamedTuple):
 
 
 def bodies(ua: int) -> list[Body] | None:
-    """Every body of the system at ``ua``, in the game's order, or None for a gas-giant layout.
+    """Every body of the system at ``ua``, in the game's order, or None for a giant-planet layout.
 
     Follows nms_namegen.system.planetSeeds draw for draw (nms_namegen must be
     importable), keeping the size, parent and prime flag of each body, and
@@ -236,7 +236,7 @@ def ship_seeds(ua: int, start: int) -> tuple[list[int], int]:
 def predictions(ua: int) -> list[Prediction]:
     """Every way the ships of the system at universal address ``ua`` can come out: one per
     arrangement of its two-moon planets' moons, first moon at azimuth 0 first."""
-    # nms_namegen doesn't lay out a gas giant system's bodies, but it only occurs in purple
+    # nms_namegen doesn't lay out a giant planet system's bodies, but it only occurs in purple
     # systems, whose bodies are all prime planets and moons: none has attractors.
     system = bodies(ua) or []
     planets = two_moon_planets(system)

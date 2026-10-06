@@ -79,6 +79,14 @@ export const SQUID_CHECKS = { recorded: 40, squids: 9 } as const;
 export const STAR_CHECKS = { counted: 19, several: 2 } as const;
 
 /**
+ * The giant planets the capture mod has recorded (the game flags their systems
+ * IsGiantSystem): `recorded` of them, `gas` gas giants (also IsGasGiantSystem)
+ * and `lush` lush ones. Players have found giants of other biomes too; what
+ * decides a giant's biome isn't known.
+ */
+export const GIANT_CHECKS = { recorded: 7, gas: 6, lush: 1 } as const;
+
+/**
  * How often the civilian slots held a solar ship in the systems recorded:
  * [solar, slots] for the shuttle slots outside and inside outlaw systems,
  * and for the other civilian slots inside them. Outside outlaw systems
@@ -140,6 +148,10 @@ export interface SystemDescription {
   uncharted: boolean;
   blackHole: boolean;
   atlasInterface: boolean;
+  /**
+   * One giant planet, every other body its moon: what nms_namegen calls the
+   * gas-giant layout. Most such giants are gas giants, not all (see GIANT_CHECKS).
+   */
   gasGiant: boolean;
   planetCount: number;
   moonCount: number;

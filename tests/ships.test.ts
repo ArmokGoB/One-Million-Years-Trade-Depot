@@ -53,7 +53,7 @@ describe("ship pool vectors from the Python model", () => {
       "a prime planet with moons",
       "six bodies",
       "purple star",
-      "gas giant layout",
+      "giant planet layout",
       "another galaxy, with a planet digit",
       "two planets with two moons each",
     ]);
@@ -240,8 +240,8 @@ describe("describeSystem", () => {
     expect(ships.alternatives).toHaveLength(1);
   });
 
-  it("predicts a gas giant system, whose bodies are all prime", () => {
-    const v = file.vectors.find((v) => v.what === "gas giant layout")!;
+  it("predicts a giant planet system, whose bodies are all prime", () => {
+    const v = file.vectors.find((v) => v.what === "giant planet layout")!;
     const d = describeSystem(parsePortalCode(v.code), v.galaxy);
     expect(d.gasGiant).toBe(true);
     expect(d.ships.exotic).toBe(`0x${v.ships[20]}`);
