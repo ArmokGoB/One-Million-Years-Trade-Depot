@@ -46,7 +46,7 @@ export const MEASURED_ACCURACY = {
  * did `planetNames.matched` of the `planetNames.checked` planet names the
  * game generated while they were recorded.
  */
-export const CAPTURE_CHECKS = { systems: 99, outlawSystems: 11, planetNames: { matched: 5755, checked: 5971 } } as const;
+export const CAPTURE_CHECKS = { systems: 100, outlawSystems: 11, planetNames: { matched: 5792, checked: 6010 } } as const;
 
 /**
  * How the ship prediction fares against the systems recorded in game with
@@ -58,8 +58,8 @@ export const CAPTURE_CHECKS = { systems: 99, outlawSystems: 11, planetNames: { m
  * ShipsInfo.uncertain flags, and how many the first guess got.
  */
 export const SHIP_ACCURACY = {
-  matched: 94,
-  recorded: 99,
+  matched: 95,
+  recorded: 100,
   workedOutFrom: 66,
   twoMoons: { firstGuess: 5, recorded: 10 },
 } as const;
@@ -69,14 +69,14 @@ export const SHIP_ACCURACY = {
  * mod recorded as the game built them: every one of the `recorded` exotics,
  * `squids` of them squids, on the side of the line the prediction puts it.
  */
-export const SQUID_CHECKS = { recorded: 40, squids: 9 } as const;
+export const SQUID_CHECKS = { recorded: 41, squids: 9 } as const;
 
 /**
  * How the star count fares against the game's own: the same in every one of
  * the `counted` systems whose stars the capture mod counted as the game does,
  * `several` of them with more than one star.
  */
-export const STAR_CHECKS = { counted: 19, several: 2 } as const;
+export const STAR_CHECKS = { counted: 20, several: 3 } as const;
 
 /**
  * The giant planets the capture mod has recorded (the game flags their systems
@@ -93,7 +93,7 @@ export const GIANT_CHECKS = { recorded: 7, gas: 6, lush: 1 } as const;
  * those never did.
  */
 export const SOLAR_COUNTS = {
-  shuttle: [66, 588],
+  shuttle: [67, 595],
   outlawShuttle: [66, 77],
   outlawOther: [13, 143],
 } as const;
