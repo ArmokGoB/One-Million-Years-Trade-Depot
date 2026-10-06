@@ -143,18 +143,18 @@ a:hover {
 }
 
 @media (min-width: 75rem) {
-  .page {
+  .page__columns {
     display: grid;
     grid-template-columns: minmax(20rem, 24rem) minmax(0, 1fr);
     column-gap: clamp(2.5rem, 4vw, 4.5rem);
     align-items: start;
   }
-  .colophon {
-    grid-column: 1 / -1;
-  }
 }
 
-@media (min-width: 75rem) and (min-height: 42rem) {
+/* The lookup stays in view as the result scrolls, on screens tall enough to
+ * show all of it. Its own wrapper ends where the result does, so it never
+ * slides over the footer. */
+@media (min-width: 75rem) and (min-height: 50rem) {
   .page__console {
     position: sticky;
     top: var(--page-top);

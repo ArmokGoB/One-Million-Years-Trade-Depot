@@ -17,62 +17,64 @@
   </head>
   <body>
     <div class="page">
-      <div class="page__console">
-        <header class="masthead">
-          <p class="masthead__name">
-            <img class="masthead__logo" src="/images/1MaTD Logo Transparent.svg" alt="" width="48" height="48" />
-            <span>One Million Years <span class="masthead__line">Trade Depot</span></span>
-          </p>
-          <h1 class="masthead__lede">Look up any No Man's Sky star system from its portal address.</h1>
-          <p class="masthead__sub">
-            Everything is worked out in your browser from the address alone, the same way the game generates it,
-            down to the seeds of the system's ships and whether its exotic is a squid.
-          </p>
-        </header>
+      <div class="page__columns">
+        <div class="page__console">
+          <header class="masthead">
+            <p class="masthead__name">
+              <img class="masthead__logo" src="/images/1MaTD Logo Transparent.svg" alt="" width="48" height="48" />
+              <span>One Million Years <span class="masthead__line">Trade Depot</span></span>
+            </p>
+            <h1 class="masthead__lede">Look up any No Man's Sky star system from its portal address.</h1>
+            <p class="masthead__sub">
+              Everything is worked out in your browser from the address alone, the same way the game generates it,
+              down to the seeds of the system's ships and whether its exotic is a squid.
+            </p>
+          </header>
 
-        <form class="lookup" id="lookup" role="search" novalidate>
-          <div class="lookup__field lookup__field--address">
-            <label class="lookup__label" for="address">Portal address or signal-booster coordinates</label>
-            <input
-              class="lookup__input lookup__input--address"
-              id="address"
-              name="address"
-              type="text"
-              inputmode="text"
-              autocomplete="off"
-              autocapitalize="characters"
-              spellcheck="false"
-              placeholder="009A039BAE4B"
-              aria-describedby="address-hint lookup-error"
-              required
-            />
-            <p class="lookup__hint" id="address-hint">12 hex digits, or X:Y:Z:system like 064A:0082:01B9:009A.</p>
-          </div>
-          <div class="lookup__field lookup__field--galaxy">
-            <label class="lookup__label" for="galaxy">Galaxy</label>
-            <input
-              class="lookup__input lookup__input--galaxy"
-              id="galaxy"
-              name="galaxy"
-              type="number"
-              inputmode="numeric"
-              min="0"
-              max="255"
-              step="1"
-              value="0"
-              aria-describedby="galaxy-hint lookup-error"
-              required
-            />
-            <p class="lookup__hint" id="galaxy-hint">0 is Euclid.</p>
-          </div>
-          <button class="lookup__submit" type="submit">Look up system</button>
-          <p class="lookup__error" id="lookup-error" role="alert" hidden></p>
-        </form>
+          <form class="lookup" id="lookup" role="search" novalidate>
+            <div class="lookup__field lookup__field--address">
+              <label class="lookup__label" for="address">Portal address or signal-booster coordinates</label>
+              <input
+                class="lookup__input lookup__input--address"
+                id="address"
+                name="address"
+                type="text"
+                inputmode="text"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                placeholder="009A039BAE4B"
+                aria-describedby="address-hint lookup-error"
+                required
+              />
+              <p class="lookup__hint" id="address-hint">12 hex digits, or X:Y:Z:system like 064A:0082:01B9:009A.</p>
+            </div>
+            <div class="lookup__field lookup__field--galaxy">
+              <label class="lookup__label" for="galaxy">Galaxy</label>
+              <input
+                class="lookup__input lookup__input--galaxy"
+                id="galaxy"
+                name="galaxy"
+                type="number"
+                inputmode="numeric"
+                min="0"
+                max="255"
+                step="1"
+                value="0"
+                aria-describedby="galaxy-hint lookup-error"
+                required
+              />
+              <p class="lookup__hint" id="galaxy-hint">0 is Euclid.</p>
+            </div>
+            <button class="lookup__submit" type="submit">Look up system</button>
+            <p class="lookup__error" id="lookup-error" role="alert" hidden></p>
+          </form>
+        </div>
+
+        <main class="page__result">
+          <section class="result" id="result" aria-live="polite" hidden></section>
+        </main>
       </div>
-
-      <main class="page__result">
-        <section class="result" id="result" aria-live="polite" hidden></section>
-      </main>
 
       <footer class="colophon">
         <p>
