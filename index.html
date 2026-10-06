@@ -17,18 +17,20 @@
   </head>
   <body>
     <div class="page">
-      <header class="masthead">
-        <p class="masthead__name">One Million Years Trade Depot</p>
-        <h1 class="masthead__lede">Look up any No Man's Sky star system from its portal address.</h1>
-        <p class="masthead__sub">
-          Everything is worked out in your browser from the address alone, the same way the game generates it,
-          down to the seeds of the system's ships and whether its exotic is a squid. The rest of what those
-          ships look like, and multi-tools, are next.
-        </p>
-      </header>
+      <div class="page__console">
+        <header class="masthead">
+          <p class="masthead__name">
+            <img class="masthead__logo" src="/images/1MaTD Logo Transparent.svg" alt="" width="48" height="48" />
+            <span>One Million Years <span class="masthead__line">Trade Depot</span></span>
+          </p>
+          <h1 class="masthead__lede">Look up any No Man's Sky star system from its portal address.</h1>
+          <p class="masthead__sub">
+            Everything is worked out in your browser from the address alone, the same way the game generates it,
+            down to the seeds of the system's ships and whether its exotic is a squid.
+          </p>
+        </header>
 
-      <main>
-        <form class="lookup" id="lookup" novalidate>
+        <form class="lookup" id="lookup" role="search" novalidate>
           <div class="lookup__field lookup__field--address">
             <label class="lookup__label" for="address">Portal address or signal-booster coordinates</label>
             <input
@@ -66,7 +68,9 @@
           <button class="lookup__submit" type="submit">Look up system</button>
           <p class="lookup__error" id="lookup-error" role="alert" hidden></p>
         </form>
+      </div>
 
+      <main class="page__result">
         <section class="result" id="result" aria-live="polite" hidden></section>
       </main>
 
