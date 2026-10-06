@@ -1,0 +1,77 @@
+{
+ "_source": "tools/captures/star_model.py over made-up addresses, written by tools/crosscheck/star_vectors.py.",
+ "vectors": [
+  {
+   "code": "02B377107372",
+   "galaxy": 147,
+   "nebulaSeed": "3EF6FCCA",
+   "stars": 1
+  },
+  {
+   "code": "03F7DABCB6F7",
+   "galaxy": 131,
+   "nebulaSeed": "3E732057",
+   "stars": 1
+  },
+  {
+   "code": "63FDEA1EB0EF",
+   "galaxy": 108,
+   "nebulaSeed": "3F24E4DF",
+   "stars": 1
+  },
+  {
+   "code": "02D93FC63F80",
+   "galaxy": 93,
+   "nebulaSeed": "3E844B0F",
+   "stars": 1
+  },
+  {
+   "code": "03EE5614BDA8",
+   "galaxy": 0,
+   "nebulaSeed": "3F4E7AE7",
+   "stars": 2
+  },
+  {
+   "code": "026DA91369DF",
+   "galaxy": 0,
+   "nebulaSeed": "3F5D52C1",
+   "stars": 2
+  },
+  {
+   "code": "0155C5EF7210",
+   "galaxy": 0,
+   "nebulaSeed": "3F4D04C2",
+   "stars": 2
+  },
+  {
+   "code": "5022036FA03F",
+   "galaxy": 0,
+   "nebulaSeed": "3F520A5E",
+   "stars": 2
+  },
+  {
+   "code": "02F77C39548A",
+   "galaxy": 0,
+   "nebulaSeed": "3F7B2D7D",
+   "stars": 3
+  },
+  {
+   "code": "007E4E2A9A12",
+   "galaxy": 56,
+   "nebulaSeed": "3F74A221",
+   "stars": 3
+  },
+  {
+   "code": "61977726F65A",
+   "galaxy": 0,
+   "nebulaSeed": "3F7D6C10",
+   "stars": 3
+  },
+  {
+   "code": "020941012E5B",
+   "galaxy": 184,
+   "nebulaSeed": "3F74A6A4",
+   "stars": 3
+  }
+ ]
+}

@@ -358,7 +358,7 @@ class WiringTests(CaptureTestCase):
         expected |= {"before_add_resource", "after_add_resource", "before_item_update"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 13)
+        self.assertEqual(len(self.capture._gui_widgets), 14)
 
     def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
         hook = mod.TradeDepotCapture.before_add_resource
@@ -2715,6 +2715,7 @@ class StarTests(StarHelpers, CaptureTestCase):
         record = self.lines()[1]
         self.assertEqual((record.get("starsUnknown"), record.get("gameMode")), (1, 6))
         self.assertNotIn("stars", record)
+        self.assertEqual(self.capture.stars_here, "Unknown: in game mode 6 the game can count them another way")
 
     def test_records_hold_the_stars(self):
         self.install_stars()
@@ -2728,6 +2729,16 @@ class StarTests(StarHelpers, CaptureTestCase):
         )
         self.assertIn("Recorded Shown-Name (03E9F3545C3E, galaxy 1): 3 ships", "\n".join(logs.output))
         self.assertIn("; 2 stars", "\n".join(logs.output))
+        self.assertEqual(self.capture.stars_here, "2, a binary system")
+
+    def test_the_tab_says_how_many_stars_the_last_system_has(self):
+        self.install_stars()
+        self.assertEqual(self.capture.stars_here, "None yet.")
+        self.set_nebula_seed(0.97)
+        self.poll()
+        self.poll()
+        self.assertEqual(self.lines()[1]["stars"], 3)
+        self.assertEqual(self.capture.stars_here, "3, a trinary system")
 
     def test_one_star_goes_without_saying(self):
         self.install_stars()
@@ -2737,6 +2748,7 @@ class StarTests(StarHelpers, CaptureTestCase):
             self.poll()
         self.assertEqual(self.lines()[1]["stars"], 1)
         self.assertNotIn("star", "\n".join(line for line in logs.output if "Recorded " in line))
+        self.assertEqual(self.capture.stars_here, "1")
 
     def test_values_it_cant_read_are_reported_once(self):
         self.install_stars()
@@ -2786,6 +2798,7 @@ class StarTests(StarHelpers, CaptureTestCase):
         header, record = self.lines()
         self.assertEqual(header["starCount"], "its pattern isn't in this version of the game")
         self.assertNotIn("stars", record)
+        self.assertEqual(self.capture.stars_here, "Not worked out; the log says why")
 
     def test_looking_for_it_fails(self):
         def broken():
@@ -2798,6 +2811,16 @@ class StarTests(StarHelpers, CaptureTestCase):
         self.poll()
         self.poll()
         self.assertIsNone(self.lines()[0]["starCount"])
+        self.assertEqual(self.capture.stars_here, "Not worked out; the log says why")
+
+    def test_turned_off(self):
+        self._patch("RECORD_STARS", False)
+        self.capture = mod.TradeDepotCapture()
+        self.set_nebula_seed(0.97)
+        self.poll()
+        self.poll()
+        self.assertNotIn("stars", self.lines()[1])
+        self.assertEqual(self.capture.stars_here, "Off (RECORD_STARS is False)")
 
     def test_located_only_inside_the_game_and_when_on(self):
         with mock.patch("pymhf.core.memutils.find_pattern_in_binary") as find:
@@ -3478,6 +3501,23 @@ class ShipModelTests(unittest.TestCase):
         odd = "\n".join(report.squid_lines([exotic("A", 0, "_SOMETHING_ELSE")]))
         self.assertIn("0 of 0 exotic seeds agree", odd)
         self.assertIn("first part neither _SCLASSSHIP_SQU nor _SCLASSSHIP_ROY: 1", odd)
+
+    def test_a_later_build_with_only_a_texture_leaves_an_exotics_body_known(self):
+        class Record(str):
+            def label(self) -> str:
+                return str(self)
+
+        seed = f"{self.seed_with_first_draw(4_200_000_000):016X}"
+        builds = [
+            (Record("A"), {"seed": seed, "parts": [ship_model.SQUID_PART, "TEXTURE_TEMP"]}),
+            (Record("A"), {"seed": seed, "parts": ["TEXTURE_TEMP"]}),
+        ]
+        lines = "\n".join(report.squid_lines(builds))
+        self.assertIn("1 of 1 exotic seeds agree", lines)
+        self.assertNotIn("neither", lines)
+        lines = "\n".join(report.squid_lines(builds[::-1]))
+        self.assertIn("1 of 1 exotic seeds agree", lines)
+        self.assertNotIn("neither", lines)
 
 
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")

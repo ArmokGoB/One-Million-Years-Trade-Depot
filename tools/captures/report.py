@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # mix is re-exported for the tests.
 from game_rng import MASK32, MASK64, MIX_A, MIX_B, mix, seeded_state, stream_states, unmix  # noqa: E402, F401
 import ship_model  # noqa: E402  (nms_namegen is only needed for its bodies(), which --namegen uses)
+from star_model import float32, nebula_seed, star_count  # noqa: E402, F401
 
 SUPPORTED_FORMATS = {1, 2}
 ZERO_SEED = "0" * 16
@@ -773,22 +774,6 @@ def _region_label(region: tuple[int, int]) -> str:
 NEBULA_SEED_AT = 0x2080
 
 
-def float32(value: float) -> float:
-    return struct.unpack("<f", struct.pack("<f", value))[0]
-
-
-def nebula_seed(seed: int) -> float:
-    """A system's NebulaSeed from its seed: the 9th draw of the stream the seed starts, as a fraction of
-    the largest draw, in 32-bit float. It matched every system captured with its raw data."""
-    return float32((stream_states(seed, 9)[8] & MASK32) / 4294967295.0)
-
-
-def star_count(nebula: float, binary: float, ternary: float, one: float = 1.0) -> int:
-    """How many stars the game counts for a system with this NebulaSeed, as its star count function
-    does in play (no debug options; see the mod's STAR_COUNT_CODE)."""
-    return 1 + (nebula > float32(one - ternary)) + (nebula > float32(one - binary))
-
-
 def _star_function(info: object) -> str:
     """What a session header says of the game's star count function (see the mod's StarCount)."""
     if info is None:
@@ -1097,15 +1082,18 @@ def _hex_or_none(text: object) -> int | None:
 def squid_lines(exotics: list[tuple[SystemRecord, dict]]) -> list[str]:
     """Each exotic's body, from its first part, against the squid rule in ship_model.py."""
     bodies: dict[int, tuple[str, str | None]] = {}
+    known = (ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART)
     for record, model in exotics:
         seed = _hex_or_none(model.get("seed"))
         if seed is not None:
             parts = model.get("parts") or []
-            bodies[seed] = (record.label(), parts[0] if parts else None)
+            # The game builds an exotic again later with only its texture; that build says nothing of its body.
+            if seed not in bodies or bodies[seed][1] not in known:
+                bodies[seed] = (record.label(), parts[0] if parts else None)
     checked, disagree, other = 0, [], 0
     highest_not_squid = lowest_squid = None
     for seed, (label, first) in bodies.items():
-        if first not in (ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART):
+        if first not in known:
             other += 1
             continue
         checked += 1

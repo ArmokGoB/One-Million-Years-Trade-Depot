@@ -2,10 +2,11 @@
 //
 // One call that gathers everything the site shows about a system.
 
-import { formatPortalCode, portalParts, toGalacticCoordinates, withPlanet } from "./address";
+import { formatPortalCode, portalParts, toGalacticCoordinates, universalAddress, withPlanet } from "./address";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
 import { shipPool, type ShipGroup, type SquidCall } from "./ships";
+import { starCount } from "./stars";
 import { planetSeeds, systemAttributesDetailed, systemName, type SystemAttributes } from "./system";
 import { hex64 } from "./u64";
 
@@ -45,24 +46,37 @@ export const MEASURED_ACCURACY = {
  * did `planetNames.matched` of the `planetNames.checked` planet names the
  * game generated while they were recorded.
  */
-export const CAPTURE_CHECKS = { systems: 66, outlawSystems: 9, planetNames: { matched: 2417, checked: 2497 } } as const;
+export const CAPTURE_CHECKS = { systems: 99, outlawSystems: 11, planetNames: { matched: 5755, checked: 5971 } } as const;
 
 /**
  * How the ship prediction fares against the systems recorded in game with
  * the capture mod: every ship seed and the Sentinel crash-site seed right in
  * `matched` of `recorded` with the model's first guess, and in all the rest
  * with a planet's two moons the other way round. The model was worked out
- * from these same systems. `twoMoons` counts those with a planet that has two
- * moons, which ShipsInfo.uncertain flags, and how many the first guess got.
+ * from the first `workedOutFrom` of them; the rest were recorded after.
+ * `twoMoons` counts those with a planet that has two moons, which
+ * ShipsInfo.uncertain flags, and how many the first guess got.
  */
-export const SHIP_ACCURACY = { matched: 62, recorded: 66, twoMoons: { firstGuess: 3, recorded: 7 } } as const;
+export const SHIP_ACCURACY = {
+  matched: 94,
+  recorded: 99,
+  workedOutFrom: 66,
+  twoMoons: { firstGuess: 5, recorded: 10 },
+} as const;
 
 /**
  * How the squid prediction fares against the exotics whose parts the capture
  * mod recorded as the game built them: every one of the `recorded` exotics,
  * `squids` of them squids, on the side of the line the prediction puts it.
  */
-export const SQUID_CHECKS = { recorded: 12, squids: 6 } as const;
+export const SQUID_CHECKS = { recorded: 40, squids: 9 } as const;
+
+/**
+ * How the star count fares against the game's own: the same in every one of
+ * the `counted` systems whose stars the capture mod counted as the game does,
+ * `several` of them with more than one star.
+ */
+export const STAR_CHECKS = { counted: 19, several: 2 } as const;
 
 /**
  * How often the civilian slots held a solar ship in the systems recorded:
@@ -71,9 +85,9 @@ export const SQUID_CHECKS = { recorded: 12, squids: 6 } as const;
  * those never did.
  */
 export const SOLAR_COUNTS = {
-  shuttle: [42, 375],
-  outlawShuttle: [54, 63],
-  outlawOther: [11, 117],
+  shuttle: [66, 588],
+  outlawShuttle: [66, 77],
+  outlawOther: [13, 143],
 } as const;
 
 export interface ShipInfo {
@@ -115,6 +129,8 @@ export interface SystemDescription {
   name: string;
   region: string;
   starColour: (typeof STAR_COLOURS)[number];
+  /** How many stars the system has: 1, or 2 in a binary system and 3 in a trinary one. */
+  stars: 1 | 2 | 3;
   faction: string;
   economy: string;
   wealth: string;
@@ -177,6 +193,7 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     name: systemName(systemCode, galaxy),
     region: regionName(systemCode, galaxy),
     starColour: STAR_COLOURS[a.star_type] ?? "Yellow",
+    stars: starCount(universalAddress(systemCode, galaxy)),
     faction,
     economy: a.uncharted ? "None" : ECONOMIES[a.economy_type] ?? "Unknown",
     wealth: a.uncharted ? "None" : TIERS[a.wealth] ?? "Unknown",

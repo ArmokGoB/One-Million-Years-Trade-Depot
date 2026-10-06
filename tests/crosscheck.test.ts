@@ -17,8 +17,10 @@ import {
   planetSeeds,
   regionName,
   shipPool,
+  starCount,
   systemAttributes,
   systemName,
+  universalAddress,
   voxelAttributes,
   withPlanet,
 } from "../src/core";
@@ -41,6 +43,8 @@ interface Case {
   body_names?: string[];
   /** tools/captures/ship_model.py's prediction. */
   ships?: Maybe<ShipCase>;
+  /** tools/captures/star_model.py's count. */
+  stars?: number;
 }
 interface ShipCase {
   bodies: [number, number, boolean][];
@@ -91,6 +95,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     const mismatches: string[] = [];
     let shipPools = 0;
     let squids = 0;
+    const starCounts = [0, 0, 0, 0];
     for (const line of lines) {
       const c = JSON.parse(line) as Case;
       const code = parsePortalCode(c.code);
@@ -115,10 +120,15 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
           if (c.ships.squid[0]) squids += 1;
         }
       }
+      if (c.stars !== undefined) {
+        same(c.stars, () => starCount(universalAddress(code, c.galaxy)), `${tag} stars`, mismatches);
+        starCounts[c.stars] = (starCounts[c.stars] ?? 0) + 1;
+      }
     }
     expect(lines.length).toBeGreaterThan(0);
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
     expect(squids, "cases whose exotic is a squid").toBeGreaterThan(0);
+    expect(starCounts.slice(1), "cases with one, two and three stars").not.toContain(0);
     expect(mismatches.slice(0, 20)).toEqual([]);
   }, 300_000); // 20,000 cases take seconds, mostly the ship pools
 });

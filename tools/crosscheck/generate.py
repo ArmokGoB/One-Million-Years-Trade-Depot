@@ -9,7 +9,8 @@ generator branches (guide stars, black hole, Atlas Interface, the purple
 window, the ends of the range). Each case also carries the ship pool that
 tools/captures/ship_model.py predicts, which builds on nms_namegen, with
 whether its exotic is a squid, and the start, exotic and crash-site seed of
-every other arrangement of a two-moon planet's moons.
+every other arrangement of a two-moon planet's moons; and how many stars
+tools/captures/star_model.py gives the system.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -39,6 +40,7 @@ def main() -> int:
     sys.path.insert(0, str(args.namegen.resolve()))
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "captures"))
     import ship_model  # noqa: E402
+    import star_model  # noqa: E402
     from nms_namegen.planet import planetName  # noqa: E402
     from nms_namegen.region import regionName, voxelAttributes  # noqa: E402
     from nms_namegen.system import planetSeeds, systemAttributes, systemName  # noqa: E402
@@ -100,6 +102,8 @@ def main() -> int:
             "sysattr": guarded(systemAttributes, code, galaxy),
             "voxel": guarded(voxelAttributes, code),
             "ships": guarded(ships, code, galaxy),
+            # tools/captures/star_model.py's count, from the system's universal address
+            "stars": star_model.stars((((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)),
         }
         if isinstance(seeds, dict):
             rec["seeds"] = [f"{s & 0xFFFFFFFFFFFFFFFF:016X}" for s in seeds["planet_seeds"]]

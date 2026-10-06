@@ -50,6 +50,7 @@ jobs:
           python tools/build_name_tables.py --namegen nms_namegen
           python tools/convert_golden_vectors.py --namegen nms_namegen
           python tools/crosscheck/ship_vectors.py --namegen nms_namegen
+          python tools/crosscheck/star_vectors.py
           git diff --exit-code -- src/core/data tests/fixtures
       - name: Generate 20,000 reference cases
         run: python tools/crosscheck/generate.py --namegen nms_namegen --count 20000 > crosscheck.jsonl

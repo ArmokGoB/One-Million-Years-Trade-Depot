@@ -3,7 +3,7 @@
 // The game's personal RNG: a 32-bit multiply-with-carry generator.
 // Ported from nms_namegen (MIT) prng.py; see THIRD_PARTY_NOTICES.md.
 
-import { MASK32, MASK64 } from "./u64";
+import { MASK32, MASK64, swap16 } from "./u64";
 
 export const MULTIPLIER = 0x5a76f899n;
 
@@ -36,6 +36,18 @@ export class PRNG {
     this.updateSeed();
     return this.seed & MASK64;
   }
+}
+
+/**
+ * The generator the game starts from a 64-bit seed: the seed's low word, and
+ * a carry from that word with its halves swapped, the word itself and the
+ * seed's high word (never zero).
+ */
+export function seededPRNG(seed: bigint): PRNG {
+  const low = seed & MASK32;
+  let high = (swap16(low) ^ low ^ (seed >> 32n)) & MASK32;
+  if (high === 0n) high = 1n;
+  return new PRNG((high << 32n) | low);
 }
 
 /**
