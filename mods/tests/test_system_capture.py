@@ -1036,6 +1036,17 @@ SET = [
     (MULTITOOL_MODEL, 0x5EED000000000002, ["_GUN_B"], 0x31001),
     (ROYAL_TOOL_MODEL, 0x5EED000000000003, ["_ROYAL_A"], 0x31002),
 ]
+# A system's set as the game built them in 0.10.0's captures: in a quick run just before it generated the
+# system, with one each of the royal, sentinel and Atlas files.
+SENTINEL_TOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/SENTINELMULTITOOL.SCENE.MBIN"
+ATLAS_TOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/ATLASMULTITOOL.SCENE.MBIN"
+RUN = [
+    (MULTITOOL_MODEL, 0x5EED00000000000A, ["_GUN_A"], 0x32000),
+    (ROYAL_TOOL_MODEL, 0x5EED00000000000B, ["_ROYAL_A"], 0x32001),
+    (SENTINEL_TOOL_MODEL, 0x5EED00000000000C, ["_SENTINEL_A"], 0x32002),
+    (ATLAS_TOOL_MODEL, 0x5EED00000000000D, ["_ATLAS_A"], 0x32003),
+    (MULTITOOL_MODEL, 0x5EED00000000000E, ["_GUN_B"], 0x32004),
+]
 TOOL_SEED = 0x7A11C0DE5EED0001  # a multi-tool the game offers
 OTHER_TOOL_SEED = 0x0D0D0D0D0D0D0D0D  # another it offers later
 OWN_TOOL_SEED = 0x0123456789ABCDEF  # one the player carries, or another player does
@@ -1171,6 +1182,19 @@ class ToolTests(ModelHelpers, CaptureTestCase):
     def build_set(self, tools=SET) -> None:
         for name, seed, parts, handle in tools:
             self.build(name, seed, parts, handle=handle)
+
+    def build_run(self, tools=RUN, apart: float = 0.1) -> None:
+        """The game builds ``tools`` ``apart`` seconds from each other, and the mod's clock moves on as long
+        again after the last."""
+        for name, seed, parts, handle in tools:
+            self.build(name, seed, parts, handle=handle)
+            self.now += apart
+
+    def warp(self) -> None:
+        """The session's first generation, as a save loads, and a minute in that system."""
+        with self.generation():
+            pass
+        self.now += 60.0
 
     def resource_table(self, resources: dict, one_based: bool = True):
         """A resource manager in fake memory listing ``resources``, handle -> (file, seed or None,
@@ -1624,6 +1648,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
                     }
                     for name, seed, parts, handle in SET
                 ],
+                "thread": 1,  # the thread that generated the system
             },
         )
         self.assertIn(
@@ -1641,6 +1666,107 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         for secret in (f"{OWN_TOOL_SEED:016X}", f"{OWN_TOOL_SEED + 1:016X}", "_GUN_C", "_GUN_D", "_HEAD_A"):
             self.assertNotIn(secret, recorded)
         self.assertEqual(self.capture._generating, {}, "nothing left open")
+
+    def test_the_run_built_just_before_a_system_is_generated_starts_its_set(self):
+        with self.generation():  # the session's first generation, as a save loads
+            pass
+        self.build(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"], handle=OWN_TOOL_HANDLE)  # yours, as you arrive
+        self.now += 60.0  # until you warp
+        self.build_run()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            with self.generation():
+                self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)  # and one meanwhile
+        (pool,) = self.pools()
+        self.assertEqual(
+            [(tool["name"], tool["seed"], tool["handle"]) for tool in pool["tools"]],
+            [(name, f"{seed:016X}", handle) for name, seed, _, handle in RUN]
+            + [(MULTITOOL_MODEL, f"{TOOL_SEED:016X}", TOOL_HANDLE)],
+        )
+        self.assertEqual((pool["before"], pool["lead"], pool["thread"]), (5, 0.5, 1))
+        self.assertIn(
+            "INFO:TradeDepotCapture:Recorded the 6 multi-tools of the system at 03E9F3545C3E, galaxy 1 "
+            "(MULTITOOL 3, ROYALMULTITOOL 1, SENTINELMULTITOOL 1, ATLASMULTITOOL 1).",
+            logs.output,
+        )
+        self.assertEqual(self.capture._handle_models[RUN[2][3]]["pool"], 2, "an offer of it says which")
+        # The run's got built lines as the game built them, before the mod knew a generation followed.
+        self.assertEqual(
+            [line["handle"] for line in self.built()], [OWN_TOOL_HANDLE] + [handle for *_, handle in RUN]
+        )
+        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        self.assertEqual({line["thread"] for line in self.lines() if line.get("via") == "gen"}, {1})
+        self.assertIn(
+            "  sets started by the run of multi-tools built just before the generation: 1 (5 multi-tools, "
+            "0.5 to 0.5 s before it)",
+            report.pool_lines(report.read_captures([mod.CAPTURE_FILE])),
+        )
+
+    def test_a_model_built_twice_in_the_run_is_listed_once(self):
+        self.warp()
+        self.build_run(RUN + RUN[:1])
+        with self.generation():
+            pass
+        (pool,) = self.pools()
+        self.assertEqual([tool["handle"] for tool in pool["tools"]], [handle for *_, handle in RUN])
+        # The handle now names the model built again, which is the same one.
+        self.assertEqual(self.capture._handle_models[RUN[0][3]]["pool"], 0)
+
+    def test_no_set_is_started_before_a_sessions_first_generation(self):
+        self.build_run()  # as a save loads, the game builds your multi-tool too
+        with self.generation():
+            pass
+        self.assertEqual(self.pools(), [])
+        self.assertEqual(self.capture._prelude, [], "nothing kept for the next generation")
+        self.assertNotIn(f"{RUN[0][1]:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+
+    def test_a_run_without_the_royal_sentinel_and_atlas_files_starts_no_set(self):
+        self.warp()
+        self.build_run([RUN[0], RUN[4]])
+        with self.generation():
+            pass
+        self.assertEqual(self.pools(), [])
+        self.assertNotIn(f"{RUN[0][1]:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+
+    def test_a_pause_ends_the_run(self):
+        self.warp()
+        self.build(MULTITOOL_MODEL, OWN_TOOL_SEED, ["_GUN_C"], handle=OWN_TOOL_HANDLE)
+        self.now += mod.POOL_LEAD_SECONDS + 0.1
+        self.build_run()
+        with self.generation():
+            pass
+        (pool,) = self.pools()
+        self.assertEqual([tool["handle"] for tool in pool["tools"]], [handle for *_, handle in RUN])
+        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        # A run that ends too long before the generation starts none.
+        self.game.set_address(OTHER_UA)
+        self.build_run()
+        self.now += mod.POOL_LEAD_SECONDS
+        with self.generation():
+            pass
+        self.assertEqual(len(self.pools()), 1)
+
+    def test_a_run_built_on_another_thread_starts_a_set_too(self):
+        self.warp()
+        other = threading.Thread(target=self.build_run)
+        other.start()
+        other.join()
+        with self.generation():
+            pass
+        (pool,) = self.pools()
+        self.assertEqual(len(pool["tools"]), 5)
+        self.assertEqual(
+            {line["thread"] for line in self.built()}, {2}, "numbered in the order the mod saw them"
+        )
+
+    def test_multi_tools_built_while_another_system_generates_start_no_set(self):
+        self.warp()
+        self.capture._generating[-1] = {"tools": [], "since": self.now, "elsewhere": 0}  # on another thread
+        self.build_run()
+        self.assertEqual(self.capture._generating.pop(-1)["elsewhere"], 5)
+        self.assertEqual(self.capture._prelude, [])
+        with self.generation():
+            pass
+        self.assertEqual(self.pools(), [])
 
     def test_multi_tools_another_thread_builds_while_a_system_generates_arent_its_own(self):
         # Another player's, say, which the game may build on another thread meanwhile.
@@ -1667,7 +1793,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         noted = self.pools()[1]
         self.assertEqual(
             {k: v for k, v in noted.items() if k != "at"},
-            {"t": "pool", "system": f"{OTHER_UA:016X}", "tools": [], "elsewhere": 1},
+            {"t": "pool", "system": f"{OTHER_UA:016X}", "tools": [], "elsewhere": 1, "thread": 1},
         )
         self.assertIn(
             "INFO:TradeDepotCapture:While the game generated the system at 01230EABCDEF, galaxy 1, it built 1 "
@@ -1836,7 +1962,11 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.build(creature, 0x5555555555555556, ["_HEAD_B"], handle=51)  # the same file: noted once
         self.build("TEXTURES/PLANETS/ROCK.DDS", 0x6666666666666666, [], handle=52)  # no parts: never
         self.build(FIGHTER_MODEL, OWN_SHIP_SEED, ["_COCKPIT_B"], handle=53)  # ships: never
-        place = {"system": f"{UA:016X}", "where": PLANET_ON_FOOT}
+        place = {
+            "thread": 1,
+            "system": f"{UA:016X}",
+            "where": PLANET_ON_FOOT,
+        }  # the test's thread is the first
         self.assertEqual(
             [{k: v for k, v in line.items() if k != "at"} for line in self.built()],
             [
@@ -2404,471 +2534,243 @@ class PollingTests(CaptureTestCase):
         self.assertEqual(self.sounds, ["problem"])
 
 
-# Code shaped like cGcSolarSystem::GetStarCount: the instructions STAR_COUNT_PATTERN shows, then the rest.
-STAR_FIELD = 0x2A70
-STAR_VALUE_AT = 0x100  # where the value the code reads from a fixed place is, from the code's start
-COMPARE = "0F2FD10F97C0FFC0C3"  # comiss xmm2, xmm1; seta al; inc eax; ret
-
-
-def star_code(rest: str, value_at: int = STAR_VALUE_AT, field: int = STAR_FIELD) -> bytes:
-    """movss xmm1, [rip + to ``value_at``]; xor eax, eax; movss xmm2, [rcx + ``field``]; then ``rest``."""
-    return (
-        bytes.fromhex("F30F100D")
-        + (value_at - 8).to_bytes(4, "little", signed=True)
-        + bytes.fromhex("33C0F30F1091")
-        + field.to_bytes(4, "little", signed=True)
-        + bytes.fromhex(rest)
-    )
-
-
-# Every instruction read_leaf knows, as GNU as encodes them, with registers and memory a function the
-# mod calls may use; objdump agreed on where each ends.
-KNOWN_INSTRUCTIONS = [
-    ("F30F100D34120000", "movss xmm1, [rip+0x1234]"),
-    ("31C0", "xor eax, eax"),
-    ("F30F1091702A0000", "movss xmm2, [rcx+0x2a70]"),
-    ("0F2FD1", "comiss xmm2, xmm1"),
-    ("0F97C0", "seta al"),
-    ("FFC0", "inc eax"),
-    ("F20F104110", "movsd xmm0, [rcx+0x10]"),
-    ("0F105920", "movups xmm3, [rcx+0x20]"),
-    ("0F286130", "movaps xmm4, [rcx+0x30]"),
-    ("660F106940", "movupd xmm5, [rcx+0x40]"),
-    ("660F28C5", "movapd xmm0, xmm5"),
-    ("F30F10CA", "movss xmm1, xmm2"),
-    ("0F14CA", "unpcklps xmm1, xmm2"),
-    ("0F154950", "unpckhps xmm1, [rcx+0x50]"),
-    ("0F54C1", "andps xmm0, xmm1"),
-    ("0F550540000000", "andnps xmm0, [rip+0x40]"),
-    ("0F56C1", "orps xmm0, xmm1"),
-    ("0F57C0", "xorps xmm0, xmm0"),
-    ("660F57C9", "xorpd xmm1, xmm1"),
-    ("0FC6C11B", "shufps xmm0, xmm1, 0x1b"),
-    ("F30F2AC0", "cvtsi2ss xmm0, eax"),
-    ("F3480F2AC0", "cvtsi2ss xmm0, rax"),
-    ("F20F2A4908", "cvtsi2sd xmm1, [rcx+0x8]"),
-    ("F30F2CC0", "cvttss2si eax, xmm0"),
-    ("F3480F2C4160", "cvttss2si rax, [rcx+0x60]"),
-    ("F30F2DD1", "cvtss2si edx, xmm1"),
-    ("F24C0F2CC2", "cvttsd2si r8, xmm2"),
-    ("0F2E4170", "ucomiss xmm0, [rcx+0x70]"),
-    ("660F2F0D88000000", "comisd xmm1, [rip+0x88]"),
-    ("660F2ECA", "ucomisd xmm1, xmm2"),
-    ("0F47C2", "cmova eax, edx"),
-    ("480F428180000000", "cmovb rax, [rcx+0x80]"),
-    ("440F450D00010000", "cmovne r9d, [rip+0x100]"),
-    ("F30F51C1", "sqrtss xmm0, xmm1"),
-    ("F30F588190000000", "addss xmm0, [rcx+0x90]"),
-    ("F30F59C1", "mulss xmm0, xmm1"),
-    ("F30F5AC1", "cvtss2sd xmm0, xmm1"),
-    ("F20F5A91A0000000", "cvtsd2ss xmm2, [rcx+0xa0]"),
-    ("F30F5CC1", "subss xmm0, xmm1"),
-    ("F30F5DC1", "minss xmm0, xmm1"),
-    ("F30F5EC1", "divss xmm0, xmm1"),
-    ("F30F5FC1", "maxss xmm0, xmm1"),
-    ("0F5881B0000000", "addps xmm0, [rcx+0xb0]"),
-    ("F30FC2C101", "cmpltss xmm0, xmm1"),
-    ("0FC281C000000001", "cmpltps xmm0, [rcx+0xc0]"),
-    ("660F6EC0", "movd xmm0, eax"),
-    ("66480F6ECA", "movq xmm1, rdx"),
-    ("660F6E91D0000000", "movd xmm2, [rcx+0xd0]"),
-    ("660F7EC0", "movd eax, xmm0"),
-    ("66480F7ECA", "movq rdx, xmm1"),
-    ("F30F7E99E0000000", "movq xmm3, [rcx+0xe0]"),
-    ("660F6F81F0000000", "movdqa xmm0, [rcx+0xf0]"),
-    ("F30F6F0D00020000", "movdqu xmm1, [rip+0x200]"),
-    ("660FEFC0", "pxor xmm0, xmm0"),
-    ("0FAFC2", "imul eax, edx"),
-    ("0FAF8100010000", "imul eax, [rcx+0x100]"),
-    ("0FB68110010000", "movzx eax, byte [rcx+0x110]"),
-    ("0FB79112010000", "movzx edx, word [rcx+0x112]"),
-    ("0FBE8114010000", "movsx eax, byte [rcx+0x114]"),
-    ("440FBF8116010000", "movsx r8d, word [rcx+0x116]"),
-    ("0FB6C0", "movzx eax, al"),
-    ("0F92C2", "setb dl"),
-    ("410F94C0", "sete r8b"),
-    ("0F95C4", "setne ah"),
-    ("0F1F00", "nop [rax]"),
-    ("660F1F0400", "nop word [rax+rax*1]"),
-    ("90", "nop"),
-    ("01D0", "add eax, edx"),
-    ("038120010000", "add eax, [rcx+0x120]"),
-    ("0405", "add al, 0x5"),
-    ("0545230100", "add eax, 0x12345"),
-    ("66053412", "add ax, 0x1234"),
-    ("09C2", "or edx, eax"),
-    ("11D0", "adc eax, edx"),
-    ("19C0", "sbb eax, eax"),
-    ("83E001", "and eax, 0x1"),
-    ("2B0500030000", "sub eax, [rip+0x300]"),
-    ("31D2", "xor edx, edx"),
-    ("4D31C0", "xor r8, r8"),
-    ("39D0", "cmp eax, edx"),
-    ("398130010000", "cmp [rcx+0x130], eax"),
-    ("3B8134010000", "cmp eax, [rcx+0x134]"),
-    ("3C03", "cmp al, 0x3"),
-    ("3D00010000", "cmp eax, 0x100"),
-    ("80B93801000002", "cmp byte [rcx+0x138], 0x2"),
-    ("81B93C01000000100000", "cmp [rcx+0x13c], 0x1000"),
-    ("48833D0004000001", "cmp [rip+0x400], 0x1"),
-    ("83B94001000007", "cmp [rcx+0x140], 0x7"),
-    ("48638144010000", "movsxd rax, [rcx+0x144]"),
-    ("69C200010000", "imul eax, edx, 0x100"),
-    ("6B814801000003", "imul eax, [rcx+0x148], 0x3"),
-    ("05FFFFFF7F", "add eax, 0x7fffffff"),
-    ("83EA01", "sub edx, 0x1"),
-    ("4981E1FFFF0000", "and r9, 0xffff"),
-    ("85C0", "test eax, eax"),
-    ("84814C010000", "test byte [rcx+0x14c], al"),
-    ("858150010000", "test [rcx+0x150], eax"),
-    ("A801", "test al, 0x1"),
-    ("A900000100", "test eax, 0x10000"),
-    ("F6815401000004", "test byte [rcx+0x154], 0x4"),
-    ("F7815801000000010000", "test [rcx+0x158], 0x100"),
-    ("89D0", "mov eax, edx"),
-    ("88D0", "mov al, dl"),
-    ("8B815C010000", "mov eax, [rcx+0x15c]"),
-    ("488B8160010000", "mov rax, [rcx+0x160]"),
-    ("8A9168010000", "mov dl, byte [rcx+0x168]"),
-    ("4C8B1500050000", "mov r10, [rip+0x500]"),
-    ("8D4201", "lea eax, [rdx+0x1]"),
-    ("488D0500060000", "lea rax, [rip+0x600]"),
-    ("4C8D5C9110", "lea r11, [rcx+rdx*4+0x10]"),
-    ("8D049510000000", "lea eax, [rdx*4+0x10]"),
-    ("488D845100010000", "lea rax, [rcx+rdx*2+0x100]"),
-    ("4F8D44EC7F", "lea r8, [r12+r13*8+0x7f]"),
-    ("4898", "cdqe"),
-    ("4899", "cqo"),
-    ("99", "cdq"),
-    ("B803000000", "mov eax, 0x3"),
-    ("B001", "mov al, 0x1"),
-    ("41B802000000", "mov r8d, 0x2"),
-    ("48B8F0DEBC9A78563412", "movabs rax, 0x123456789abcdef0"),
-    ("66B83412", "mov ax, 0x1234"),
-    ("C1E002", "shl eax, 0x2"),
-    ("D1EA", "shr edx, 1"),
-    ("41D3F8", "sar r8d, cl"),
-    ("D0C0", "rol al, 1"),
-    ("D3E0", "shl eax, cl"),
-    ("89C0", "mov eax, eax"),
-    ("F7D0", "not eax"),
-    ("F7DA", "neg edx"),
-    ("FEC2", "inc dl"),
-    ("49FFC9", "dec r9"),
-    ("FFC8", "dec eax"),
-    ("41BB07000000", "mov r11d, 0x7"),
-    ("C3", "ret"),
-]
-# Leaf functions as gcc compiles them for the Windows calling convention, from a struct with floats at
-# 0x2A70 and 0x2A74 and globals (their displacements left 0): (code, fields it reads, values it reads).
-COMPILED = {
-    "two thresholds": (
-        "F30F1081702A00000F2F0500000000B803000000770F31C00F2F05000000000F97C083C001C3",
-        [(0x2A70, 4)],
-        [(8, 15, 4), (24, 31, 4)],
-    ),
-    "two fields": (
-        "F30F10050000000031C00F2F81702A0000F30F1005000000000F97C083C0010F2F81742A0000760383C001C3",
-        [(0x2A70, 4), (0x2A74, 4)],
-        [(0, 8, 4), (17, 25, 4)],
-    ),
-    "a branch over padding": (
-        "F30F1081702A00000F2F0500000000721FF30F1081742A000031C00F2F05000000000F93C04883C002C3"
-        "660F1F440000B801000000C3",
-        [(0x2A70, 4), (0x2A74, 4)],
-        [(8, 15, 4), (27, 34, 4)],
-    ),
+# The game's star count function, built from STAR_COUNT_CODE, with the values it reads at made-up places
+# after it, as far apart as NMS.py puts them in the game's globals (offsets from the code's start).
+SKY, DEBUG, APPLICATION = nmse.cGcSkyGlobals, nmse.cGcDebugOptions, nms.cGcApplication
+STAR_PLACES = {
+    "one": 0x200,
+    "binary": 0x300,
+    "ternary": 0x300 + SKY.TernaryStarChance.offset - SKY.BinaryStarChance.offset,
+    "forceBinary": 0x2000,
+    "forceTernary": 0x2000 + DEBUG.ForceTernaryStar.offset - DEBUG.ForceBinaryStar.offset,
+    "bootMode": 0x2000 + DEBUG.BootMode.offset - DEBUG.ForceBinaryStar.offset,
+    "data": 0x3000,
+    "gameMode": 0x3000 + APPLICATION.meGameMode.offset - APPLICATION.mpData.offset,
 }
-WRITES_KEPT = "a write to a register the function must put back at 0x0"
-READS_ELSEWHERE = "a read of memory other than the object's at 0x0"
-# Code the mod mustn't call, with why not.
-REFUSED = {
-    "E800000000C3": "instruction E8 at 0x0",  # call
-    "FF10C3": "instruction FF /2 at 0x0",  # call [rax]
-    "FF31C3": "instruction FF /6 at 0x0",  # push [rcx]
-    "535BC3": "instruction 53 at 0x0",  # push rbx; pop rbx
-    "C20800": "instruction C2 at 0x0",  # ret 8
-    "894110C3": "a write to memory at 0x0",  # mov [rcx + 0x10], eax
-    "890510000000C3": "a write to memory at 0x0",  # mov [rip + 0x10], eax
-    "0F29742410C3": "a write to memory at 0x0",  # movaps [rsp + 0x10], xmm6
-    "0F9401C3": "a write to memory at 0x0",  # sete [rcx]
-    "660F7E01C3": "a write to memory at 0x0",  # movd [rcx], xmm0
-    "BB01000000C3": WRITES_KEPT,  # mov ebx, 1
-    "31C9C3": WRITES_KEPT,  # xor ecx, ecx: rcx keeps the object's address
-    "B701C3": WRITES_KEPT,  # mov bh, 1
-    "0F92C5C3": WRITES_KEPT,  # setb ch
-    "40B601C3": WRITES_KEPT,  # mov sil, 1
-    "4D31E4C3": WRITES_KEPT,  # xor r12, r12
-    "F30F10F0C3": WRITES_KEPT,  # movss xmm6, xmm0
-    "F3440F10C0C3": WRITES_KEPT,  # movss xmm8, xmm0
-    "4883EC284883C428C3": WRITES_KEPT,  # sub rsp, 0x28; add rsp, 0x28
-    "488D5910C3": WRITES_KEPT,  # lea rbx, [rcx + 0x10]
-    "0F45D8C3": WRITES_KEPT,  # cmovne ebx, eax
-    "8B4204C3": READS_ELSEWHERE,  # mov eax, [rdx + 4]
-    "8B0491C3": READS_ELSEWHERE,  # mov eax, [rcx + rdx * 4]
-    "418B4110C3": READS_ELSEWHERE,  # mov eax, [r9 + 0x10]
-    "8B042500100000C3": READS_ELSEWHERE,  # mov eax, [0x1000]
-    "428B0421C3": READS_ELSEWHERE,  # mov eax, [rcx + r12]
-    "8B41F8C3": "a read outside the object at 0x0",  # mov eax, [rcx - 8]
-    "83C00175FBC3": "a jump back at 0x3",  # a loop
-    "EB01B8C3000000C3": "a jump into the middle of an instruction",
-    "7502C3CCC3": "instruction CC at 0x3",  # a jump past int3 padding
-    "7510C3": "it doesn't end within the 3 bytes read",  # a jump past the bytes read
-    "B801000000BA02000000": "it doesn't end within the 10 bytes read",  # no ret
-    "CCC3": "instruction CC at 0x0",  # int3
-    "0F0BC3": "instruction 0F 0B at 0x0",  # ud2
-    "0F05C3": "instruction 0F 05 at 0x0",  # syscall
-    "F00101C3": "instruction F0 at 0x0",  # lock add [rcx], eax
-    "65488B042530000000C3": "instruction 65 at 0x0",  # mov rax, gs:[0x30]
-    "F3A4C3": "instruction A4 after F2 or F3 at 0x0",  # rep movsb
-    "F20F6EC0C3": "instruction 0F 6E after F2 or F3 at 0x0",  # no such instruction
-    "F2660F6EC0C3": "instruction 0F 6E after F2 or F3 at 0x0",  # F2 picks the instruction, not 66
-    "4190C3": "instruction 90 at 0x0",  # xchg r8d, eax
-    "FDC3": "instruction FD at 0x0",  # std
-    "F7F1C3": "instruction F7 /6 at 0x0",  # div ecx
-    "92C3": "instruction 92 at 0x0",  # xchg eax, edx
-    "C5FA104110C3": "instruction C5 at 0x0",  # vmovss xmm0, [rcx + 0x10]
-    "D901C3": "instruction D9 at 0x0",  # fld [rcx]
-    "666690C3": "a repeated prefix at 0x0",
-    "F2F390C3": "both F2 and F3 at 0x0",
-}
+NEBULA_SEED = (
+    mod.LAYOUT.data + nmse.cGcSolarSystemData.Sky.offset + nmse.cGcSpaceSkyProperties.NebulaSeed.offset
+)
+STAR_SETTING = 0x40  # where the setting is in the application's data
+STAR_JUMPS = {"three": 0x9C, "count": 0x9E}
+STAR_OFFSET = 0x16459B0  # where the function is in the game, as found by its pattern
+
+
+def star_function(places=STAR_PLACES, nebula=NEBULA_SEED, setting=STAR_SETTING, jumps=STAR_JUMPS) -> bytes:
+    """Code shaped like STAR_COUNT_CODE that reads ``places``, the solar system's ``nebula`` and the
+    application data's ``setting``, and jumps to ``jumps``."""
+    code = bytearray()
+    for text, _ in mod.STAR_COUNT_CODE:
+        tokens = text.split()
+        end = len(code) + sum(4 if token[0] in "<[" else 1 for token in tokens)
+        for token in tokens:
+            name = token.strip("<>[]~")
+            if token[0] == "<":
+                code += (places[name] - end).to_bytes(4, "little", signed=True)
+            elif token[0] == "[":
+                code += {"nebula": nebula, "setting": setting}[name].to_bytes(4, "little", signed=True)
+            elif token[0] == "~":
+                code += (jumps[name] - end).to_bytes(1, "little", signed=True)
+            else:
+                code.append(int(token, 16))
+    return bytes(code)
+
+
+def next_float32(value: float) -> float:
+    """The 32-bit float just above ``value`` (a positive 32-bit float)."""
+    return struct.unpack("<f", (struct.unpack("<I", struct.pack("<f", value))[0] + 1).to_bytes(4, "little"))[
+        0
+    ]
 
 
 class StarCodeTests(unittest.TestCase):
-    """read_leaf: which code the mod may call, and what it reads."""
+    """read_star_shape and star_shape_problem: whether the game's code is what the mod knows."""
 
-    SIZE = ctypes.sizeof(nms.cGcSolarSystem)
+    def test_the_shape_names_what_the_function_reads(self):
+        found = mod.read_star_shape(star_function() + bytes(0x81))
+        self.assertEqual(found, dict(STAR_PLACES, nebula=NEBULA_SEED, setting=STAR_SETTING, **STAR_JUMPS))
+        self.assertIsNone(mod.star_shape_problem(found))
 
-    def test_every_known_instruction_decodes_whole(self):
-        for code, text in KNOWN_INSTRUCTIONS:
-            with self.subTest(text):
-                code = bytes.fromhex(code)
-                end, flow, target, _ = mod.decode(code + b"\xcc" * 16, 0, self.SIZE)
-                self.assertEqual(end, len(code))
-                self.assertEqual(flow, "ret" if text == "ret" else "next")
-                self.assertIsNone(target)
-        whole = b"".join(bytes.fromhex(code) for code, _ in KNOWN_INSTRUCTIONS)
-        leaf = mod.read_leaf(whole, self.SIZE)
-        self.assertEqual(leaf.length, len(whole))
+    def test_code_that_differs_or_ends_too_soon(self):
+        code = bytearray(star_function())
+        code[0x12] ^= 1  # mov edx, eax
+        self.assertEqual(mod.read_star_shape(bytes(code)), "its code differs at 0x12")
+        self.assertEqual(mod.read_star_shape(star_function()[:0x40]), "its code ends before 0x3f")
 
-    def test_reads_of_the_object_and_of_fixed_places(self):
-        for code, text in KNOWN_INSTRUCTIONS:
-            *_, read = mod.decode(bytes.fromhex(code), 0, self.SIZE)
-            if "rip" in text and not text.startswith("lea"):
-                displacement = int(text.split("rip+")[1].split("]")[0], 16)
-                self.assertEqual(read[:2], ("value", len(bytes.fromhex(code)) + displacement), text)
-            elif "[rcx" in text and not text.startswith(("lea", "nop")):
-                self.assertEqual(read[:2], ("field", int(text.split("rcx+")[1].split("]")[0], 16)), text)
-            else:
-                self.assertIsNone(read, text)
+    def test_the_count_is_returned_from_one_place(self):
+        code = bytearray(star_function())
+        code[0x7E] += 2  # the last je to return the count goes elsewhere
+        self.assertEqual(mod.read_star_shape(bytes(code)), "its jumps differ at 0x7d")
+        found = mod.read_star_shape(star_function(jumps={"three": 0x9E, "count": 0x9E}))
+        self.assertEqual(mod.star_shape_problem(found), "its jumps don't go where the count's shape says")
 
-    def test_code_shaped_like_the_star_count(self):
-        leaf = mod.read_leaf(star_code(COMPARE) + b"\xcc" * 16 + b"\xe8\x00", self.SIZE)
-        self.assertEqual(leaf.length, 27, "up to its ret, not the padding after it")
-        self.assertEqual(leaf.fields, [(STAR_FIELD, 4)])
-        self.assertEqual(leaf.values, [(0, STAR_VALUE_AT, 4)])
-
-    def test_a_field_read_twice_is_listed_once(self):
-        leaf = mod.read_leaf(star_code("F30F1081702A0000" + COMPARE), self.SIZE)  # movss xmm0, [rcx + 0x2A70]
-        self.assertEqual(leaf.fields, [(STAR_FIELD, 4)])
-
-    def test_forward_branches(self):
-        for rest, length in (
-            ("0F2FD17606B802000000C3B801000000C3", 35),  # jbe over a ret to another
-            ("0F2FD17607B802000000EB05B801000000C3", 36),  # jmp to a shared ret
-            ("0F2FD10F8606000000B802000000C3B801000000C3", 39),  # a jbe with 32 bits to go
-        ):
-            with self.subTest(rest):
-                self.assertEqual(mod.read_leaf(star_code(rest), self.SIZE).length, length)
-
-    def test_compiled_functions(self):
-        for name, (code, fields, values) in COMPILED.items():
+    def test_what_it_reads_must_be_where_nms_py_puts_it(self):
+        moved = {
+            "ternary": "the chances it reads aren't where NMS.py puts the sky globals' star chances",
+            "bootMode": "the debug options it reads aren't where NMS.py puts them",
+            "forceTernary": "the debug options it reads aren't where NMS.py puts them",
+            "gameMode": "the game mode it reads isn't where NMS.py puts the application's",
+        }
+        for name, why in moved.items():
             with self.subTest(name):
-                leaf = mod.read_leaf(bytes.fromhex(code) + b"\xcc" * 8, self.SIZE)
-                self.assertEqual(leaf.length, len(bytes.fromhex(code)))
-                self.assertEqual((leaf.fields, leaf.values), (fields, values))
-
-    def test_refused(self):
-        for code, why in REFUSED.items():
-            with self.subTest(code):
-                self.assertEqual(mod.read_leaf(bytes.fromhex(code), self.SIZE), why)
-
-    def test_refused_after_the_patterns_instructions(self):
-        self.assertEqual(mod.read_leaf(star_code("E800000000C3"), self.SIZE), "instruction E8 at 0x12")
-
-    def test_reads_stay_inside_the_object(self):
-        self.assertIsInstance(mod.read_leaf(bytes.fromhex("8B81FC000000C3"), 0x100), mod.Leaf)
+                places = dict(STAR_PLACES, **{name: STAR_PLACES[name] + 4})
+                self.assertEqual(mod.star_shape_problem(mod.read_star_shape(star_function(places))), why)
+        found = mod.read_star_shape(star_function(nebula=NEBULA_SEED + 4))
         self.assertEqual(
-            mod.read_leaf(bytes.fromhex("8B81FD000000C3"), 0x100), "a read outside the object at 0x0"
+            mod.star_shape_problem(found),
+            f"it reads the solar system at +{NEBULA_SEED + 4:X}, not at its NebulaSeed (+{NEBULA_SEED:X})",
         )
-
-    def test_registers_a_function_may_change(self):
-        # xor eax, eax; xor edx, edx; xor r8, r8; xor r11, r11; mov ah, 1; mov al, dh; setne r9b;
-        # xorps xmm0, xmm0; xorps xmm5, xmm5; ret
-        code = bytes.fromhex("31C031D24D31C04D31DBB40188F0410F95C10F57C00F57EDC3")
-        self.assertIsInstance(mod.read_leaf(code, self.SIZE), mod.Leaf)
 
 
 class StarHelpers:
-    def install_stars(self, code: bytes, count=2, value: float = 0.5, offset: int = 0x1234):
-        """The game's star count function, as the mod finds it: ``code`` with ``value`` STAR_VALUE_AT
-        bytes in; calling it returns ``count``, or raises it if it's an exception. A new mod instance
-        finds it; returns the StarCount and the systems it was called with."""
-        buffer = (ctypes.c_ubyte * 0x200)()
-        buffer[: len(code)] = code
-        ctypes.c_float.from_buffer(buffer, STAR_VALUE_AT).value = value
-        address = self.game.memory.keep(buffer)
-        stars = mod.StarCount(address, offset, bytes(buffer[: mod.STAR_CODE_BYTES]))
-        calls = []
-
-        def function(system):
-            calls.append(system)
-            if isinstance(count, Exception):
-                raise count
-            return count
-
-        stars._function = function
+    def install_stars(self, code=None, **values):
+        """The game's star count function, as a new mod instance finds it: ``code`` (by default shaped
+        like STAR_COUNT_CODE) at the start of a buffer, with the values it reads after it, and the
+        application data it reads the setting from; ``values`` sets them (see set_star_values)."""
+        self.star_buffer = (ctypes.c_ubyte * 0x4000)()
+        code = star_function() if code is None else code
+        self.star_buffer[: len(code)] = code
+        address = self.game.memory.keep(self.star_buffer)
+        self.star_data = (ctypes.c_ubyte * 0x100)()
+        ctypes.c_uint64.from_buffer(self.star_buffer, STAR_PLACES["data"]).value = self.game.memory.keep(
+            self.star_data
+        )
+        self.set_star_values(
+            **dict({"one": 1.0, "binary": 0.2, "ternary": 0.05, "bootMode": 1, "gameMode": 1}, **values)
+        )
+        stars = mod.StarCount(address, STAR_OFFSET, bytes(self.star_buffer[: mod.STAR_CODE_BYTES]))
         self._patch("locate_star_count", lambda: stars)
         self.capture = mod.TradeDepotCapture()
-        return stars, calls
+        return stars
 
-    def set_star_value(self, value: float) -> None:
-        ctypes.c_float.from_address(self.game.address + STAR_FIELD).value = value
+    def set_star_values(self, setting=None, **values) -> None:
+        for name, value in values.items():
+            kind, _ = mod.STAR_VALUES[name]
+            struct.pack_into(kind, self.star_buffer, STAR_PLACES[name], value)
+        if setting is not None:
+            self.star_data[STAR_SETTING] = setting
+
+    def set_nebula_seed(self, value: float) -> None:
+        ctypes.c_float.from_address(self.game.address + NEBULA_SEED).value = value
 
 
 class StarTests(StarHelpers, CaptureTestCase):
-    def test_header_says_where_the_function_is_and_what_it_reads(self):
-        code = star_code(COMPARE)
-        self.install_stars(code)
+    def test_the_header_holds_the_functions_code_and_the_values_it_reads(self):
+        self.install_stars()
         self.poll()
         self.poll()
-        info = self.lines()[0]["starCount"]
         self.assertEqual(
-            info,
+            self.lines()[0]["starCount"],
             {
-                "offset": "1234",
-                "code": (code + bytes(mod.STAR_CODE_BYTES - len(code))).hex().upper(),
-                "field": STAR_FIELD,
-                "length": len(code),
-                "values": [[0, STAR_VALUE_AT, "0000003F"]],  # 0.5
-                "window": [
-                    STAR_FIELD - mod.STAR_FIELD_BEFORE,
-                    mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER,
-                ],
-                "callable": 1,
+                "offset": f"{STAR_OFFSET:X}",
+                "code": bytes(self.star_buffer[: mod.STAR_CODE_BYTES]).hex().upper(),
+                "shape": 1,
+                "one": 1.0,
+                "binary": mod.float32(0.2),
+                "ternary": mod.float32(0.05),
+                "forceBinary": 0,
+                "forceTernary": 0,
+                "bootMode": 1,
+                "gameMode": 1,
+                "setting": 0,
             },
         )
 
-    def test_polled_record_holds_the_count_and_the_bytes_around_what_it_compares(self):
-        _, calls = self.install_stars(star_code(COMPARE))
-        self.set_star_value(0.75)
+    def test_stars_are_worked_out_as_the_game_would(self):
+        stars = self.install_stars()
+        binary = mod.float32(1.0 - mod.float32(0.2))  # what the function compares NebulaSeed with
+        ternary = mod.float32(1.0 - mod.float32(0.05))
+        for nebula, count in (
+            (0.5, 1), (binary, 1), (next_float32(binary), 2), (0.9, 2), (ternary, 2), (next_float32(ternary), 3),
+            (math.nan, 1),
+        ):  # fmt: skip
+            with self.subTest(nebula=nebula):
+                self.set_nebula_seed(nebula)
+                self.assertEqual(stars.count(self.game.address), count)
+
+    def test_debug_options_force_two_or_three(self):
+        stars = self.install_stars(forceBinary=1)
+        self.set_nebula_seed(0.99)
+        self.assertEqual(stars.count(self.game.address), 2)
+        self.set_star_values(forceBinary=0, forceTernary=1)
+        self.set_nebula_seed(0.1)
+        self.assertEqual(stars.count(self.game.address), 3)
+
+    def test_the_way_the_mod_doesnt_follow(self):
+        stars = self.install_stars()
+        self.set_nebula_seed(0.9)
+        for values, count in (
+            ({"gameMode": 0, "setting": 1}, None),  # Unspecified, with the setting on
+            ({"gameMode": 6, "setting": 1}, None),  # Seasonal
+            ({"gameMode": 0, "setting": 0}, 2),
+            ({"gameMode": 1, "setting": 1}, 2),  # Normal
+            ({"gameMode": 6, "setting": 1, "bootMode": mod.SCRATCHPAD_BOOT}, 2),
+            ({"gameMode": 6, "setting": 1, "bootMode": 1, "forceTernary": 1}, 3),
+        ):
+            with self.subTest(values):
+                self.set_star_values(**values)
+                self.assertEqual(stars.count(self.game.address), count)
+        self.set_star_values(forceTernary=0)
+        self.poll()
+        self.poll()
+        record = self.lines()[1]
+        self.assertEqual((record.get("starsUnknown"), record.get("gameMode")), (1, 6))
+        self.assertNotIn("stars", record)
+
+    def test_records_hold_the_stars(self):
+        self.install_stars()
+        self.set_nebula_seed(0.9)
+        self.game.generate(self.capture)
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.poll()
             self.poll()
-        record = self.lines()[1]
-        self.assertEqual(record["stars"], 2)
-        raw = bytes.fromhex(record["starField"])
-        self.assertEqual(len(raw), mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER)
-        self.assertEqual(struct.unpack_from("<f", raw, mod.STAR_FIELD_BEFORE)[0], 0.75)
-        self.assertEqual(calls, [self.game.address], "called once, on the loaded system")
+        self.assertEqual(
+            [(line["via"], line["stars"]) for line in self.lines()[1:]], [("gen", 2), ("poll", 2)]
+        )
         self.assertIn("Recorded Shown-Name (03E9F3545C3E, galaxy 1): 3 ships", "\n".join(logs.output))
         self.assertIn("; 2 stars", "\n".join(logs.output))
 
     def test_one_star_goes_without_saying(self):
-        self.install_stars(star_code(COMPARE), count=1)
+        self.install_stars()
+        self.set_nebula_seed(0.5)
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.poll()
             self.poll()
         self.assertEqual(self.lines()[1]["stars"], 1)
         self.assertNotIn("star", "\n".join(line for line in logs.output if "Recorded " in line))
 
-    def test_the_game_isnt_called_while_it_generates_a_system(self):
-        _, calls = self.install_stars(star_code(COMPARE))
-        self.game.generate(self.capture)
-        record = self.lines()[1]
-        self.assertEqual(record["via"], "gen")
-        self.assertNotIn("stars", record)
-        self.assertIn("starField", record)
-        self.assertEqual(calls, [])
-
-    def test_a_failed_call_is_reported_once_and_not_made_again(self):
-        stars, calls = self.install_stars(star_code(COMPARE), count=OSError("exception: access violation"))
+    def test_values_it_cant_read_are_reported_once(self):
+        self.install_stars()
+        ctypes.c_uint64.from_buffer(self.star_buffer, STAR_PLACES["data"]).value = 0
         with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
             self.poll()
             self.poll()
             self.capture.record_now()
             self.capture.on_frame()
         self.assertNotIn("stars", self.lines()[1])
-        self.assertIn("starField", self.lines()[1])
-        self.assertEqual(sum("Couldn't count a system's stars" in line for line in logs.output), 1)
-        self.assertEqual(len(calls), 1)
-        self.assertFalse(stars.callable)
-
-    def test_an_unlikely_count_stops_the_calls(self):
-        stars, calls = self.install_stars(star_code(COMPARE), count=1234)
-        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
-            self.poll()
-            self.poll()
-        self.assertNotIn("stars", self.lines()[1])
-        self.assertIn("said a system has 1234 stars", "\n".join(logs.output))
-        self.assertFalse(stars.callable)
-
-    def test_no_call_while_what_it_reads_cant_be_read(self):
-        stars, calls = self.install_stars(star_code(COMPARE))
-        unreadable = self.game.address + STAR_FIELD
-        read = self.game.memory.read
-        self._patch(
-            "read_memory", lambda address, size: None if address == unreadable else read(address, size)
+        self.assertEqual(
+            sum(
+                "Couldn't work out a system's stars: the values the game counts" in line
+                for line in logs.output
+            ),
+            1,
         )
-        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
-            self.poll()
-            self.poll()
-        self.assertNotIn("stars", self.lines()[1])
-        self.assertIn("the solar system's values it reads couldn't be read", "\n".join(logs.output))
-        self.assertEqual(calls, [])
-        self.assertTrue(stars.callable, "it may be readable next time")
+        self.assertEqual(set(self.lines()[0]["starCount"]), {"offset", "code", "shape"})
 
-    def test_code_the_mod_wont_call(self):
-        code = star_code("E800000000C3")
+    def test_code_the_mod_doesnt_know(self):
+        code = bytearray(star_function())
+        code[0x12] ^= 1
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            stars, calls = self.install_stars(code)
-        self.assertIn("the mod won't call it (instruction E8 at 0x12)", "\n".join(logs.output))
+            self.install_stars(code=bytes(code))
+        self.assertIn("isn't what the mod knows (its code differs at 0x12)", "\n".join(logs.output))
+        self.set_nebula_seed(0.9)
         self.poll()
         self.poll()
         header, record = self.lines()
-        self.assertEqual(header["starCount"]["callable"], 0)
-        self.assertEqual(header["starCount"]["why"], "instruction E8 at 0x12")
-        self.assertNotIn("length", header["starCount"])
-        self.assertEqual(header["starCount"]["values"], [[0, STAR_VALUE_AT, "0000003F"]], "the pattern's")
-        self.assertNotIn("stars", record)
-        self.assertIn("starField", record)
-        self.assertEqual(calls, [])
-
-    def test_a_value_it_reads_must_be_readable(self):
-        stars, _ = self.install_stars(star_code(COMPARE, value_at=0x1000))
-        self.assertFalse(stars.callable)
-        self.assertEqual(stars.info()["why"], "a value it reads couldn't be read")
-        self.assertEqual(stars.info()["values"], [[0, 0x1000, None]])
-
-    def test_window_spans_what_it_reads(self):
-        far = STAR_FIELD + 0x10
-        stars, _ = self.install_stars(star_code("F30F1081" + far.to_bytes(4, "little").hex() + COMPARE))
-        self.assertEqual(stars.leaf.fields, [(STAR_FIELD, 4), (far, 4)])
-        start = STAR_FIELD - mod.STAR_FIELD_BEFORE
-        self.assertEqual(stars.window, (start, far + 4 + mod.STAR_FIELD_AFTER - start))
-
-    def test_window_stays_by_the_patterns_field_if_the_reads_are_far_apart(self):
-        far = STAR_FIELD + mod.STAR_WINDOW_MAX
-        stars, _ = self.install_stars(star_code("F30F1081" + far.to_bytes(4, "little").hex() + COMPARE))
-        self.assertTrue(stars.callable)
         self.assertEqual(
-            stars.window,
-            (STAR_FIELD - mod.STAR_FIELD_BEFORE, mod.STAR_FIELD_BEFORE + 4 + mod.STAR_FIELD_AFTER),
+            (header["starCount"]["shape"], header["starCount"]["why"]), (0, "its code differs at 0x12")
         )
-
-    def test_window_starts_at_the_system(self):
-        stars, _ = self.install_stars(star_code(COMPARE, field=0x10))
-        self.assertEqual(stars.window, (0, 0x14 + mod.STAR_FIELD_AFTER))
+        self.assertNotIn("stars", record)
+        self.assertNotIn("starsUnknown", record)
 
     def test_not_found(self):
         self._patch("locate_star_count", lambda: "its pattern isn't in this version of the game")
@@ -2883,7 +2785,7 @@ class StarTests(StarHelpers, CaptureTestCase):
         self.poll()
         header, record = self.lines()
         self.assertEqual(header["starCount"], "its pattern isn't in this version of the game")
-        self.assertNotIn("starField", record)
+        self.assertNotIn("stars", record)
 
     def test_looking_for_it_fails(self):
         def broken():
@@ -2906,20 +2808,22 @@ class StarTests(StarHelpers, CaptureTestCase):
         find.assert_not_called()
 
     def test_located_in_the_game(self):
-        code = star_code(COMPARE)
-        buffer = (ctypes.c_ubyte * 0x200)()
+        buffer = (ctypes.c_ubyte * 0x400)()
+        code = star_function()
         buffer[: len(code)] = code
         address = self.game.memory.keep(buffer)
-        base = address - 0x1234
+        base = address - STAR_OFFSET
         with mock.patch.object(mod.pymhf_internal, "BASE_ADDRESS", base, create=True):
-            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=0x1234) as find:
+            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=STAR_OFFSET) as find:
                 stars = mod.locate_star_count()
             find.assert_called_once_with(mod.STAR_COUNT_PATTERN, False)
-            self.assertEqual((stars.address, stars.offset), (address, 0x1234))
+            self.assertEqual((stars.address, stars.offset, stars.why), (address, STAR_OFFSET, None))
             self.assertEqual(stars.code, bytes(buffer[: mod.STAR_CODE_BYTES]))
             with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=None):
                 self.assertEqual(mod.locate_star_count(), "its pattern isn't in this version of the game")
-            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=0x10_0000):
+            with mock.patch(
+                "pymhf.core.memutils.find_pattern_in_binary", return_value=STAR_OFFSET + (1 << 40)
+            ):
                 self.assertEqual(mod.locate_star_count(), "its code couldn't be read")
 
 
@@ -3325,37 +3229,32 @@ class ReportTests(StarHelpers, CaptureTestCase):
         self.assertIsNone(report.locate_ship_stream(UA, ["0123456789ABCDEF"], None, 100).offset)
 
     def test_stars_and_guilds(self):
-        stars, _ = self.install_stars(star_code(COMPARE))
-        self.set_star_value(0.75)
-        self.poll()
-        self.poll()
-        for _ in range(2):
-            self.capture.guild_explorers()
-            self.poll()
+        self.install_stars()  # binary star chance 0.2, ternary 0.05
         other = (0x079 << 40) | (1 << 32) | 0x01234567  # in another region
-        self.game.set_address(other)
-        self.game.fill(other, "Abarof-Dulin")
-        stars._function = lambda system: 1
-        self.set_star_value(0.25)
-        self.poll()
-        self.poll()
-        self.capture.guild_merchants()
-        self.poll()
-        self.capture.guild_mercenaries()
-        self.poll()
+        for ua, guilds in ((UA, ["explorers", "explorers"]), (other, ["merchants", "mercenaries"])):
+            self.game.set_address(ua)
+            self.game.fill(ua, "Abarof-Dulin")
+            self.set_nebula_seed(report.nebula_seed(ua))  # as the game draws it: 0.696 and 0.876
+            self.game.generate(self.capture)
+            self.poll()
+            self.poll()
+            for guild in guilds:
+                getattr(self.capture, f"guild_{guild}")()
+                self.poll()
         captures = report.read_captures([mod.CAPTURE_FILE])
         self.assertIn("4 guild(s)", "\n".join(report.summary_lines(captures)))
-        lines = report.star_guild_lines(captures)
         self.assertEqual(
-            lines,
+            report.star_guild_lines(captures),
             [
                 "",
-                "Stars: systems by how many stars the game says they have: 1 x1, 2 x1",
-                "  the game's star count function: found at +1234, 27 bytes long, reads the system at +2A70; "
-                "values it reads: 0.5 (0000003F); called (1 session(s))",
-                "  the value it compares, in systems with 1 star(s): 0.25 to 0.25 (1 systems)",
-                "  the value it compares, in systems with 2 star(s): 0.75 to 0.75 (1 systems)",
-                "    03E9F3545C3E galaxy 1 Shown-Name: 2 stars, compared value 0.75",
+                "Stars: systems by how many stars the game counts: 1 x1, 2 x1",
+                f"  the game's star count function: found at +{STAR_OFFSET:X}; binary star chance 0.2, "
+                "ternary 0.05; game mode 1, boot mode 1 (1 session(s))",
+                "  NebulaSeed, which it counts by, is the 9th draw of the system seed's stream: 2/2 systems "
+                "with raw data",
+                "  worked out from the address with the game's chances: 1 x1, 2 x1 over 2 systems; the same as the "
+                "game counted: 2/2",
+                "    007901234567 galaxy 1 Shown-Name: 2 stars (the game counted 2)",
                 "",
                 "Guilds recorded: 4 for 2 region(s)",
                 "  galaxy 1 region X -962, Y -13, Z 1349: Explorers x2; systems recorded there: 1, "
@@ -3365,8 +3264,47 @@ class ReportTests(StarHelpers, CaptureTestCase):
                 "  regions recorded with more than one guild: 1",
             ],
         )
+        for record in captures.records:  # had the game counted otherwise for one system
+            if record.ua == UA and "stars" in record.data:
+                record.data["stars"] = 3
+        self.assertIn(
+            "  worked out from the address with the game's chances: 1 x1, 2 x1 over 2 systems; the same as the "
+            "game counted: 1/2",
+            report.star_guild_lines(captures),
+        )
 
-    def test_star_count_function_not_found_or_not_called(self):
+    def test_star_counts_wait_for_the_games_chances(self):
+        self.game.generate(self.capture)
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures.sessions[0].header["starCount"] = {"offset": "10", "callable": 0, "why": "instruction E8"}
+        lines = report.star_guild_lines(captures)  # as 0.10.0 recorded it, without the chances
+        self.assertIn(  # the fake system's NebulaSeed is 0, not what the game would draw
+            "  NebulaSeed, which it counts by, is the 9th draw of the system seed's stream: 0/1 systems with raw data",
+            lines,
+        )
+        self.assertIn(
+            "  the game's star count function: found at +10; not called: instruction E8 (1 session(s))", lines
+        )
+        self.assertIn(
+            "  the game's star chances aren't recorded yet, so counts can't be worked out from addresses",
+            lines,
+        )
+
+    def test_a_regions_colour_comes_from_whichever_record_has_it(self):
+        session = report.Session({"enums": {}}, "test")
+        records = [
+            report.SystemRecord({"ua": f"{UA:016X}", "ships": [[1]]}, session, 1),  # before 0.10.0
+            report.SystemRecord({"ua": f"{UA:016X}", "galaxy": {"regionColour": 0.5}}, session, 2),
+        ]
+        guild = {"t": "guild", "system": f"{UA:016X}", "guild": "Explorers"}
+        captures = report.Captures(sessions=[session], records=records, guilds=[(guild, session)])
+        self.assertIn(
+            "  galaxy 1 region X -962, Y -13, Z 1349: Explorers x1; systems recorded there: 1, by race: ? 1; "
+            "region colour value 0.5",
+            report.star_guild_lines(captures),
+        )
+
+    def test_star_count_function_not_found_or_not_known(self):
         for info, text in (
             (None, "not looked for (RECORD_STARS off)"),
             (
@@ -3374,19 +3312,30 @@ class ReportTests(StarHelpers, CaptureTestCase):
                 "not found: its pattern isn't in this version of the game",
             ),
             (
-                {
-                    "offset": "10",
-                    "field": 16,
-                    "values": [[0, 8, None]],
-                    "callable": 0,
-                    "why": "instruction E8 at 0x12",
-                },
-                "found at +10, reads the system at +10; values it reads: unreadable; "
-                "not called: instruction E8 at 0x12",
+                {"offset": "10", "shape": 0, "why": "its code differs at 0x12"},
+                "found at +10; its code isn't what the mod knows: its code differs at 0x12",
             ),
-        ):
+            ({"offset": "10", "shape": 1}, "found at +10; the values it reads couldn't be read"),
+            (
+                {"offset": "10", "shape": 1, "one": 2.0, "binary": 0.5, "ternary": 0.25, "forceTernary": 1,
+                 "gameMode": 6, "bootMode": 1},
+                "found at +10; binary star chance 0.5, ternary 0.25, taken from 2.0 rather than 1; forceTernary "
+                "on; game mode 6, boot mode 1",
+            ),
+        ):  # fmt: skip
             with self.subTest(text):
                 self.assertEqual(report._star_function(info), text)
+
+    def test_nebula_seed_and_star_count(self):
+        self.assertEqual(report.nebula_seed(UA), mod.float32(0.6958989500999451))
+        # A fraction of the largest draw, 0xFFFFFFFF, not of 2^32: they round apart for this system.
+        self.assertEqual(report.nebula_seed(0x1000136FBEEE7), mod.float32(28072737 / 4294967295.0))
+        self.assertNotEqual(report.nebula_seed(0x1000136FBEEE7), mod.float32(28072737 / 4294967296.0))
+        self.assertEqual(report.star_count(0.5, 0.2, 0.05), 1)
+        self.assertEqual(report.star_count(next_float32(mod.float32(0.8)), 0.2, 0.05), 2)
+        self.assertEqual(report.star_count(0.96, 0.2, 0.05), 3)
+        chance = mod.float32(0.2)  # as the game keeps it; the function compares with 1 - it, rounded
+        self.assertEqual(report.star_count(mod.float32(1.0 - chance), chance, 0.05), 1)
 
     def test_mix_and_unmix_are_inverses(self):
         for value in (0, 1, 0xDEADBEEFCAFEBABE, report.MASK64):

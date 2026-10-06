@@ -21,11 +21,13 @@ Only the standard library is needed, plus numpy for --namegen.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
 import statistics
 import struct
 import sys
+import zlib
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -766,81 +768,101 @@ def _region_label(region: tuple[int, int]) -> str:
     return f"galaxy {galaxy} region X {x}, Y {y}, Z {z}"
 
 
+# Where cGcSolarSystemData keeps the system's NebulaSeed (its Sky's), as NMS.py 180383 places it: the
+# value the game's star count compares with its sky globals' chances (see the mod's StarCount).
+NEBULA_SEED_AT = 0x2080
+
+
+def float32(value: float) -> float:
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def nebula_seed(seed: int) -> float:
+    """A system's NebulaSeed from its seed: the 9th draw of the stream the seed starts, as a fraction of
+    the largest draw, in 32-bit float. It matched every system captured with its raw data."""
+    return float32((stream_states(seed, 9)[8] & MASK32) / 4294967295.0)
+
+
+def star_count(nebula: float, binary: float, ternary: float, one: float = 1.0) -> int:
+    """How many stars the game counts for a system with this NebulaSeed, as its star count function
+    does in play (no debug options; see the mod's STAR_COUNT_CODE)."""
+    return 1 + (nebula > float32(one - ternary)) + (nebula > float32(one - binary))
+
+
 def _star_function(info: object) -> str:
     """What a session header says of the game's star count function (see the mod's StarCount)."""
     if info is None:
         return "not looked for (RECORD_STARS off)"
     if not isinstance(info, dict):
         return f"not found: {info}"
-
-    def value(raw: str | None) -> str:
-        if not raw:
-            return "unreadable"
-        data = bytes.fromhex(raw)
-        return f"{struct.unpack('<f', data)[0]:g} ({raw})" if len(data) == 4 else raw
-
     text = f"found at +{info.get('offset')}"
-    if info.get("length"):
-        text += f", {info['length']} bytes long"
-    text += f", reads the system at +{info.get('field', 0):X}"
-    if info.get("values"):
-        text += "; values it reads: " + ", ".join(value(raw) for _, _, raw in info["values"])
-    return text + ("; called" if info.get("callable") else f"; not called: {info.get('why')}")
-
-
-def _star_field_value(record: SystemRecord) -> float | None:
-    """The float the star count function reads from the system where the pattern shows, taken from the
-    bytes recorded around it."""
-    info = record.session.header.get("starCount")
-    raw = record.data.get("starField")
-    if not isinstance(info, dict) or not isinstance(raw, str) or not info.get("window"):
-        return None
-    at, data = info.get("field", 0) - info["window"][0], bytes.fromhex(raw)
-    return struct.unpack_from("<f", data, at)[0] if 0 <= at <= len(data) - 4 else None
+    if "shape" in info:  # 0.11.0 on: the mod works the count out from what the function reads
+        if not info["shape"]:
+            return f"{text}; its code isn't what the mod knows: {info.get('why')}"
+        if "binary" not in info:
+            return f"{text}; the values it reads couldn't be read"
+        text += f"; binary star chance {info['binary']:g}, ternary {info['ternary']:g}"
+        if info.get("one") != 1.0:
+            text += f", taken from {info.get('one')} rather than 1"
+        forced = [name for name in ("forceBinary", "forceTernary") if info.get(name)]
+        text += f"; {', '.join(forced)} on" if forced else ""
+        return f"{text}; game mode {info.get('gameMode')}, boot mode {info.get('bootMode')}"
+    return f"{text}; not called: {info.get('why')}"  # 0.10.0 tried to call it
 
 
 def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
-    """How many stars the game said each system has, with the value its star count function compares,
-    and the guild seen in each region, with what else the captures say of the region, to find what
-    decides either."""
+    """How many stars each system has, as the game said and as worked out from its address, and the
+    guild seen in each region, with what else the captures say of the region, to find what decides it."""
     lines: list[str] = []
-    found = Counter(
-        _star_function(s.header["starCount"]) for s in captures.sessions if "starCount" in s.header
-    )  # 0.10.0 on
+    headers = [s.header["starCount"] for s in captures.sessions if "starCount" in s.header]  # 0.10.0 on
+    found = Counter(_star_function(info) for info in headers)
     systems = captures.representative_by_system()
     stars: dict[int, int] = {}
-    fields: dict[int, float] = {}
+    nebulas: dict[int, float] = {}
     for record in captures.records:
         system = record.ua & ~PLANET_BITS
         if isinstance(record.data.get("stars"), int):
             stars[system] = record.data["stars"]
-        if (value := _star_field_value(record)) is not None:
-            fields[system] = value
-    if found or stars or fields:
+        raw = record.data.get("raw")
+        if isinstance(raw, str) and len(data := zlib.decompress(base64.b64decode(raw))) >= NEBULA_SEED_AT + 4:
+            nebulas[record.ua] = struct.unpack_from("<f", data, NEBULA_SEED_AT)[0]
+    chances = next(
+        (info for info in reversed(headers) if isinstance(info, dict) and "binary" in info), None
+    )  # the game's, from the newest session that read them
+    if found or stars or nebulas:
         counts = Counter(stars.values())
         lines += [
             "",
-            "Stars: systems by how many stars the game says they have: "
+            "Stars: systems by how many stars the game counts: "
             + (", ".join(f"{n} x{c}" for n, c in sorted(counts.items())) or "none recorded"),
         ]
         lines += [
             f"  the game's star count function: {text} ({n} session(s))" for text, n in found.most_common()
         ]
-        by_count: dict[int | None, list[float]] = {}
-        for system, value in fields.items():
-            by_count.setdefault(stars.get(system), []).append(value)
-        for count, values in sorted(by_count.items(), key=lambda item: (item[0] is None, item[0] or 0)):
-            finite = [value for value in values if math.isfinite(value)]
-            spread = f"{min(finite):g} to {max(finite):g}" if finite else "not finite"
-            label = "count not recorded" if count is None else f"{count} star(s)"
+        drawn = sum(1 for seed, value in nebulas.items() if nebula_seed(seed) == value)
+        lines.append(
+            f"  NebulaSeed, which it counts by, is the 9th draw of the system seed's stream: {drawn}/{len(nebulas)}"
+            " systems with raw data"
+        )
+        if chances is None:
             lines.append(
-                f"  the value it compares, in systems with {label}: {spread} ({len(values)} systems)"
+                "  the game's star chances aren't recorded yet, so counts can't be worked out from addresses"
             )
-        for system in [system for system, n in stars.items() if n != 1][:examples]:
-            record = systems.get(system)
-            label = record.label() if record is not None else _portal_label(system)
-            value = f", compared value {fields[system]:g}" if system in fields else ""
-            lines.append(f"    {label}: {stars[system]} stars{value}")
+        else:
+            worked = {
+                system: star_count(nebula_seed(system), chances["binary"], chances["ternary"], chances["one"])
+                for system in systems
+            }
+            agree = sum(1 for system, n in stars.items() if worked.get(system) == n)
+            lines.append(
+                "  worked out from the address with the game's chances: "
+                + ", ".join(f"{n} x{c}" for n, c in sorted(Counter(worked.values()).items()))
+                + f" over {len(worked)} systems; the same as the game counted: {agree}/{len(stars)}"
+            )
+            several = [system for system, n in worked.items() if n != 1]
+            for system in several[:examples]:
+                counted = f" (the game counted {stars[system]})" if system in stars else ""
+                lines.append(f"    {systems[system].label()}: {worked[system]} stars{counted}")
     if captures.guilds:
         by_region: dict[tuple[int, int], list[dict]] = {}
         for entry, _ in captures.guilds:
@@ -848,6 +870,10 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
         regions_of: dict[tuple[int, int], list[SystemRecord]] = {}
         for system, record in systems.items():
             regions_of.setdefault(_region(system), []).append(record)
+        colours_of: dict[tuple[int, int], set[float]] = {}  # from every record: 0.10.0 on record it
+        for record in captures.records:
+            if (colour := (record.data.get("galaxy") or {}).get("regionColour")) is not None:
+                colours_of.setdefault(_region(record.ua), set()).add(colour)
         lines += ["", f"Guilds recorded: {len(captures.guilds)} for {len(by_region)} region(s)"]
         mixed = 0
         for region, entries in by_region.items():  # in the order first recorded
@@ -855,9 +881,7 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
             mixed += len(guilds) > 1
             records = regions_of.get(region, [])
             races = Counter(record.name("race", "race") or "?" for record in records)
-            colours = sorted(
-                {(record.data.get("galaxy") or {}).get("regionColour") for record in records} - {None}
-            )
+            colours = sorted(colours_of.get(region, ()))
             said = ", ".join(f"{guild} x{n}" for guild, n in guilds.most_common())
             said += f"; systems recorded there: {len(records)}"
             if races:
@@ -870,9 +894,10 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
 
 
 def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
-    """Each system's own multi-tools, which the game builds while it generates the system: their files,
-    seeds and parts; whether a system's set came out the same each time it was recorded; and any seed in
-    more than one system's set, which wouldn't be a system's own."""
+    """Each system's own multi-tools, which the game builds as it generates the system: their files,
+    seeds and parts; how many it built just before the generation; whether a system's set came out the
+    same each time it was recorded; and any seed in more than one system's set, which wouldn't be a
+    system's own."""
     if not captures.pools:
         return []
     systems = captures.representative_by_system()
@@ -889,6 +914,12 @@ def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
         f"{len(tools)} multi-tools ({', '.join(f'{name} {n}' for name, n in files.most_common())})",
         "  multi-tools per set: " + ", ".join(f"{size} x{n}" for size, n in sorted(sizes.items())),
     ]
+    if before := [pool for pool in sets if pool.get("before")]:  # 0.11.0 on
+        leads = [pool.get("lead") or 0 for pool in before]
+        lines.append(
+            f"  sets started by the run of multi-tools built just before the generation: {len(before)} "
+            f"({sum(pool['before'] for pool in before)} multi-tools, {min(leads):g} to {max(leads):g} s before it)"
+        )
     elsewhere = [pool for pool, _ in captures.pools if pool.get("elsewhere")]
     if elsewhere:
         lines.append(
