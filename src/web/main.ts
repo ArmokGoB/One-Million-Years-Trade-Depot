@@ -9,6 +9,7 @@ import {
   AddressError,
   CAPTURE_CHECKS,
   describeSystem,
+  GIANT_CHECKS,
   formatPortalCode,
   MEASURED_ACCURACY,
   parseAnyAddress,
@@ -258,7 +259,7 @@ function render(d: SystemDescription): void {
   if (d.stars > 1) flags.push(`${MULTIPLE_STARS[d.stars]} star system`);
   if (d.blackHole) flags.push("Black hole system");
   if (d.atlasInterface) flags.push("Atlas Interface system");
-  if (d.gasGiant) flags.push("Gas giant layout");
+  if (d.gasGiant) flags.push("Giant planet system");
   const flagList = el("ul", "result__flags");
   for (const f of flags) flagList.append(el("li", "result__flag", f));
 
@@ -286,7 +287,16 @@ function render(d: SystemDescription): void {
         `${count(checks.outlawSystems)} of them outlaw systems.`,
     );
   }
-  row("Bodies", `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`);
+  const giants = GIANT_CHECKS;
+  row(
+    "Bodies",
+    `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`,
+    d.gasGiant
+      ? `The planet is a giant, every other body its moon. Of the ${count(giants.recorded)} giants recorded in ` +
+          `game, ${count(giants.gas)} were gas giants and ${count(giants.lush)} a lush giant; which kind this one ` +
+          `is can't be worked out yet.`
+      : undefined,
+  );
   row("Portal address", d.portalCode);
   row("Galactic coordinates", d.galacticCoordinates);
 

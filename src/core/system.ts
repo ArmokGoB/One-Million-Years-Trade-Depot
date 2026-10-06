@@ -69,7 +69,7 @@ export interface PlanetSeeds {
   moon_count: number;
   /** Experimental in the reference: per-slot size class, not validated per slot. */
   sizes: number[];
-  /** Every body in order, one per seed; empty for a gas-giant layout, which isn't modelled. */
+  /** Every body in order, one per seed; empty for a giant-planet layout, which isn't modelled. */
   bodies: Body[];
 }
 
@@ -233,7 +233,8 @@ export function systemAttributesDetailed(code: bigint, galaxy: number): SystemAt
     primePlanetCount = 1;
   }
 
-  // Purple systems: every body becomes an extra body; 15% use the gas-giant layout.
+  // Purple systems: every body becomes an extra body; 15% use the giant-planet layout
+  // (nms_namegen's gas_giant: one giant, usually a gas giant, every other body its moon).
   let gasGiant = false;
   if (starType === 4) {
     primePlanetCount += planetCount;

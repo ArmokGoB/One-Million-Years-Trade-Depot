@@ -878,6 +878,35 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
     return lines
 
 
+def _giant(record: SystemRecord) -> str:
+    """The biome and subtype of a system's giant planet, as the game recorded them."""
+    columns = record.session.header.get("columns", {}).get("bodies") or []
+    for body in record.data.get("bodies") or []:
+        row = dict(zip(columns, body))
+        if record.session.name("size", row.get("size")) == "Giant":
+            biome = record.session.name("biome", row.get("biome")) or f"biome {row.get('biome')}"
+            subtype = record.session.name("biomeSubType", row.get("biomeSubType")) or f"subtype {row.get('biomeSubType')}"
+            return f"{biome}/{subtype}"
+    return "no giant among its recorded bodies"
+
+
+def giant_lines(captures: Captures) -> list[str]:
+    """Systems with a giant planet, which the game flags IsGiantSystem, by the kind of giant: a gas giant,
+    also flagged IsGasGiantSystem, or a giant of another biome, which players report are rare."""
+    giants: list[tuple[SystemRecord, bool]] = []
+    for record in captures.representative_by_system().values():
+        ga = record.data.get("galaxy") if isinstance(record.data.get("galaxy"), dict) else {}
+        flags = set(ga.get("flags", []))
+        if flags & {"IsGiantSystem", "IsGasGiantSystem"}:
+            giants.append((record, "IsGasGiantSystem" in flags))
+    if not giants:
+        return []
+    gas = sum(1 for _, is_gas in giants if is_gas)
+    lines = ["", f"Systems with a giant planet: {len(giants)}, {gas} of them gas giants"]
+    lines += [f"  not a gas giant: {record.label()}: {_giant(record)}" for record, is_gas in giants if not is_gas]
+    return lines
+
+
 def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
     """Each system's own multi-tools, which the game builds as it generates the system: their files,
     seeds and parts; how many it built just before the generation; whether a system's set came out the
@@ -1244,7 +1273,7 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
         "conflict": Tally("conflict (charted systems)"),
         "abandoned": Tally("abandoned"),
         "pirate": Tally("outlaw (pirate) system"),
-        "gas": Tally("gas giant layout"),
+        "giant": Tally("giant planet layout (one giant, every other body its moon)"),
         "planets": Tally("planet count"),
         "prime": Tally("prime planet count"),
         "seeds": Tally("planet seeds, every body in order"),
@@ -1312,8 +1341,10 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
             t["pirate"].add(
                 ("IsPirateSystem" in flags) == attrs["pirate"], miss(sorted(flags), attrs["pirate"])
             )
-            t["gas"].add(
-                ("IsGasGiantSystem" in flags) == attrs["gas_giant"], miss(sorted(flags), attrs["gas_giant"])
+            # nms_namegen's gas_giant is the layout, which the game flags IsGiantSystem; IsGasGiantSystem
+            # says the giant is a gas giant, as most are (see giant_lines).
+            t["giant"].add(
+                ("IsGiantSystem" in flags) == attrs["gas_giant"], miss(sorted(flags), attrs["gas_giant"])
             )
             if "planets" in ga:
                 t["planets"].add(
@@ -1452,6 +1483,7 @@ def main(argv: list[str] | None = None) -> int:
         + model_lines(captures)
         + part_coverage_lines(captures)
         + star_guild_lines(captures)
+        + giant_lines(captures)
         + pool_lines(captures)
         + item_lines(captures)
     )

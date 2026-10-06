@@ -323,7 +323,7 @@ export function slotTypes(dominantRace: number, outlaw = false): (readonly [stri
 /**
  * The system's 50 ships. Where a planet has two moons, the model's first
  * guess at their arrangement, with the ships for the others as alternatives.
- * A gas giant layout's bodies aren't modelled, but it only occurs in purple
+ * A giant planet layout's bodies aren't modelled, but it only occurs in purple
  * systems, whose bodies are all prime planets and moons and have no attractors.
  */
 export function shipPool(code: bigint, galaxy: number): ShipPool {
