@@ -3502,6 +3502,23 @@ class ShipModelTests(unittest.TestCase):
         self.assertIn("0 of 0 exotic seeds agree", odd)
         self.assertIn("first part neither _SCLASSSHIP_SQU nor _SCLASSSHIP_ROY: 1", odd)
 
+    def test_a_later_build_with_only_a_texture_leaves_an_exotics_body_known(self):
+        class Record(str):
+            def label(self) -> str:
+                return str(self)
+
+        seed = f"{self.seed_with_first_draw(4_200_000_000):016X}"
+        builds = [
+            (Record("A"), {"seed": seed, "parts": [ship_model.SQUID_PART, "TEXTURE_TEMP"]}),
+            (Record("A"), {"seed": seed, "parts": ["TEXTURE_TEMP"]}),
+        ]
+        lines = "\n".join(report.squid_lines(builds))
+        self.assertIn("1 of 1 exotic seeds agree", lines)
+        self.assertNotIn("neither", lines)
+        lines = "\n".join(report.squid_lines(builds[::-1]))
+        self.assertIn("1 of 1 exotic seeds agree", lines)
+        self.assertNotIn("neither", lines)
+
 
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")
 class NamegenComparisonTests(CaptureTestCase):

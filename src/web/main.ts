@@ -178,12 +178,13 @@ function exoticEntry(ships: ShipsInfo): HTMLElement {
 
 function shipsSection(d: SystemDescription): HTMLElement {
   const ships = d.ships;
-  const { matched, recorded } = SHIP_ACCURACY;
+  const { matched, recorded, workedOutFrom } = SHIP_ACCURACY;
   const intro = el(
     "p",
     "result__aside",
     `Predicted from the address alone, by a model of the game's generator worked out from ` +
-      `${recorded} systems recorded in game. It gets every ship's seed right in ${matched} of them. ` +
+      `${workedOutFrom} systems recorded in game. Of the ${recorded} systems recorded so far, ` +
+      `${recorded - workedOutFrom} of them since, it gets every ship's seed right in ${matched}. ` +
       `The other ${count(recorded - matched)} each have a planet with two moons, which the game arranges in one ` +
       `of two ways, and match once they're the other way round.`,
   );

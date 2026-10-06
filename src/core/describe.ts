@@ -46,24 +46,30 @@ export const MEASURED_ACCURACY = {
  * did `planetNames.matched` of the `planetNames.checked` planet names the
  * game generated while they were recorded.
  */
-export const CAPTURE_CHECKS = { systems: 66, outlawSystems: 9, planetNames: { matched: 2417, checked: 2497 } } as const;
+export const CAPTURE_CHECKS = { systems: 99, outlawSystems: 11, planetNames: { matched: 5755, checked: 5971 } } as const;
 
 /**
  * How the ship prediction fares against the systems recorded in game with
  * the capture mod: every ship seed and the Sentinel crash-site seed right in
  * `matched` of `recorded` with the model's first guess, and in all the rest
  * with a planet's two moons the other way round. The model was worked out
- * from these same systems. `twoMoons` counts those with a planet that has two
- * moons, which ShipsInfo.uncertain flags, and how many the first guess got.
+ * from the first `workedOutFrom` of them; the rest were recorded after.
+ * `twoMoons` counts those with a planet that has two moons, which
+ * ShipsInfo.uncertain flags, and how many the first guess got.
  */
-export const SHIP_ACCURACY = { matched: 62, recorded: 66, twoMoons: { firstGuess: 3, recorded: 7 } } as const;
+export const SHIP_ACCURACY = {
+  matched: 94,
+  recorded: 99,
+  workedOutFrom: 66,
+  twoMoons: { firstGuess: 5, recorded: 10 },
+} as const;
 
 /**
  * How the squid prediction fares against the exotics whose parts the capture
  * mod recorded as the game built them: every one of the `recorded` exotics,
  * `squids` of them squids, on the side of the line the prediction puts it.
  */
-export const SQUID_CHECKS = { recorded: 12, squids: 6 } as const;
+export const SQUID_CHECKS = { recorded: 40, squids: 9 } as const;
 
 /**
  * How the star count fares against the game's own: the same in every one of
@@ -79,9 +85,9 @@ export const STAR_CHECKS = { counted: 19, several: 2 } as const;
  * those never did.
  */
 export const SOLAR_COUNTS = {
-  shuttle: [42, 375],
-  outlawShuttle: [54, 63],
-  outlawOther: [11, 117],
+  shuttle: [66, 588],
+  outlawShuttle: [66, 77],
+  outlawOther: [13, 143],
 } as const;
 
 export interface ShipInfo {

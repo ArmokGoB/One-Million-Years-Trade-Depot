@@ -1082,15 +1082,18 @@ def _hex_or_none(text: object) -> int | None:
 def squid_lines(exotics: list[tuple[SystemRecord, dict]]) -> list[str]:
     """Each exotic's body, from its first part, against the squid rule in ship_model.py."""
     bodies: dict[int, tuple[str, str | None]] = {}
+    known = (ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART)
     for record, model in exotics:
         seed = _hex_or_none(model.get("seed"))
         if seed is not None:
             parts = model.get("parts") or []
-            bodies[seed] = (record.label(), parts[0] if parts else None)
+            # The game builds an exotic again later with only its texture; that build says nothing of its body.
+            if seed not in bodies or bodies[seed][1] not in known:
+                bodies[seed] = (record.label(), parts[0] if parts else None)
     checked, disagree, other = 0, [], 0
     highest_not_squid = lowest_squid = None
     for seed, (label, first) in bodies.items():
-        if first not in (ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART):
+        if first not in known:
             other += 1
             continue
         checked += 1
