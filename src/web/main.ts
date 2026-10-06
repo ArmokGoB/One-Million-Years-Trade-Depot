@@ -90,31 +90,26 @@ const SHIP_GROUPS: readonly (readonly [ShipGroup, string])[] = [
   ["corvette", "Corvette"],
 ];
 
-function shipTable(ships: ShipsInfo): HTMLTableElement {
-  const table = el("table", "ships");
-  const head = el("thead", "visually-hidden", el("tr", undefined, el("th", undefined, "Ship"), el("th", undefined, "Seed")));
-  for (const th of head.querySelectorAll("th")) th.scope = "col";
-  table.append(head);
+/** The full ship list: each group's ships, every one a type with its seed. */
+function shipList(ships: ShipsInfo): HTMLElement {
+  const groups = el("div", "ships");
   for (const [group, heading] of SHIP_GROUPS) {
     const members = ships.ships.filter((s) => s.group === group);
     if (!members.length) continue;
-    const title = el("th", "ships__group", heading);
-    title.scope = "rowgroup";
-    title.colSpan = 2;
-    const body = el("tbody", undefined, el("tr", undefined, title));
+    const list = el("dl", "ships__list");
     for (const s of members) {
-      const type = el("td", "ships__type", s.type);
-      if (s.note) type.append(el("span", "ships__note", s.note));
-      body.append(el("tr", undefined, type, el("td", "ships__seed seed", s.seed)));
+      const row = el("div", "ships__row", el("dt", "ships__type", s.type), el("dd", "ships__seed", s.seed));
+      if (s.note) row.append(el("dd", "ships__note", s.note));
+      list.append(row);
     }
-    table.append(body);
+    groups.append(el("section", "ships__group", el("h4", "ships__heading", heading), list));
   }
-  return table;
+  return groups;
 }
 
 /** A seed in the key, with the seeds it would be if the system's two-moon planets were arranged otherwise. */
 function keySeed(seed: string, others: string[]): HTMLElement {
-  const dd = el("dd", "seed", seed);
+  const dd = el("dd", undefined, seed);
   if (others.length) dd.append(el("span", "manifest__note", `or ${others.join(" or ")}, with the moons the other way round`));
   return dd;
 }
@@ -143,7 +138,7 @@ function exoticEntry(ships: ShipsInfo): HTMLElement {
       : ", whichever way round the moons are";
   }
 
-  const seeds = el("span", "manifest__note", "Seed ", el("span", "seed", ships.exotic));
+  const seeds = el("span", "manifest__note", `Seed ${ships.exotic}`);
   if (ships.alternatives.length) {
     seeds.append(`, or ${ships.alternatives.map((a) => a.exotic).join(" or ")} with the moons the other way round`);
   }
@@ -196,7 +191,7 @@ function shipsSection(d: SystemDescription): HTMLElement {
       ]
     : [];
 
-  const key = el("dl", "manifest manifest--ships");
+  const key = el("dl", "manifest");
   key.append(
     el("dt", undefined, "Exotic"),
     exoticEntry(ships),
@@ -208,7 +203,7 @@ function shipsSection(d: SystemDescription): HTMLElement {
   );
   const squids = el(
     "p",
-    "result__aside ships__squids",
+    "result__aside",
     `Whether the exotic is a squid follows from its seed: the game picks the exotic's body with the first ` +
       `number it draws from that seed, and makes about 1 exotic in 21 a squid. That held for all ` +
       `${SQUID_CHECKS.recorded} exotics recorded in game, ${count(SQUID_CHECKS.squids)} of them squids.`,
@@ -236,10 +231,10 @@ function shipsSection(d: SystemDescription): HTMLElement {
         "and the game makes some of them solar ships in a way not worked out yet. " +
         solar,
     ),
-    shipTable(ships),
+    shipList(ships),
   );
 
-  return el("section", "result__section", el("h3", "result__heading", "Ships"), intro, ...warning, key, squids, all);
+  return el("section", "result__section", el("h3", "result__heading", "Ships"), ...warning, key, intro, squids, all);
 }
 
 function render(d: SystemDescription): void {
@@ -286,7 +281,7 @@ function render(d: SystemDescription): void {
   const lowest = Math.min(a.starColour, a.dominantRace, a.economy, a.wealth, a.conflict, a.planetAndMoonCounts);
   const accuracy = el(
     "p",
-    "result__aside manifest__accuracy",
+    "result__aside",
     `Star colour, faction, economy, wealth, conflict and body counts each match at least ${pct(lowest)} ` +
       `of 1,000 systems players recorded in game ` +
       `(star colour and faction ${pct(a.starColour)}, economy ${pct(a.economy)}, ` +
@@ -301,14 +296,16 @@ function render(d: SystemDescription): void {
         "bodies__item",
         el("span", "bodies__number", String(b.index)),
         el("span", "bodies__name", b.name),
-        el("span", "bodies__meta", `Portal ${b.portalCode}, seed ${b.seed}`),
+        el("span", "bodies__meta", `Portal ${b.portalCode}`),
+        el("span", "bodies__meta", `Seed ${b.seed}`),
       ),
     );
   }
   const bodiesSection = el(
     "section",
-    "result__section",
+    "result__section result__bodies",
     el("h3", "result__heading", "Planets and moons"),
+    bodies,
     el(
       "p",
       "result__aside",
@@ -317,7 +314,6 @@ function render(d: SystemDescription): void {
         `${checks.planetNames.checked.toLocaleString("en")} planet names. ` +
         "The seed is what a save editor calls the planet seed.",
     ),
-    bodies,
   );
 
   const status = el("span", "result__status");
@@ -347,17 +343,10 @@ function render(d: SystemDescription): void {
     el("p", undefined, "The rest of what each ship looks like, then multi-tools. ", roadmap, "."),
   );
 
-  result.replaceChildren(
-    name,
-    region,
-    ...(flags.length ? [flagList] : []),
-    manifest,
-    accuracy,
-    bodiesSection,
-    shipsSection(d),
-    actions,
-    next,
-  );
+  const header = el("header", "result__header", name, region, ...(flags.length ? [flagList] : []), actions);
+  const facts = el("div", "result__facts", manifest, accuracy);
+
+  result.replaceChildren(header, el("div", "result__columns", facts, bodiesSection), shipsSection(d), next);
   result.hidden = false;
 }
 

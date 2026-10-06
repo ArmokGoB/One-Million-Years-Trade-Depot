@@ -2,11 +2,22 @@
 
 /*
  * Design notes
- * - The only accent colour is the star colour of the system on screen; it is
- *   data, not decoration (name, glow, focus rings, body numbers).
+ * - The depot's identity is its logo and its name, and it doesn't change.
+ *   The system's identity is its star colour: the system's name, the body
+ *   numbers, the star swatch, focus rings and the main button. It is data,
+ *   not decoration.
  * - Façade marks identity: the depot's name, the system's name and the body
- *   numbers. Everything else is set in MatrixType, like a ship's readout.
- * - Unverified output is said in words next to the value, never only by colour.
+ *   numbers. Everything else is MatrixType, like a ship's readout, in two
+ *   registers: signs (the lede, headings, the region and planet names) in
+ *   its open dots, and everything read as text, typed or compared in its
+ *   bold, whose dots touch.
+ * - MatrixType's dots sit 240 units apart in a 2048-unit em, so it is set
+ *   only at multiples of 8/15 rem (8.53px), where every dot covers whole
+ *   pixels, and never letter-spaced. Below 25.6px only the bold is used: its
+ *   dots fill their pixels, where the open dots blur on standard-density
+ *   screens.
+ * - The readout comes first and the evidence for it after, said in words
+ *   next to the values, never only by colour.
  */
 
 /* Each face covers a range of weights, so the browser never thickens the
@@ -36,7 +47,7 @@
 :root {
   --night: #000000;
   --night-raised: #282828;
-  --rule: #2f3672;
+  --rule: #3f3f3f;
   --ink: #e0b0b2;
   --ink-muted: lightcoral;
   --error: magenta;
@@ -53,13 +64,13 @@
   --font-text: "Matrixtype", system-ui, sans-serif;
   --font-stencil: "Facade-Ouest", sans-serif-condensed, sans-serif;
 
-  --step--1: 0.875rem; /* 14px */
-  --step-0: 1.125rem; /* 18px */
-  --step-1: 1.3125rem; /* 21px */
-  --step-2: 1.5rem; /* 24px */
-  --step-3: 2.25rem; /* 36px */
+  /* MatrixType's sizes: its dots 2, 3 and 4 pixels apart. */
+  --type-read: calc(16rem / 15); /* 17.07px */
+  --type-sign: 1.6rem; /* 25.6px */
+  --type-lede: calc(32rem / 15); /* 34.13px */
 
   --gutter: clamp(1rem, 4vw, 3rem);
+  --page-top: clamp(1.5rem, 5vw, 3rem);
   --radius-control: 10px;
 }
 
@@ -99,7 +110,8 @@ body {
   background-repeat: no-repeat;
   color: var(--ink);
   font-family: var(--font-text);
-  font-size: var(--step-0);
+  font-size: var(--type-read);
+  font-weight: 700;
   line-height: 1.5;
 }
 
@@ -118,30 +130,67 @@ a:hover {
   outline-offset: 2px;
 }
 
+/* Page: on wide screens the lookup stays beside the system it found. */
+
 .page {
-  max-width: 62rem;
+  max-width: 90rem;
   margin: 0 auto;
-  padding: clamp(2rem, 6vw, 4.5rem) var(--gutter) 3rem;
+  padding: var(--page-top) var(--gutter) 3rem;
+}
+
+.page__result {
+  container: result / inline-size;
+}
+
+@media (min-width: 75rem) {
+  .page {
+    display: grid;
+    grid-template-columns: minmax(20rem, 24rem) minmax(0, 1fr);
+    column-gap: clamp(2.5rem, 4vw, 4.5rem);
+    align-items: start;
+  }
+  .colophon {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 75rem) and (min-height: 42rem) {
+  .page__console {
+    position: sticky;
+    top: var(--page-top);
+  }
 }
 
 /* Masthead */
 
+/* The logo and the name as one lockup: the name's two lines as tall as the logo. */
 .masthead__name {
-  margin: 0 0 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 1.75rem;
   font-family: var(--font-stencil);
-  font-weight: 800;
-  font-size: var(--step-2);
-  letter-spacing: 0.02em;
-  color: var(--star);
+  font-weight: 400;
+  font-size: 1.375rem;
+  line-height: 1.1;
+}
+
+.masthead__logo {
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+}
+
+.masthead__line {
+  display: block;
 }
 
 .masthead__lede {
   margin: 0;
   max-width: 22ch;
-  font-size: clamp(1.75rem, 4.2vw, var(--step-3));
-  line-height: 1.15;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-size: var(--type-sign);
+  font-weight: 400;
+  line-height: 1.25;
 }
 
 .masthead__sub {
@@ -150,14 +199,15 @@ a:hover {
   color: var(--ink-muted);
 }
 
-/* Lookup form */
+/* Lookup form: on phones one field under the other and the button across the
+ * bottom; beside the result, the galaxy and the button share a row. */
 
 .lookup {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8.5rem auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 0.5rem 1rem;
-  margin-top: clamp(2rem, 5vw, 3rem);
+  gap: 1rem;
+  margin-top: 2rem;
 }
 
 .lookup__field {
@@ -165,9 +215,17 @@ a:hover {
   gap: 0.375rem;
 }
 
-.lookup__label {
-  font-weight: 650;
-  font-size: 1rem;
+.lookup__input--galaxy {
+  max-width: 9.5rem;
+}
+
+@media (min-width: 75rem) {
+  .lookup {
+    grid-template-columns: 9.5rem minmax(0, 1fr);
+  }
+  .lookup__field--address {
+    grid-column: 1 / -1;
+  }
 }
 
 .lookup__input {
@@ -179,8 +237,8 @@ a:hover {
   background: var(--night-raised);
   color: var(--ink);
   font: inherit;
-  font-size: var(--step-2);
-  font-variant-numeric: tabular-nums;
+  font-size: var(--type-sign);
+  line-height: 1.25;
 }
 .lookup__input:hover {
   border-color: color-mix(in srgb, var(--star) 45%, var(--field-edge));
@@ -190,12 +248,10 @@ a:hover {
   outline-offset: 0;
 }
 .lookup__input--address {
-  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 .lookup__input--address::placeholder {
   color: color-mix(in srgb, var(--ink-muted) 55%, transparent);
-  letter-spacing: 0.06em;
 }
 .lookup__input[aria-invalid="true"],
 .lookup__input[aria-invalid="true"]:focus-visible {
@@ -205,21 +261,17 @@ a:hover {
 
 .lookup__hint {
   margin: 0;
-  font-size: var(--step--1);
   color: var(--ink-muted);
 }
 
 .lookup__submit {
-  align-self: start;
-  margin-top: calc(1rem * 1.5 + 0.375rem); /* line up with the inputs, below their labels */
   min-height: 3.5rem;
-  padding: 0 1.5rem;
+  padding: 0 1.25rem;
   border: 0;
   border-radius: var(--radius-control);
   background: var(--star);
   color: var(--night);
   font: inherit;
-  font-weight: 750;
   cursor: pointer;
 }
 .lookup__submit:hover {
@@ -231,9 +283,25 @@ a:hover {
 
 .lookup__error {
   grid-column: 1 / -1;
-  margin: 0.25rem 0 0;
+  margin: 0;
   color: var(--error);
-  font-weight: 600;
+}
+
+/* Between phones and the side-by-side layout there is room for all three on one row. */
+@media (min-width: 40rem) and (max-width: 74.99rem) {
+  .lookup {
+    grid-template-columns: minmax(0, 1fr) 9.5rem auto;
+  }
+  .masthead__lede {
+    font-size: var(--type-lede);
+    line-height: 1.125;
+  }
+}
+
+@media (min-width: 40rem) {
+  .lookup__submit {
+    margin-top: calc(var(--type-read) * 1.5 + 0.375rem); /* level with the fields, below their labels */
+  }
 }
 
 /* Result */
@@ -242,18 +310,23 @@ a:hover {
   margin-top: clamp(2.5rem, 7vw, 4.5rem);
 }
 
+@media (min-width: 75rem) {
+  .result {
+    margin-top: 0;
+  }
+}
+
 .result__intro {
-  margin: 0 0 1rem;
+  margin: 0 0 1.25rem;
   max-width: 60ch;
-  font-size: var(--step--1);
   color: var(--ink-muted);
 }
 
 .result__name {
   margin: 0;
   font-family: var(--font-stencil);
-  font-weight: 900;
-  font-size: clamp(3rem, 11vw, 6.5rem);
+  font-weight: 400;
+  font-size: clamp(3rem, 13cqi, 6.5rem);
   line-height: 0.92;
   letter-spacing: 0.01em;
   color: var(--star);
@@ -261,8 +334,10 @@ a:hover {
 }
 
 .result__region {
-  margin: 0.75rem 0 0;
-  font-size: var(--step-1);
+  margin: 0.875rem 0 0;
+  font-size: var(--type-sign);
+  font-weight: 400;
+  line-height: 1.25;
   color: var(--ink-muted);
 }
 
@@ -275,19 +350,48 @@ a:hover {
   list-style: none;
 }
 .result__flag {
-  padding: 0.125rem 0.625rem;
-  border: 1px solid var(--star);
+  padding: 0.125rem 0.75rem;
+  border: 2px solid var(--star);
   border-radius: 999px;
-  font-size: var(--step--1);
-  font-weight: 650;
+}
+
+.result__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-top: 1.5rem;
+}
+
+.result__status {
+  min-width: 0;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.result__columns {
+  margin-top: 2.5rem;
+}
+
+/* The system's facts beside its planets, when the readout is wide enough for both. */
+@container result (min-width: 56rem) {
+  .result__columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    column-gap: 2.5rem;
+    align-items: start;
+  }
+  .result__columns > .result__bodies {
+    margin-top: 0;
+  }
 }
 
 .manifest {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0.625rem 2rem;
-  margin: 2rem 0 0;
-  padding-top: 1.5rem;
+  gap: 0.5rem 2rem;
+  margin: 0;
+  padding-top: 1.25rem;
   border-top: 1px solid var(--rule);
   max-width: 44rem;
 }
@@ -296,12 +400,9 @@ a:hover {
 }
 .manifest dd {
   margin: 0;
-  font-weight: 600;
 }
 .manifest__note {
   display: block;
-  font-weight: 400;
-  font-size: var(--step--1);
   color: var(--ink-muted);
 }
 .manifest__note + .manifest__note {
@@ -320,24 +421,27 @@ a:hover {
 }
 
 .result__section {
-  margin-top: 2.75rem;
+  margin-top: 3rem;
 }
 
 .result__heading {
-  margin: 0 0 0.25rem;
-  font-size: var(--step-1);
-  font-weight: 700;
+  margin: 0 0 1rem;
+  font-size: var(--type-sign);
+  font-weight: 400;
+  line-height: 1.25;
 }
 
 .result__aside {
-  margin: 0 0 1rem;
+  margin: 1.25rem 0 0;
   max-width: 60ch;
-  font-size: var(--step--1);
   color: var(--ink-muted);
 }
 
-.result__aside.manifest__accuracy {
-  margin-top: 1.25rem;
+.result__warning {
+  margin: 0 0 1.25rem;
+  max-width: 60ch;
+  padding-left: 0.875rem;
+  border-left: 3px solid var(--ink-muted);
 }
 
 .bodies {
@@ -357,117 +461,92 @@ a:hover {
   border-bottom: 1px solid var(--rule);
 }
 .bodies__number {
-  grid-row: span 2;
+  grid-row: span 3;
   font-family: var(--font-stencil);
-  font-weight: 800;
-  font-size: 2rem;
+  font-weight: 400;
+  font-size: 2.25rem;
   line-height: 1;
   color: var(--star);
 }
 .bodies__name {
-  font-weight: 650;
+  font-size: var(--type-sign);
+  font-weight: 400;
+  line-height: 1.25;
 }
 .bodies__meta {
-  font-size: var(--step--1);
   color: var(--ink-muted);
-  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
-}
-
-.result__warning {
-  margin: 0 0 1rem;
-  max-width: 60ch;
-  padding-left: 0.875rem;
-  border-left: 3px solid var(--ink-muted);
-  font-size: var(--step--1);
 }
 
 /* Ships */
 
-.seed {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-}
-
-.manifest--ships {
-  margin-top: 1.25rem;
-}
-
-.result__aside.ships__squids {
-  margin: 1rem 0 0;
-}
-
 .ships-all {
   margin-top: 1.5rem;
-  max-width: 44rem;
+  container-type: inline-size;
 }
 .ships-all__summary {
   width: fit-content;
   padding: 0.5rem 0;
-  font-weight: 650;
   cursor: pointer;
 }
 .ships-all__summary::marker {
   color: var(--star);
 }
-.ships-all[open] > .ships-all__summary {
-  margin-bottom: 0.5rem;
-}
 
 .ships {
-  width: 100%;
-  border-collapse: collapse;
+  margin-top: 1.25rem;
 }
+
+/* The full list in two columns, when each still fits a type and its seed side by side. */
+@container (min-width: 55rem) {
+  .ships {
+    columns: 2;
+    column-gap: 2.5rem;
+  }
+}
+
 .ships__group {
-  padding: 1.25rem 0 0.375rem;
-  text-align: left;
-  font-size: var(--step--1);
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  break-inside: avoid;
+}
+.ships__group + .ships__group {
+  margin-top: 1.5rem;
+}
+
+.ships__heading {
+  margin: 0 0 0.375rem;
+  font-size: var(--type-read);
   color: var(--ink-muted);
 }
-.ships tbody:first-of-type .ships__group {
-  padding-top: 0.5rem;
+
+.ships__list {
+  margin: 0;
 }
-.ships td {
+
+/* A ship's type and seed share a line where they fit; otherwise the seed
+ * drops below, still against the right edge. A note takes a line of its own. */
+.ships__row {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 1rem;
   padding: 0.4375rem 0;
   border-top: 1px solid var(--rule);
-  vertical-align: baseline;
 }
-.ships tbody tr:last-child td {
+.ships__row:last-child {
   border-bottom: 1px solid var(--rule);
 }
 .ships__type {
-  padding-right: 1rem;
-}
-.ships__note {
-  display: block;
-  font-size: var(--step--1);
-  color: var(--ink-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .ships__seed {
-  text-align: right;
-  white-space: nowrap;
-  font-size: var(--step--1);
+  margin: 0 0 0 auto;
   color: var(--ink-muted);
 }
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.result__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem 1rem;
-  margin-top: 2rem;
+.ships__note {
+  flex-basis: 100%;
+  margin: 0.125rem 0 0;
+  max-width: 60ch;
+  color: var(--ink-muted);
 }
 
 .button-secondary {
@@ -478,18 +557,10 @@ a:hover {
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-weight: 650;
   cursor: pointer;
 }
 .button-secondary:hover {
   background: color-mix(in srgb, var(--star) 14%, transparent);
-}
-
-.result__status {
-  min-width: 0;
-  font-size: var(--step--1);
-  color: var(--ink-muted);
-  overflow-wrap: anywhere;
 }
 
 .result__next p {
@@ -504,7 +575,6 @@ a:hover {
   margin-top: 5rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--rule);
-  font-size: var(--step--1);
   color: var(--ink-muted);
 }
 .colophon p {
@@ -539,17 +609,7 @@ a:hover {
   }
 }
 
-@media (max-width: 40rem) {
-  .lookup {
-    grid-template-columns: 7rem minmax(0, 1fr);
-  }
-  .lookup__field--address {
-    grid-column: 1 / -1;
-  }
-  .lookup__submit {
-    margin-top: calc(1rem * 1.5 + 0.375rem);
-    width: 100%;
-  }
+@media (max-width: 39.99rem) {
   .manifest {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
