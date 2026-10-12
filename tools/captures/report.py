@@ -769,7 +769,7 @@ def _region_label(region: tuple[int, int]) -> str:
     return f"galaxy {galaxy} region X {x}, Y {y}, Z {z}"
 
 
-# Where cGcSolarSystemData keeps the system's NebulaSeed (its Sky's), as NMS.py 180383 places it: the
+# Where cGcSolarSystemData keeps the system's NebulaSeed (its Sky's), as NMS.py 180383 and 181442 place it: the
 # value the game's star count compares with its sky globals' chances (see the mod's StarCount).
 NEBULA_SEED_AT = 0x2080
 

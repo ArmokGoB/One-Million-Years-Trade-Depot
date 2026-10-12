@@ -4,7 +4,7 @@
 
 The mod only reads. It changes nothing in the game or your save, and it runs on top of [NMS.py](https://github.com/monkeyman192/NMS.py).
 
-**Status:** version 0.1 recorded the first systems in the game, with NMS.py 180383.0. Versions 0.4.0, 0.5.0, 0.5.2 and 0.7.0 have run in the game too: all of their hooks attached, the generation traces, names and locators they recorded check out, and the arrival tone plays. Version 0.5.1 crashed the game when a save loaded or when it attached to a running game; 0.5.2 took out the change that did it. In its first run, 0.7.0 recorded where each planet is, and the parts of every ship in the system's list, the exotic's included, while the system was still loading; the parts it read match the raw bytes it kept. Not yet tried in the game: finding a game that was already running when the mod attached. To record ship parts, 0.7.0 watches a function the game calls for everything it loads. If the game crashes or loads slowly with it, set `RECORD_SHIP_PARTS = False` near the top of `system_capture.py` and the mod leaves that function alone. Version 0.8.1 ran in the game with its multi-tool hook attached and recorded two items the game offered, but nothing at a minor settlement's multi-tool offer or at the Space Anomaly. Version 0.8.2 ran in the game too and recorded the multi-tool in a space station's case with its inventories, but without its model: it paired an item only with a model built moments before, and the game builds the multi-tools a system offers as it loads the system, minutes earlier. Version 0.9.0 paired them however long ago the model was built. Version 0.10.0 ran in the game, on a newer build of it than earlier versions had: all of its hooks attached, it paired the multi-tool in each space station's case with its model, and recorded the guilds you clicked. It recorded none of the systems' sets of multi-tools, which the game builds just before it generates a system, not while it does, and no stars: the game's star count function changes a register it may not, to check the game mode, so 0.10.0 didn't call it. Its code shows how it counts, though, and 0.11.0 works each system's count out the same way, without calling it, and takes the multi-tools built just before a system's generation into its set. Version 0.11.0 ran in the game, on the same build as 0.10.0: all of its hooks attached, and it recorded the set of multi-tools of all 19 systems visited, each starting with the quick run the game built just before generating the system, and each system's stars, which screenshots of its two systems with more than one star confirm (see [Record multi-tools](#record-multi-tools) and [Record stars and guilds](#record-stars-and-guilds)). It said the count only at the end of a long line, where it was easy to miss, so 0.11.1 gives it a line of its own on the tab. If the mod misbehaves, the log file (see below) is the most useful thing to send.
+**Status:** version 0.11.1. In its last run in the game, on Steam build 25732212 with NMS.py 181442.0, all of its hooks attached, and it recorded 24 systems with their ship lists, ship parts and stars, and the multi-tools of each but the one the save loaded into. Not yet tried in the game: attaching to a game that's already running. [CHANGELOG.md](CHANGELOG.md) says what changed in each version and how each did in the game. If the mod misbehaves, the log file (see below) is the most useful thing to send.
 
 ## What you need
 
@@ -59,7 +59,7 @@ Then download [`system_capture.py`](system_capture.py) into a folder of its own,
 
 The records go to `captures\systems.jsonl` and the logs to `logs\`, both next to `system_capture.py`. Each session adds to the same file.
 
-If you arrive somewhere and don't hear the notes, click **Record the current system now** on the TradeDepotCapture tab. If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet.
+If you arrive somewhere and don't hear the notes, click **Record the current system now** on the TradeDepotCapture tab. If the log says that some values look wrong for every system, NMS.py probably doesn't match your game version yet. To record ship parts, the mod watches a function the game calls for everything it loads; if the game crashes or loads slowly with the mod, set `RECORD_SHIP_PARTS = False` near the top of `system_capture.py` and the mod leaves that function alone.
 
 ## Record multi-tools
 
@@ -142,7 +142,7 @@ python3 tools/captures/report.py --namegen ../nms_namegen mods/captures/systems.
 The tests run anywhere, not only on Windows: [`tests/harness.py`](tests/harness.py) stubs the Windows-only packages so NMS.py's real struct definitions and pyMHF's hook decorators load, and the tests build fake game memory from those structs.
 
 ```sh
-python3 -m pip install --no-deps nmspy==180383.0 pymhf==0.2.4
+python3 -m pip install --no-deps nmspy==181442.0 pymhf==0.2.4
 python3 -m pip install typing_extensions packaging tomlkit
 python3 -m unittest discover -s mods/tests -v
 NMS_NAMEGEN=../nms_namegen python3 -m unittest discover -s mods/tests -v   # plus the generator comparison (needs numpy)
