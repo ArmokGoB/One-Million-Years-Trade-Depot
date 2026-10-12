@@ -46,7 +46,7 @@ export const MEASURED_ACCURACY = {
  * did `planetNames.matched` of the `planetNames.checked` planet names the
  * game generated while they were recorded.
  */
-export const CAPTURE_CHECKS = { systems: 100, outlawSystems: 11, planetNames: { matched: 5792, checked: 6010 } } as const;
+export const CAPTURE_CHECKS = { systems: 123, outlawSystems: 11, planetNames: { matched: 7139, checked: 7414 } } as const;
 
 /**
  * How the ship prediction fares against the systems recorded in game with
@@ -58,8 +58,8 @@ export const CAPTURE_CHECKS = { systems: 100, outlawSystems: 11, planetNames: { 
  * ShipsInfo.uncertain flags, and how many the first guess got.
  */
 export const SHIP_ACCURACY = {
-  matched: 95,
-  recorded: 100,
+  matched: 118,
+  recorded: 123,
   workedOutFrom: 66,
   twoMoons: { firstGuess: 5, recorded: 10 },
 } as const;
@@ -69,22 +69,22 @@ export const SHIP_ACCURACY = {
  * mod recorded as the game built them: every one of the `recorded` exotics,
  * `squids` of them squids, on the side of the line the prediction puts it.
  */
-export const SQUID_CHECKS = { recorded: 41, squids: 9 } as const;
+export const SQUID_CHECKS = { recorded: 64, squids: 11 } as const;
 
 /**
  * How the star count fares against the game's own: the same in every one of
  * the `counted` systems whose stars the capture mod counted as the game does,
  * `several` of them with more than one star.
  */
-export const STAR_CHECKS = { counted: 20, several: 3 } as const;
+export const STAR_CHECKS = { counted: 43, several: 8 } as const;
 
 /**
  * The giant planets the capture mod has recorded (the game flags their systems
- * IsGiantSystem): `recorded` of them, `gas` gas giants (also IsGasGiantSystem)
- * and `lush` lush ones. Players have found giants of other biomes too; what
- * decides a giant's biome isn't known.
+ * IsGiantSystem): `recorded` of them, `gas` gas giants (also IsGasGiantSystem),
+ * `lush` lush ones and `barren` barren ones. Players have found giants of other
+ * biomes too; what decides a giant's biome isn't known.
  */
-export const GIANT_CHECKS = { recorded: 7, gas: 6, lush: 1 } as const;
+export const GIANT_CHECKS = { recorded: 19, gas: 17, lush: 1, barren: 1 } as const;
 
 /**
  * How often the civilian slots held a solar ship in the systems recorded:
@@ -93,7 +93,7 @@ export const GIANT_CHECKS = { recorded: 7, gas: 6, lush: 1 } as const;
  * those never did.
  */
 export const SOLAR_COUNTS = {
-  shuttle: [67, 595],
+  shuttle: [85, 746],
   outlawShuttle: [66, 77],
   outlawOther: [13, 143],
 } as const;
