@@ -293,8 +293,8 @@ function render(d: SystemDescription): void {
     `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`,
     d.gasGiant
       ? `The planet is a giant, every other body its moon. Of the ${count(giants.recorded)} giants recorded in ` +
-          `game, ${count(giants.gas)} were gas giants and ${count(giants.lush)} a lush giant; which kind this one ` +
-          `is can't be worked out yet.`
+          `game, ${count(giants.gas)} were gas giants, ${count(giants.lush)} a lush giant and ` +
+          `${count(giants.barren)} a barren giant; which kind this one is can't be worked out yet.`
       : undefined,
   );
   row("Portal address", d.portalCode);
