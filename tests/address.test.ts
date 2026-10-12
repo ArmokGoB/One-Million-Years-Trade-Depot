@@ -6,7 +6,7 @@ import {
   formatPortalCode,
   parseAnyAddress,
   parseGalacticCoordinates,
-  parseGalaxy,
+  parseGalaxyNumber,
   parsePortalCode,
   portalParts,
   toGalacticCoordinates,
@@ -62,11 +62,18 @@ describe("signal-booster galactic coordinates", () => {
 });
 
 describe("galaxy numbers", () => {
-  it("accepts 0-255 only", () => {
-    expect(parseGalaxy("0")).toBe(0);
-    expect(parseGalaxy(255)).toBe(255);
-    expect(() => parseGalaxy("256")).toThrow(AddressError);
-    expect(() => parseGalaxy("-1")).toThrow(AddressError);
-    expect(() => parseGalaxy("1.5")).toThrow(AddressError);
+  it("numbers galaxies from 1 to 256, as players do, and gives the game's index, from 0", () => {
+    expect(parseGalaxyNumber("1")).toBe(0);
+    expect(parseGalaxyNumber(" 2 ")).toBe(1);
+    expect(parseGalaxyNumber(256)).toBe(255);
+  });
+  it("says there are only 256 galaxies of a number past the last", () => {
+    expect(() => parseGalaxyNumber("257")).toThrow(/only 256 galaxies/);
+    expect(() => parseGalaxyNumber("100000")).toThrow(AddressError);
+  });
+  it("turns down anything else", () => {
+    for (const input of ["0", "-1", "1.5", "", "two", "0x10", "1e2"]) {
+      expect(() => parseGalaxyNumber(input), input).toThrow(/^Galaxy is a number from 1 \(Euclid\) to 256\.$/);
+    }
   });
 });

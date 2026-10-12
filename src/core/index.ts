@@ -5,6 +5,7 @@
 
 export * from "./address";
 export * from "./describe";
+export { GALAXY_NAMES, galaxyLabel, galaxyName } from "./galaxies";
 export { indexPrimedPRNG } from "./iprng";
 export { generateName } from "./namegen";
 export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";

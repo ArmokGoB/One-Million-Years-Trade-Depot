@@ -6,7 +6,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 
 ## What it shows today
 
-- System name and region name
+- System name, region name and the galaxy's name
 - Star colour, faction (or uncharted / abandoned), economy, wealth and conflict
 - How many stars it has: whether it's a binary or trinary system
 - Whether it is a region's black hole or Atlas Interface system, or a system of one giant planet and its moons
@@ -15,7 +15,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 - Whether the system's exotic is a squid
 - A shareable link for every lookup
 
-It accepts a 12-digit portal address (`009A039BAE4B`) or signal-booster coordinates (`064A:0082:01B9:009A`), plus a galaxy number (0 is Euclid). Both examples are the Pilgrim Star, which the site shows until you look up another system.
+It accepts a 12-digit portal address (`009A039BAE4B`) or signal-booster coordinates (`064A:0082:01B9:009A`), plus the galaxy's number, from 1 (Euclid) to 256. Both examples are the Pilgrim Star, which the site shows until you look up another system.
 
 How often each field matches what players recorded in game, measured by nms_namegen against 1,000 hand-recorded post-Origins systems (2026-08-23):
 
@@ -92,7 +92,7 @@ Pushes to `main` deploy the site through GitHub Actions.
 ## Ground rules
 
 - Free and non-commercial.
-- No game models, textures or other art in this repository. The only game-derived data is the name-generation tables, taken from nms_namegen.
+- No game models, textures or other art in this repository. The only game-derived data is the name-generation tables, taken from nms_namegen, and the galaxies' names.
 - Fan-made and not affiliated with or endorsed by Hello Games. No Man's Sky is a trademark of Hello Games Ltd.
 
 ## Credits

@@ -93,10 +93,18 @@ export function parseAnyAddress(input: string): bigint {
   return input.includes(":") ? parseGalacticCoordinates(input) : parsePortalCode(input);
 }
 
-export function parseGalaxy(input: string | number): number {
-  const n = typeof input === "number" ? input : Number(String(input).trim());
-  if (!Number.isInteger(n) || n < 0 || n >= GALAXY_COUNT) {
-    throw new AddressError("Galaxy is a number from 0 (Euclid) to 255.");
+/**
+ * A galaxy as players number it, from 1 (Euclid) to 256, as the game's index
+ * for it, from 0 (see galaxies.ts).
+ */
+export function parseGalaxyNumber(input: string | number): number {
+  const text = String(input).trim();
+  const n = /^[0-9]+$/.test(text) ? Number(text) : NaN;
+  if (n > GALAXY_COUNT) {
+    throw new AddressError(`There are only ${GALAXY_COUNT} galaxies: enter a number from 1 (Euclid) to ${GALAXY_COUNT}.`);
   }
-  return n;
+  if (!(n >= 1)) {
+    throw new AddressError(`Galaxy is a number from 1 (Euclid) to ${GALAXY_COUNT}.`);
+  }
+  return n - 1;
 }
