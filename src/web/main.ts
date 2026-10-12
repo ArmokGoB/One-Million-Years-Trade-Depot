@@ -9,11 +9,14 @@ import {
   AddressError,
   CAPTURE_CHECKS,
   describeSystem,
+  GALAXY_COUNT,
+  galaxyLabel,
+  galaxyName,
   GIANT_CHECKS,
   formatPortalCode,
   MEASURED_ACCURACY,
   parseAnyAddress,
-  parseGalaxy,
+  parseGalaxyNumber,
   SHIP_ACCURACY,
   SOLAR_COUNTS,
   SQUID_CHECKS,
@@ -28,6 +31,7 @@ import {
 const form = document.querySelector<HTMLFormElement>("#lookup")!;
 const addressInput = document.querySelector<HTMLInputElement>("#address")!;
 const galaxyInput = document.querySelector<HTMLInputElement>("#galaxy")!;
+const galaxyHint = document.querySelector<HTMLParagraphElement>("#galaxy-hint")!;
 const errorBox = document.querySelector<HTMLParagraphElement>("#lookup-error")!;
 const result = document.querySelector<HTMLElement>("#result")!;
 
@@ -54,7 +58,11 @@ function count(n: number): string {
   return ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"][n] ?? String(n);
 }
 
-/** The address of this page with a system in it, which opens the site on that system. */
+/**
+ * The address of this page with a system in it, which opens the site on that system. Its galaxy
+ * parameter is the galaxy's index, counting from 0 like the game, as in the links the site gave
+ * before it numbered galaxies from 1, so that those still open the same system.
+ */
 function systemLink(portalCode: string, galaxy: number): URL {
   const url = new URL(window.location.href);
   url.searchParams.set("address", portalCode);
@@ -62,8 +70,19 @@ function systemLink(portalCode: string, galaxy: number): URL {
   return url;
 }
 
-function galaxyLabel(galaxy: number): string {
-  return galaxy === 0 ? "0 (Euclid)" : String(galaxy);
+/** The galaxy number the form shows for a link's galaxy parameter (see systemLink). */
+function galaxyNumberText(parameter: string | null): string {
+  const index = (parameter ?? "0").trim();
+  return /^[0-9]+$/.test(index) ? String(Number(index) + 1) : index;
+}
+
+/** Under the galaxy field, the name of the galaxy whose number is in it. */
+function showGalaxyName(): void {
+  try {
+    galaxyHint.textContent = galaxyName(parseGalaxyNumber(galaxyInput.value));
+  } catch {
+    galaxyHint.textContent = `From 1 (Euclid) to ${GALAXY_COUNT}.`;
+  }
 }
 
 function showError(message: string, field: HTMLInputElement): void {
@@ -253,7 +272,7 @@ function render(d: SystemDescription): void {
   document.documentElement.dataset.star = d.starColour;
 
   const name = el("h2", "result__name result__name--fresh", d.name);
-  const region = el("p", "result__region", `${d.region}, galaxy ${galaxyLabel(d.galaxy)}`);
+  const region = el("p", "result__region", `${d.region}, ${galaxyLabel(d.galaxy)}`);
 
   const flags: string[] = [];
   if (d.stars > 1) flags.push(`${MULTIPLE_STARS[d.stars]} star system`);
@@ -387,7 +406,7 @@ function lookup(addressText: string, galaxyText: string, updateUrl: boolean): vo
     return;
   }
   try {
-    galaxy = parseGalaxy(galaxyText);
+    galaxy = parseGalaxyNumber(galaxyText);
   } catch (e) {
     showError(e instanceof AddressError ? e.message : "That galaxy number couldn't be read.", galaxyInput);
     return;
@@ -404,6 +423,7 @@ form.addEventListener("submit", (event) => {
   event.preventDefault();
   lookup(addressInput.value, galaxyInput.value, true);
 });
+galaxyInput.addEventListener("input", showGalaxyName);
 
 // Restore a shared link, or start on the Pilgrim Star (064A:0082:01B9:009A on a signal booster) in Euclid.
 // The site shows generated names, not the ones players give, so an intro says which system this is.
@@ -411,11 +431,13 @@ const DEFAULT_ADDRESS = "009A039BAE4B";
 const params = new URLSearchParams(window.location.search);
 const sharedAddress = params.get("address");
 if (sharedAddress) {
-  galaxyInput.value = params.get("galaxy") ?? "0";
+  galaxyInput.value = galaxyNumberText(params.get("galaxy"));
+  showGalaxyName();
   addressInput.value = sharedAddress;
   lookup(sharedAddress, galaxyInput.value, false);
 } else {
-  galaxyInput.value = "0";
+  galaxyInput.value = "1";
+  showGalaxyName();
   lookup(DEFAULT_ADDRESS, galaxyInput.value, false);
   result.prepend(
     el(

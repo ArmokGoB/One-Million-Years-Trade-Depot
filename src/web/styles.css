@@ -228,6 +228,7 @@ a:hover {
 .lookup__field {
   display: grid;
   gap: 0.375rem;
+  min-width: 0; /* so an input never spills into the next column */
 }
 
 .lookup__input--galaxy {
@@ -303,7 +304,7 @@ a:hover {
 }
 
 /* Between phones and the side-by-side layout there is room for all three on one row. */
-@media (min-width: 40rem) and (max-width: 74.99rem) {
+@media (min-width: 45rem) and (max-width: 74.99rem) {
   .lookup {
     grid-template-columns: minmax(0, 1fr) 9.5rem auto;
   }
@@ -313,7 +314,7 @@ a:hover {
   }
 }
 
-@media (min-width: 40rem) {
+@media (min-width: 45rem) {
   .lookup__submit {
     margin-top: calc(var(--type-read) * 1.5 + 0.375rem); /* level with the fields, below their labels */
   }
