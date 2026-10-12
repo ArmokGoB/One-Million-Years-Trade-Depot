@@ -151,13 +151,28 @@ a:hover {
   }
 }
 
-/* The lookup stays in view as the result scrolls, on screens tall enough to
- * show all of it. Its own wrapper ends where the result does, so it never
- * slides over the footer. */
-@media (min-width: 75rem) and (min-height: 50rem) {
+/* The lookup stays in view as the result scrolls: the whole column on screens
+ * tall enough to show all of it, and on shorter ones, such as most laptops',
+ * the form, while the masthead scrolls away. The column ends where the result
+ * does, so neither slides over the footer. */
+@media (min-width: 75rem) and (min-height: 28rem) {
   .page__console {
+    align-self: stretch; /* as tall as the result, so the form can stay the whole way down */
+  }
+  .lookup {
     position: sticky;
     top: var(--page-top);
+  }
+}
+
+@media (min-width: 75rem) and (min-height: 50rem) {
+  .page__console {
+    align-self: start;
+    position: sticky;
+    top: var(--page-top);
+  }
+  .lookup {
+    position: static;
   }
 }
 
