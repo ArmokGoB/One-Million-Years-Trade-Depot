@@ -3,7 +3,7 @@
 // System generation: name, attributes and body seeds from a portal code.
 // Ported line for line from nms_namegen (MIT) system.py; see THIRD_PARTY_NOTICES.md.
 // The comments explaining *why* each draw is read the way it is live in the
-// reference implementation; they are summarised here.
+// reference implementation; they are summarized here.
 
 import { indexPrimedPRNG } from "./iprng";
 import { capitalize, generateName, toRoman } from "./namegen";
@@ -69,7 +69,7 @@ export interface PlanetSeeds {
   moon_count: number;
   /** Experimental in the reference: per-slot size class, not validated per slot. */
   sizes: number[];
-  /** Every body in order, one per seed; empty for a giant-planet layout, which isn't modelled. */
+  /** Every body in order, one per seed; empty for a giant-planet layout, which isn't modeled. */
   bodies: Body[];
 }
 

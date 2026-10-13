@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // 64-bit helpers. All seed arithmetic in this project uses BigInt so that it
-// matches the game's fixed-width integer maths exactly, the same way the
+// matches the game's fixed-width integer math exactly, the same way the
 // Python reference (nms_namegen) relies on unbounded ints plus explicit masks.
 
 export const MASK32 = 0xffff_ffffn;
@@ -22,13 +22,13 @@ export function swap16(x: bigint): bigint {
 }
 
 /**
- * The 64-bit finaliser the generator uses to turn a pair of words into a
+ * The 64-bit finalizer the generator uses to turn a pair of words into a
  * seed: xor-shift by 33, multiply, twice, then a final xor-shift.
  */
 export const MIX_A = 0x64dd81482cbd31d7n;
 export const MIX_B = 0xe36aa5c613612997n;
 
-/** The finaliser itself, applied to a 64-bit value. */
+/** The finalizer itself, applied to a 64-bit value. */
 export function mix64(value: bigint): bigint {
   let register = (((value >> 33n) ^ value) * MIX_A) & MASK64;
   register = (((register >> 33n) ^ register) * MIX_B) & MASK64;

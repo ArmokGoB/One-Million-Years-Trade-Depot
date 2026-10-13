@@ -7,23 +7,13 @@ import "./styles.css";
 
 import {
   AddressError,
-  CAPTURE_CHECKS,
   describeSystem,
   GALAXY_COUNT,
   galaxyLabel,
   galaxyName,
-  GIANT_CHECKS,
-  GUILD_CHECKS,
   formatPortalCode,
-  MEASURED_ACCURACY,
-  MULTITOOL_CHECKS,
   parseAnyAddress,
   parseGalaxyNumber,
-  SHIP_ACCURACY,
-  SOLAR_COUNTS,
-  SQUID_CHECKS,
-  SQUID_EDGES,
-  STAR_CHECKS,
   type ShipGroup,
   type ShipsInfo,
   type SquidCall,
@@ -49,15 +39,8 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
-
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
-}
-
-/** Small counts in words, as running text reads them. */
-function count(n: number): string {
-  return ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"][n] ?? String(n);
 }
 
 /**
@@ -104,10 +87,10 @@ function clearError(): void {
 /** What a system with more than one star is called, by how many. */
 const MULTIPLE_STARS: Record<number, string> = { 2: "Binary", 3: "Trinary" };
 
-/** Only the system's star colour is known, so a system with more than one star says so of the others. */
+/** Only the system's star color is known, so a system with more than one star says so of the others. */
 const OTHER_STARS: Record<number, string> = {
-  2: "The other star's colour isn't worked out yet.",
-  3: "The other two stars' colours aren't worked out yet.",
+  2: "The other star's color isn't worked out yet.",
+  3: "The other two stars' colors aren't worked out yet.",
 };
 
 /** The order and headings of the full ship list. */
@@ -152,9 +135,6 @@ function squidPhrase(call: SquidCall): string {
   return call.close ? `probably ${verdict}` : verdict;
 }
 
-/** How many exotics in one fall where the line between squids and the rest could still be, roughly. */
-const closeOdds = Math.round(2 ** 32 / (SQUID_EDGES.squid - SQUID_EDGES.notSquid - 1) / 100) * 100;
-
 /**
  * The exotic in the key: whether it's a squid, then its seed, for each way
  * the system's two-moon planets can have their moons arranged.
@@ -176,50 +156,18 @@ function exoticEntry(ships: ShipsInfo): HTMLElement {
   }
   const dd = el("dd", undefined, verdict, seeds);
 
-  const close = calls.filter((call) => call.close).length;
-  if (close) {
-    const which =
-      close === calls.length
-        ? calls.length === 1
-          ? "Its seed falls"
-          : "These seeds fall"
-        : close === 1
-          ? "One of these seeds falls"
-          : "Some of these seeds fall";
-    dd.append(
-      el(
-        "span",
-        "manifest__note",
-        `${which} in the narrow stretch, about 1 exotic in ${closeOdds}, where the line between squids and ` +
-          `other exotics hasn't been pinned down.`,
-      ),
-    );
-  }
   return dd;
 }
 
 function shipsSection(d: SystemDescription): HTMLElement {
   const ships = d.ships;
-  const { matched, recorded, workedOutFrom } = SHIP_ACCURACY;
-  const intro = el(
-    "p",
-    "result__aside",
-    `Predicted from the address alone, by a model of the game's generator worked out from ` +
-      `${workedOutFrom} systems recorded in game. Of the ${recorded} systems recorded so far, ` +
-      `${recorded - workedOutFrom} of them since, it gets every ship's seed right in ${matched}. ` +
-      `The other ${count(recorded - matched)} each have a planet with two moons, which the game arranges in one ` +
-      `of two ways, and match once they're the other way round.`,
-  );
-  const { firstGuess, recorded: twoMoonSystems } = SHIP_ACCURACY.twoMoons;
   const warning = ships.uncertain
     ? [
         el(
           "p",
           "result__warning",
-          `Less certain here: this system has ${ships.uncertain}, and every seed depends on which. ` +
-            `The model can't tell yet. The list assumes the way that was right in ${count(firstGuess)} of the ` +
-            `${count(twoMoonSystems)} such systems recorded; the exotic and crash-site seeds for ` +
-            `${ships.alternatives.length > 1 ? "the other ways" : "the other way"} are given too.`,
+          `Less certain here: this system has ${ships.uncertain}, and every seed depends on which. The exotic and ` +
+            `crash-site seeds for ${ships.alternatives.length > 1 ? "the other ways" : "the other way"} are given too.`,
         ),
       ]
     : [];
@@ -234,40 +182,14 @@ function shipsSection(d: SystemDescription): HTMLElement {
       ships.alternatives.map((a) => a.crashSite),
     ),
   );
-  const squids = el(
-    "p",
-    "result__aside",
-    `Whether the exotic is a squid follows from its seed: the game picks the exotic's body with the first ` +
-      `number it draws from that seed, and makes about 1 exotic in 21 a squid. That held for all ` +
-      `${SQUID_CHECKS.recorded} exotics recorded in game, ${count(SQUID_CHECKS.squids)} of them squids.`,
-  );
-
-  const [shuttleSolar, shuttleSlots] = SOLAR_COUNTS.shuttle;
-  const [outlawSolar, outlawSlots] = SOLAR_COUNTS.outlawShuttle;
-  const [otherSolar, otherSlots] = SOLAR_COUNTS.outlawOther;
-  const solar = d.pirate
-    ? `In outlaw systems like this one, ${outlawSolar} of the ${outlawSlots} shuttle slots recorded held a solar ` +
-      `ship, and so did ${otherSolar} of the ${otherSlots} other civilian slots.`
-    : `Outside outlaw systems, ${shuttleSolar} of the ${shuttleSlots} shuttle slots recorded held a solar ship, ` +
-      `and no other slot did.`;
   const all = el(
     "details",
     "ships-all",
     el("summary", "ships-all__summary", `The game's full list (${ships.ships.length} slots)`),
-    el(
-      "p",
-      "result__aside",
-      "This is the list the game builds for the system, laid out the same way in every system recorded so far. " +
-        "Not every slot is a ship you can meet there: it holds a frigate of every type, including types " +
-        "whose only known frigates are expedition rewards. " +
-        "Only the civilian slots vary: how many haulers, fighters and explorers depends on the dominant race, " +
-        "and the game makes some of them solar ships in a way not worked out yet. " +
-        solar,
-    ),
     shipList(ships),
   );
 
-  return el("section", "result__section", el("h3", "result__heading", "Ships"), ...warning, key, intro, squids, all);
+  return el("section", "result__section", el("h3", "result__heading", "Ships"), ...warning, key, all);
 }
 
 /** The system's own multi-tools: the first run of its set, each with its seed. */
@@ -278,25 +200,13 @@ function multitoolsSection(d: SystemDescription): HTMLElement {
     const term = tool.kind === "Standard" ? `Standard ${++standard}` : tool.kind;
     key.append(el("dt", undefined, term), el("dd", undefined, tool.seed));
   }
-  const { sets, offered, offeredFirst } = MULTITOOL_CHECKS;
-  const sale =
-    d.uncharted || d.abandoned
-      ? ""
-      : `The space station sells one of the standard ones: all ${offered} recorded for sale were, ` +
-        `${offeredFirst} of them the first. `;
-  const intro = el(
-    "p",
-    "result__aside",
-    `The system's own multi-tools, which the game builds as you arrive: ${count(standard)} standard ones here, ` +
-      `then a royal, a Sentinel and an Atlas one, each with its seed. Worked out from the address, they matched ` +
-      `the game in all ${sets} systems recorded. ${sale}Three more standard ones come from a seed not worked out ` +
-      `yet, probably the stock of the system's settlements, which may change over time.`,
-  );
+  const sale = d.uncharted || d.abandoned ? "" : "The space station sells one of the standard ones, most often the first. ";
+  const intro = el("p", "result__aside", `${sale}Three more standard ones aren't worked out yet.`);
   return el("section", "result__section", el("h3", "result__heading", "Multi-tools"), key, intro);
 }
 
 function render(d: SystemDescription): void {
-  document.documentElement.dataset.star = d.starColour;
+  document.documentElement.dataset.star = d.starColor;
 
   const name = el("h2", "result__name result__name--fresh", d.name);
   const region = el("p", "result__region", `${d.region}, ${galaxyLabel(d.galaxy)}`);
@@ -316,7 +226,7 @@ function render(d: SystemDescription): void {
     manifest.append(el("dt", undefined, term), dd);
   };
 
-  row("Star colour", el("span", undefined, el("span", "swatch"), d.starColour));
+  row("Star color", el("span", undefined, el("span", "swatch"), d.starColor));
   row("Stars", String(d.stars), OTHER_STARS[d.stars]);
   row("Faction", d.faction);
   if (!d.uncharted) {
@@ -324,49 +234,12 @@ function render(d: SystemDescription): void {
     row("Wealth", d.wealth);
     row("Conflict", d.conflict);
   }
-  const checks = CAPTURE_CHECKS;
-  if (d.pirate) {
-    row(
-      "Outlaws",
-      "Likely outlaw-controlled",
-      `Matched the game in all ${checks.systems} systems recorded so far, ` +
-        `${count(checks.outlawSystems)} of them outlaw systems.`,
-    );
-  }
-  row(
-    "Guild envoy",
-    d.guild,
-    d.uncharted || d.abandoned
-      ? "The region's. None has been recorded in an abandoned or uncharted system yet."
-      : "The same in every space station of the region.",
-  );
-  const giants = GIANT_CHECKS;
-  row(
-    "Bodies",
-    `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`,
-    d.gasGiant
-      ? `The planet is a giant, every other body its moon. Of the ${count(giants.recorded)} giants recorded in ` +
-          `game, ${count(giants.gas)} were gas giants, ${count(giants.lush)} a lush giant and ` +
-          `${count(giants.barren)} a barren giant; which kind this one is can't be worked out yet.`
-      : undefined,
-  );
+  if (d.pirate) row("Outlaws", "Likely outlaw-controlled");
+  if (d.uncharted || d.abandoned) row("Guild envoy", `${d.guild} (the region's)`);
+  else row("Guild envoy", d.guild, "The same in every space station of the region.");
+  row("Bodies", `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`);
   row("Portal address", d.portalCode);
   row("Galactic coordinates", d.galacticCoordinates);
-
-  const a = MEASURED_ACCURACY;
-  const lowest = Math.min(a.starColour, a.dominantRace, a.economy, a.wealth, a.conflict, a.planetAndMoonCounts);
-  const accuracy = el(
-    "p",
-    "result__aside",
-    `Star colour, faction, economy, wealth, conflict and body counts each match at least ${pct(lowest)} ` +
-      `of 1,000 systems players recorded in game ` +
-      `(star colour and faction ${pct(a.starColour)}, economy ${pct(a.economy)}, ` +
-      `wealth ${pct(a.wealth)}, conflict ${pct(a.conflict)}, planet and moon counts ${pct(a.planetAndMoonCounts)}). ` +
-      `The number of stars is worked out the way the game counts them, with its chances of a second star ` +
-      `(1 in 5) and a third (1 in 20), and matched the game in all ${STAR_CHECKS.counted} systems whose stars ` +
-      `the capture mod counted, ${count(STAR_CHECKS.several)} of them with more than one. The guild envoy ` +
-      `matched all ${GUILD_CHECKS.recorded} recorded in game, in ${GUILD_CHECKS.regions} regions.`,
-  );
 
   const bodies = el("ol", "bodies");
   for (const b of d.bodies) {
@@ -386,14 +259,6 @@ function render(d: SystemDescription): void {
     "result__section result__bodies",
     el("h3", "result__heading", "Planets and moons"),
     bodies,
-    el(
-      "p",
-      "result__aside",
-      `Names and order come straight from the generator. Checked against the game so far: the order in all ` +
-        `${checks.systems} systems recorded, and ${checks.planetNames.matched.toLocaleString("en")} of ` +
-        `${checks.planetNames.checked.toLocaleString("en")} planet names. ` +
-        "The seed is what a save editor calls the planet seed.",
-    ),
   );
 
   const status = el("span", "result__status");
@@ -420,11 +285,11 @@ function render(d: SystemDescription): void {
     "section",
     "result__section result__next",
     el("h3", "result__heading", "Coming next"),
-    el("p", undefined, "What each ship and multi-tool looks like: its parts, then its colours. ", roadmap, "."),
+    el("p", undefined, "What each ship and multi-tool looks like: its parts, then its colors. ", roadmap, "."),
   );
 
   const header = el("header", "result__header", name, region, ...(flags.length ? [flagList] : []), actions);
-  const facts = el("div", "result__facts", manifest, accuracy);
+  const facts = el("div", "result__facts", manifest);
 
   result.replaceChildren(
     header,

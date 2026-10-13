@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Summarise capture files written by mods/system_capture.py.
+"""Summarize capture files written by mods/system_capture.py.
 
 Prints what was recorded (systems, ship pools, exotics, the parts the game
 picked for the ships it built, each exotic's against ship_model.py's squid
@@ -857,10 +857,10 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
         regions_of: dict[tuple[int, int], list[SystemRecord]] = {}
         for system, record in systems.items():
             regions_of.setdefault(_region(system), []).append(record)
-        colours_of: dict[tuple[int, int], set[float]] = {}  # from every record: 0.10.0 on record it
+        colors_of: dict[tuple[int, int], set[float]] = {}  # from every record: 0.10.0 on record it
         for record in captures.records:
-            if (colour := (record.data.get("galaxy") or {}).get("regionColour")) is not None:
-                colours_of.setdefault(_region(record.ua), set()).add(colour)
+            if (color := (record.data.get("galaxy") or {}).get("regionColour")) is not None:
+                colors_of.setdefault(_region(record.ua), set()).add(color)
         lines += ["", f"Guilds recorded: {len(captures.guilds)} for {len(by_region)} region(s)"]
         mixed = 0
         for region, entries in by_region.items():  # in the order first recorded
@@ -868,13 +868,13 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
             mixed += len(guilds) > 1
             records = regions_of.get(region, [])
             races = Counter(record.name("race", "race") or "?" for record in records)
-            colours = sorted(colours_of.get(region, ()))
+            colors = sorted(colors_of.get(region, ()))
             said = ", ".join(f"{guild} x{n}" for guild, n in guilds.most_common())
             said += f"; systems recorded there: {len(records)}"
             if races:
                 said += ", by race: " + ", ".join(f"{race} {n}" for race, n in races.most_common())
-            if colours:
-                said += f"; region colour value {', '.join(f'{c:g}' for c in colours)}"
+            if colors:
+                said += f"; region color value {', '.join(f'{c:g}' for c in colors)}"
             lines.append(f"  {_region_label(region)}: {said}")
         lines.append(f"  regions recorded with more than one guild: {mixed}")
         wrong = [
@@ -1312,7 +1312,7 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
 
     t = {
         "name": Tally("system name"),
-        "star": Tally("star colour"),
+        "star": Tally("star color"),
         "race": Tally("dominant race / uncharted"),
         "economy": Tally("economy (charted systems)"),
         "wealth": Tally("wealth (charted systems)"),
