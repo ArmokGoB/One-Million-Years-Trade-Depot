@@ -36,6 +36,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # mix is re-exported for the tests.
 from game_rng import MASK32, MASK64, MIX_A, MIX_B, mix, seeded_state, stream_states, unmix  # noqa: E402, F401
+import guild_model  # noqa: E402
+import multitool_model  # noqa: E402
 import ship_model  # noqa: E402  (nms_namegen is only needed for its bodies(), which --namegen uses)
 from star_model import float32, nebula_seed, star_count  # noqa: E402, F401
 
@@ -875,6 +877,20 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
                 said += f"; region colour value {', '.join(f'{c:g}' for c in colours)}"
             lines.append(f"  {_region_label(region)}: {said}")
         lines.append(f"  regions recorded with more than one guild: {mixed}")
+        wrong = [
+            (entry, guild_model.guild(int(entry.get("system") or "0", 16) & ~PLANET_BITS))
+            for entry, _ in captures.guilds
+        ]
+        wrong = [(entry, worked) for entry, worked in wrong if worked != entry.get("guild")]
+        lines.append(
+            f"  the guild worked out from the address (guild_model.py): {len(captures.guilds) - len(wrong)}/"
+            f"{len(captures.guilds)} recorded"
+        )
+        for entry, worked in wrong[:examples]:
+            system = int(entry.get("system") or "0", 16) & ~PLANET_BITS
+            record = systems.get(system)
+            label = record.label() if record is not None else _portal_label(system)
+            lines.append(f"    {label}: recorded {entry.get('guild')}, worked out {worked}")
     return lines
 
 
@@ -952,6 +968,24 @@ def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
     shared = sorted(seed for seed, where in systems_of.items() if len(where) > 1)
     examples = f" ({', '.join(shared[:5])})" if shared else ""
     lines.append(f"  seeds in more than one system's set: {len(shared)}{examples}")
+    first, second, wrong = 0, 0, []
+    for system, pools in by_system.items():
+        run = multitool_model.first_run(system)
+        recorded = [
+            (_model_file(tool.get("name") or ""), _hex_or_none(tool.get("seed"))) for tool in pools[-1]["tools"]
+        ]
+        if recorded[: len(run)] == run:
+            first += 1
+            second += len(recorded) - len(run) == multitool_model.SECOND_RUN
+        else:
+            wrong.append(system)
+    lines.append(
+        f"  first run worked out from the address (multitool_model.py): {first}/{len(by_system)} systems; "
+        f"followed by {multitool_model.SECOND_RUN} more, as in every set so far: {second}/{first}"
+    )
+    for system in wrong[:5]:
+        record = systems.get(system)
+        lines.append(f"    not as worked out: {record.label() if record is not None else _portal_label(system)}")
     if late := sum(1 for pool, _ in captures.pools if pool.get("late")):
         lines.append(f"  sets of generations that took longer than the mod waited: {late}")
     if errors := sum(1 for tool in tools if tool.get("errors")):
@@ -1081,6 +1115,18 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
             lines.append(f"  ... {len(described) - limit} more")
         repeated = sum(1 for seen in tool_systems.values() if len(seen) > 1)
         lines.append(f"  multi-tools: {len(tool_systems)}; offered in more than one system: {repeated}")
+        places: Counter = Counter()
+        for seed, seen in tool_systems.items():
+            for ua in seen:
+                standard = [s for name, s in multitool_model.first_run(ua & ~PLANET_BITS) if name == "MULTITOOL"]
+                value = _hex_or_none(seed)
+                places["other" if value not in standard else standard.index(value) + 1] += 1
+        known = sum(n for place, n in places.items() if place != "other")
+        lines.append(
+            f"  standard multi-tools of the system's first run worked out from the address: {known}/"
+            f"{sum(places.values())}, by place in it: "
+            + (", ".join(f"{place} x{n}" for place, n in sorted(places.items(), key=lambda kv: str(kv[0]))) or "none")
+        )
     if captures.built:
         tool_builds = [(b, session) for b, session in captures.built if _is_multitool(b.get("name"))]
         files = Counter(_model_file(b.get("name") or "") for b, _ in tool_builds)

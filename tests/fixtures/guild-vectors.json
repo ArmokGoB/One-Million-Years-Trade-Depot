@@ -1,0 +1,77 @@
+{
+ "_source": "tools/captures/guild_model.py over made-up addresses, written by tools/crosscheck/guild_vectors.py.",
+ "vectors": [
+  {
+   "code": "00C7A7F2731A",
+   "galaxy": 0,
+   "firstDraw": "464C0E72",
+   "guild": "Merchants"
+  },
+  {
+   "code": "5030A6CB3D5A",
+   "galaxy": 114,
+   "firstDraw": "19F486AD",
+   "guild": "Merchants"
+  },
+  {
+   "code": "015CF3F35DCC",
+   "galaxy": 0,
+   "firstDraw": "3197A12B",
+   "guild": "Merchants"
+  },
+  {
+   "code": "00EE971406F4",
+   "galaxy": 245,
+   "firstDraw": "400D06E9",
+   "guild": "Merchants"
+  },
+  {
+   "code": "03F666E75FA9",
+   "galaxy": 0,
+   "firstDraw": "6027B34F",
+   "guild": "Mercenaries"
+  },
+  {
+   "code": "03EC68BFB64E",
+   "galaxy": 13,
+   "firstDraw": "A615B79A",
+   "guild": "Mercenaries"
+  },
+  {
+   "code": "0201B8CE84A1",
+   "galaxy": 0,
+   "firstDraw": "7C8C79A8",
+   "guild": "Mercenaries"
+  },
+  {
+   "code": "025AC41788E1",
+   "galaxy": 176,
+   "firstDraw": "7D54DCBF",
+   "guild": "Mercenaries"
+  },
+  {
+   "code": "627A7925B099",
+   "galaxy": 0,
+   "firstDraw": "E4DF772D",
+   "guild": "Explorers"
+  },
+  {
+   "code": "2196D6788347",
+   "galaxy": 156,
+   "firstDraw": "BB2C0112",
+   "guild": "Explorers"
+  },
+  {
+   "code": "003023F18E72",
+   "galaxy": 0,
+   "firstDraw": "E76C2FA5",
+   "guild": "Explorers"
+  },
+  {
+   "code": "01D8C83C9E53",
+   "galaxy": 0,
+   "firstDraw": "E44B960A",
+   "guild": "Explorers"
+  }
+ ]
+}

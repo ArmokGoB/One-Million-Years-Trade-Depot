@@ -8,11 +8,13 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 
 - System name, region name and the galaxy's name
 - Star colour, faction (or uncharted / abandoned), economy, wealth and conflict
+- Which guild's envoy the region's space stations have: the Merchants, the Mercenaries or the Explorers
 - How many stars it has: whether it's a binary or trinary system
 - Whether it is a region's black hole or Atlas Interface system, or a system of one giant planet and its moons
 - Planets and moons, with their procedural names and planet seeds
 - The ship list the game builds for the system: 50 slots, each with its seed and type, the exotic's included, plus the seed the game keeps for the ship at its Sentinel crash sites. Not every slot is a ship you can meet there: the list has a frigate of every type, including Recon and Cursed, whose only known frigates (the SSV Normandy SR1 and the Ship of the Damned) are expedition rewards.
 - Whether the system's exotic is a squid
+- The system's own multi-tools: the seeds of its 2 to 4 standard ones, and of its royal, Sentinel and Atlas one
 - A shareable link for every lookup
 
 It accepts a 12-digit portal address (`009A039BAE4B`) or signal-booster coordinates (`064A:0082:01B9:009A`), plus the galaxy's number, from 1 (Euclid) to 256. Both examples are the Pilgrim Star, which the site shows until you look up another system.
@@ -41,13 +43,17 @@ Every recorded system lists its ships in the same 50 slots; only the first 20, t
 
 Whether the exotic is a squid comes from the exotic's own seed. As far as the captures show, the first number the game draws from a ship's seed picks the first part of the ship's model, each option getting one unbroken stretch of that number's range: that held for all 1,918 models the capture mod has recorded of the seven kinds of ship whose first part varies. For an exotic, the top of the range gives `_SCLASSSHIP_SQU` and the rest `_SCLASSSHIP_ROY`. The 64 exotics recorded split cleanly: the 11 with `_SCLASSSHIP_SQU` drew between 0.9531 and 0.9965 of the range, and the 53 with `_SCLASSSHIP_ROY` between 0.0023 and 0.9519. Of the first 12, five of the six squids were in systems where players had posted squids, and the one other exotic seen landing wasn't a squid; the 52 recorded since the site drew its line all fell on the side it predicted. The site draws the line at 20/21 (0.9524), where it would be if the game weighted the squid 0.05 against the others' 1, so about 1 exotic in 21 is a squid. For the 1 exotic in 800 or so whose draw falls in the gap between 0.9519 and 0.9531, the site says "probably".
 
+Which guild's envoy a region's space stations have comes from the address too. The first number the game draws from a system's address, scaled to three, picks the Merchants, the Mercenaries or the Explorers, the order the game lists its Trade, Warrior and Explorer guilds in. That number hardly depends on anything but the region's part of the address, so the guild is the same throughout a region. It matched all 32 guild envoys recorded with the capture mod, in 27 regions of three galaxies. A seed of the region's part alone fits those as well; it would give another guild in about 1 system in 20,000.
+
+A system's own multi-tools come from its address as well. The game builds them just before it generates the system, in two runs. The first comes from a random-number stream seeded the way nms_namegen seeds the planets' seeds: its first number picks how many standard multi-tools there are, 2, 3 or 4, and the next numbers give each one's seed, then the royal one's, the Sentinel one's and the Atlas one's. Worked out that way, the first run matched all 43 systems' sets the capture mod recorded, and all 32 multi-tools it recorded for sale, at space stations and the Nexus, were standard ones from it, 20 of them the first. The second run, three more standard multi-tools, comes from a seed not worked out yet. NMS.py names a kind of multi-tool pool SettlementRotational, so they are probably settlements' stock, which may change over time.
+
 ## Roadmap
 
 1. **System lookup.** Done: this site.
-2. **Capture mod.** In progress: [`mods/system_capture.py`](mods/system_capture.py), an [NMS.py](https://github.com/monkeyman192/NMS.py) mod that records, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Version 0.10.0 added, when the player clicks a button, the guild of the region's space stations, and 0.11.0 how many stars a system has, worked out as the game's own star count function would, which the site now shows; 0.11.1 shows it on the mod's tab too. Needs a Windows PC; [how to run it](mods/README.md).
+2. **Capture mod.** In progress: [`mods/system_capture.py`](mods/system_capture.py), an [NMS.py](https://github.com/monkeyman192/NMS.py) mod that records, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Version 0.10.0 added, when the player clicks a button, the guild of the region's space stations, which the site now works out from the address, and 0.11.0 how many stars a system has, worked out as the game's own star count function would, which the site now shows; 0.11.1 shows it on the mod's tab too. Needs a Windows PC; [how to run it](mods/README.md).
 3. **Address → ship pool.** On the site now. Every system captured so far has a 50-slot ship list with the same layout, with its one exotic in slot 20. [`tools/captures/ship_model.py`](tools/captures/ship_model.py) predicts all 50 ship seeds from the portal address alone, building on nms_namegen like the site does, and [`src/core/ships.ts`](src/core/ships.ts) is its port. It matched every ship and the Sentinel crash-site ship in 118 of the 123 systems captured so far, giant planet systems included, and the other 5 with a planet's two moons the other way round. The ships come last in a system's generation, after the space station and the "attractor" spawn points around each planet, and those decide where in the random-number stream the ships' seeds start. Still open: which way round the game puts a planet's two moons, and which civilian ships it makes solar.
 4. **Seed → appearance.** In progress: decode each ship seed into parts and colours. Squid versus other exotics is on the site now. Version 0.7.0 of the capture mod records the parts the game picks for each ship in a system's list as it builds the ship, which showed that the first draw from a ship's seed picks the first part of its model. Next: the rest of the exotic's parts, then every ship type.
-5. **Multi-tools and freighters**, then pictures. The game builds each system's own multi-tools as you arrive, 8 to 10 per system in the captures so far. Version 0.11.0 of the capture mod records them, with each one's seed and parts, and it has for 43 systems so far. Since 0.9.0 it has also recorded the one a space station offers, with its seed, parts, class and inventory. So the data builds up before this step starts. With the starships' parts and colours from step 4, this makes release 1.0: look up a system and scout the starships, freighters and multi-tools it generates without going there.
+5. **Multi-tools and freighters**, then pictures. The game builds each system's own multi-tools as you arrive, 8 to 10 per system in the captures so far. Version 0.11.0 of the capture mod records them, with each one's seed and parts, and it has for 43 systems so far. Since 0.9.0 it has also recorded the one a space station offers, with its seed, parts, class and inventory. The seeds of all but three of each system's multi-tools come from its address, and the site shows them. Next: the other three, then what each multi-tool looks like and its class. With the starships' parts and colours from step 4, this makes release 1.0: look up a system and scout the starships, freighters and multi-tools it generates without going there.
 6. **Creatures**, after 1.0: the creatures each planet generates, with their colours and pattern, physical characteristics, aggression, genus, description and battle stats.
 
 ## How it works
@@ -62,7 +68,7 @@ All 64-bit maths uses `BigInt`, and float comparisons use `Math.fround` where th
 
 The ships and the stars are this project's additions: `src/core/ships.ts` follows the same generator on, from the system's universal address through the space station and the planets' attractor spawn points to the ships, and tells from the exotic's seed whether it's a squid, as `tools/captures/ship_model.py` does in Python; `src/core/stars.ts` draws the system's `NebulaSeed` from its universal address and counts its stars the way the game does, as `tools/captures/star_model.py` does.
 
-Parity is checked two ways. `npm test` replays nms_namegen's 443 golden vectors through the port, the ship model's output for a set of addresses that covers every body layout it treats differently, and the star model's for systems with one, two and three stars. CI also generates 20,000 fresh cases with the Python library, pinned to a known commit, covering all 256 galaxies, every planet digit and the system indices where the generator branches, and compares every field, ships and stars included.
+Parity is checked two ways. `npm test` replays nms_namegen's 443 golden vectors through the port, the ship model's output for a set of addresses that covers every body layout it treats differently, the star model's for systems with one, two and three stars, the guild model's for each guild, and the multi-tool model's for each number of standard multi-tools. CI also generates 20,000 fresh cases with the Python library, pinned to a known commit, covering all 256 galaxies, every planet digit and the system indices where the generator branches, and compares every field, ships, stars, guilds and multi-tools included.
 
 ## Development
 
@@ -81,6 +87,8 @@ python3 tools/build_name_tables.py --namegen ../nms_namegen
 python3 tools/convert_golden_vectors.py --namegen ../nms_namegen
 python3 tools/crosscheck/ship_vectors.py --namegen ../nms_namegen
 python3 tools/crosscheck/star_vectors.py
+python3 tools/crosscheck/guild_vectors.py
+python3 tools/crosscheck/multitool_vectors.py
 python3 tools/crosscheck/generate.py --namegen ../nms_namegen --count 20000 > crosscheck.jsonl
 CROSSCHECK_FILE=crosscheck.jsonl npm test
 ```
@@ -92,7 +100,7 @@ Pushes to `main` deploy the site through GitHub Actions.
 ## Ground rules
 
 - Free and non-commercial.
-- No game models, textures or other art in this repository. The only game-derived data is the name-generation tables, taken from nms_namegen, and the galaxies' names.
+- No files distributed with the game, nor copies of them, are in this repository.
 - Fan-made and not affiliated with or endorsed by Hello Games. No Man's Sky is a trademark of Hello Games Ltd.
 
 ## Credits

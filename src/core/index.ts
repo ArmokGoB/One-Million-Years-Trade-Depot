@@ -6,7 +6,9 @@
 export * from "./address";
 export * from "./describe";
 export { GALAXY_NAMES, galaxyLabel, galaxyName } from "./galaxies";
+export { GUILDS, guildFor, type Guild } from "./guild";
 export { indexPrimedPRNG } from "./iprng";
+export { multitoolRun, SECOND_RUN, STANDARD_COUNTS, type Multitool, type MultitoolKind } from "./multitools";
 export { generateName } from "./namegen";
 export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";
 export { MULTIPLIER, PRNG, seededPRNG } from "./prng";

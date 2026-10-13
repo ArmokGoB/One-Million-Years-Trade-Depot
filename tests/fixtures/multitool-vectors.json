@@ -1,0 +1,275 @@
+{
+ "_source": "tools/captures/multitool_model.py over made-up addresses, written by tools/crosscheck/multitool_vectors.py.",
+ "vectors": [
+  {
+   "code": "627A7925B099",
+   "galaxy": 0,
+   "run": [
+    [
+     "MULTITOOL",
+     "115956065D55B88F"
+    ],
+    [
+     "MULTITOOL",
+     "8E1D7A74661B7400"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "5E5C092510E19F60"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "8C169369ACE48AFE"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "FE422283E7EBE7EE"
+    ]
+   ]
+  },
+  {
+   "code": "00EE971406F4",
+   "galaxy": 245,
+   "run": [
+    [
+     "MULTITOOL",
+     "8501D75322ABC42B"
+    ],
+    [
+     "MULTITOOL",
+     "D85025A749BBDE0A"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "FE1C2EF49D9BF218"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "EBF9991AB2FB34E7"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "DFEF618D87E660D0"
+    ]
+   ]
+  },
+  {
+   "code": "0201B8CE84A1",
+   "galaxy": 0,
+   "run": [
+    [
+     "MULTITOOL",
+     "CA82C1C9DA908AE9"
+    ],
+    [
+     "MULTITOOL",
+     "DAAF2A9415D5DEA2"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "8A611222150C1A3B"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "888117E13C48E84F"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "6D0A0563AEF0C76E"
+    ]
+   ]
+  },
+  {
+   "code": "00C7A7F2731A",
+   "galaxy": 0,
+   "run": [
+    [
+     "MULTITOOL",
+     "EB566F8395D430E8"
+    ],
+    [
+     "MULTITOOL",
+     "2069CADB46C04163"
+    ],
+    [
+     "MULTITOOL",
+     "31804909C6C32989"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "818F9C821533C268"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "9E3A1B0BD800CAEF"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "85192D64B07CA15D"
+    ]
+   ]
+  },
+  {
+   "code": "03F666E75FA9",
+   "galaxy": 0,
+   "run": [
+    [
+     "MULTITOOL",
+     "9453D1208AEF3098"
+    ],
+    [
+     "MULTITOOL",
+     "584FFF7400A283AD"
+    ],
+    [
+     "MULTITOOL",
+     "686B460E9A197977"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "A4435FC0FFC70174"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "5093D81051F215FD"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "E008738F6AD343CA"
+    ]
+   ]
+  },
+  {
+   "code": "2196D6788347",
+   "galaxy": 156,
+   "run": [
+    [
+     "MULTITOOL",
+     "BB0C77F1FFCD89A2"
+    ],
+    [
+     "MULTITOOL",
+     "C0310B1D70C2C60B"
+    ],
+    [
+     "MULTITOOL",
+     "6B0655D035C40EB2"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "6116DE6F89153015"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "384304D9597D5C11"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "7FAF831A89296839"
+    ]
+   ]
+  },
+  {
+   "code": "5030A6CB3D5A",
+   "galaxy": 114,
+   "run": [
+    [
+     "MULTITOOL",
+     "80E2A8A56799F6F5"
+    ],
+    [
+     "MULTITOOL",
+     "2BDC3E913D3B7B6E"
+    ],
+    [
+     "MULTITOOL",
+     "205D9CDB6E557B1A"
+    ],
+    [
+     "MULTITOOL",
+     "FC72EAC158F9C014"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "E1E62BBE79691FBB"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "C61316F2EF2AE4D3"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "14FF5D70DE102710"
+    ]
+   ]
+  },
+  {
+   "code": "015CF3F35DCC",
+   "galaxy": 0,
+   "run": [
+    [
+     "MULTITOOL",
+     "74B17C8EB47501DB"
+    ],
+    [
+     "MULTITOOL",
+     "F0493E031C13793C"
+    ],
+    [
+     "MULTITOOL",
+     "827DDCC2B48EEC00"
+    ],
+    [
+     "MULTITOOL",
+     "E29B993DEFD61894"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "BCD8754A2C1286A5"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "F3823A8153C7E661"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "5E370EFA92A24D5A"
+    ]
+   ]
+  },
+  {
+   "code": "03EC68BFB64E",
+   "galaxy": 13,
+   "run": [
+    [
+     "MULTITOOL",
+     "E64D6419EA297679"
+    ],
+    [
+     "MULTITOOL",
+     "97173536DBB5B864"
+    ],
+    [
+     "MULTITOOL",
+     "11173A5AA59B7160"
+    ],
+    [
+     "MULTITOOL",
+     "8FE06AD0F0D99D4F"
+    ],
+    [
+     "ROYALMULTITOOL",
+     "A855E4FBC2C98BEB"
+    ],
+    [
+     "SENTINELMULTITOOL",
+     "04B363CA48769D00"
+    ],
+    [
+     "ATLASMULTITOOL",
+     "5305A699B8DBA5BA"
+    ]
+   ]
+  }
+ ]
+}
