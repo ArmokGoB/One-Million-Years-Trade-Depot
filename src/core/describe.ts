@@ -12,7 +12,7 @@ import { starCount } from "./stars";
 import { planetSeeds, systemAttributesDetailed, systemName, type SystemAttributes } from "./system";
 import { hex64 } from "./u64";
 
-export const STAR_COLOURS = ["Yellow", "Green", "Blue", "Red", "Purple"] as const;
+export const STAR_COLORS = ["Yellow", "Green", "Blue", "Red", "Purple"] as const;
 export const ECONOMIES = [
   "",
   "Trading",
@@ -25,95 +25,6 @@ export const ECONOMIES = [
 ] as const;
 export const TIERS = ["", "Low", "Medium", "High"] as const;
 export const RACES = ["None", "Gek", "Korvax", "Vy'keen"] as const;
-
-/**
- * How often each field matches what players recorded in game, measured by
- * nms_namegen against 1,000 hand-recorded post-Origins systems (2026-08-23).
- */
-export const MEASURED_ACCURACY = {
-  starColour: 0.991,
-  uncharted: 0.998,
-  dominantRace: 0.991,
-  conflict: 0.9903,
-  economy: 0.9902,
-  wealth: 0.989,
-  planetCount: 0.988,
-  planetAndMoonCounts: 0.984,
-} as const;
-
-/**
- * What the measurement above doesn't cover, checked against the capture mod's
- * records instead: the order of bodies and the outlaw flag matched the game
- * in all `systems` recorded, `outlawSystems` of them outlaw systems, and so
- * did `planetNames.matched` of the `planetNames.checked` planet names the
- * game generated while they were recorded.
- */
-export const CAPTURE_CHECKS = { systems: 123, outlawSystems: 11, planetNames: { matched: 7139, checked: 7414 } } as const;
-
-/**
- * How the ship prediction fares against the systems recorded in game with
- * the capture mod: every ship seed and the Sentinel crash-site seed right in
- * `matched` of `recorded` with the model's first guess, and in all the rest
- * with a planet's two moons the other way round. The model was worked out
- * from the first `workedOutFrom` of them; the rest were recorded after.
- * `twoMoons` counts those with a planet that has two moons, which
- * ShipsInfo.uncertain flags, and how many the first guess got.
- */
-export const SHIP_ACCURACY = {
-  matched: 118,
-  recorded: 123,
-  workedOutFrom: 66,
-  twoMoons: { firstGuess: 5, recorded: 10 },
-} as const;
-
-/**
- * How the squid prediction fares against the exotics whose parts the capture
- * mod recorded as the game built them: every one of the `recorded` exotics,
- * `squids` of them squids, on the side of the line the prediction puts it.
- */
-export const SQUID_CHECKS = { recorded: 64, squids: 11 } as const;
-
-/**
- * How the star count fares against the game's own: the same in every one of
- * the `counted` systems whose stars the capture mod counted as the game does,
- * `several` of them with more than one star.
- */
-export const STAR_CHECKS = { counted: 43, several: 8 } as const;
-
-/**
- * The giant planets the capture mod has recorded (the game flags their systems
- * IsGiantSystem): `recorded` of them, `gas` gas giants (also IsGasGiantSystem),
- * `lush` lush ones and `barren` barren ones. Players have found giants of other
- * biomes too; what decides a giant's biome isn't known.
- */
-export const GIANT_CHECKS = { recorded: 19, gas: 17, lush: 1, barren: 1 } as const;
-
-/**
- * How often the civilian slots held a solar ship in the systems recorded:
- * [solar, slots] for the shuttle slots outside and inside outlaw systems,
- * and for the other civilian slots inside them. Outside outlaw systems
- * those never did.
- */
-export const SOLAR_COUNTS = {
-  shuttle: [85, 746],
-  outlawShuttle: [66, 77],
-  outlawOther: [13, 143],
-} as const;
-
-/**
- * How the guild prediction fares against the guild envoys recorded in game
- * with the capture mod: the same in all `recorded` of them, in `regions`
- * regions.
- */
-export const GUILD_CHECKS = { recorded: 32, regions: 27 } as const;
-
-/**
- * How the multi-tool prediction fares against the capture mod's records: the
- * first run of every one of the `sets` systems' sets recorded, and every one
- * of the `offered` multi-tools recorded on offer, all standard ones of that
- * run, `offeredFirst` of them its first.
- */
-export const MULTITOOL_CHECKS = { sets: 43, offered: 32, offeredFirst: 20 } as const;
 
 export interface ShipInfo {
   /** Position in the game's list, 0-49. */
@@ -153,7 +64,7 @@ export interface SystemDescription {
   systemIndex: number;
   name: string;
   region: string;
-  starColour: (typeof STAR_COLOURS)[number];
+  starColor: (typeof STAR_COLORS)[number];
   /** How many stars the system has: 1, or 2 in a binary system and 3 in a trinary one. */
   stars: 1 | 2 | 3;
   faction: string;
@@ -167,7 +78,7 @@ export interface SystemDescription {
   atlasInterface: boolean;
   /**
    * One giant planet, every other body its moon: what nms_namegen calls the
-   * gas-giant layout. Most such giants are gas giants, not all (see GIANT_CHECKS).
+   * gas-giant layout. Most such giants are gas giants, not all.
    */
   gasGiant: boolean;
   planetCount: number;
@@ -230,7 +141,7 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     systemIndex: portalParts(systemCode).system,
     name: systemName(systemCode, galaxy),
     region: regionName(systemCode, galaxy),
-    starColour: STAR_COLOURS[a.star_type] ?? "Yellow",
+    starColor: STAR_COLORS[a.star_type] ?? "Yellow",
     stars: starCount(ua),
     faction,
     economy: a.uncharted ? "None" : ECONOMIES[a.economy_type] ?? "Unknown",

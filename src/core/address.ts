@@ -2,7 +2,7 @@
 //
 // Address formats. Everything internal uses the 12-digit portal code
 // PSSSYYZZZXXX as a bigint: planet digit, system index, then the region's
-// Y, Z and X voxel coordinates in portal frame (centre-origin, wrapped).
+// Y, Z and X voxel coordinates in portal frame (center-origin, wrapped).
 
 export const GALAXY_COUNT = 256;
 

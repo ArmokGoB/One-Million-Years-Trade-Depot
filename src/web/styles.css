@@ -3,7 +3,7 @@
 /*
  * Design notes
  * - The depot's identity is its logo and its name, and it doesn't change.
- *   The system's identity is its star colour: the system's name, the body
+ *   The system's identity is its star color: the system's name, the body
  *   numbers, the star swatch, focus rings and the main button. It is data,
  *   not decoration.
  * - Façade marks identity: the depot's name, the system's name and the body
@@ -17,7 +17,7 @@
  *   dots fill their pixels, where the open dots blur on standard-density
  *   screens.
  * - The readout comes first and the evidence for it after, said in words
- *   next to the values, never only by colour.
+ *   next to the values, never only by color.
  */
 
 /* Each face covers a range of weights, so the browser never thickens the

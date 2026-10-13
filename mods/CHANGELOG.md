@@ -18,7 +18,7 @@ In the game: ran on the same build as 0.10.0. All of its hooks attached, and it 
 ## 0.10.0 (2026-10-05)
 
 - Records each system's stars by calling the game's star count function, `cGcSolarSystem::GetStarCount`, on the game's main thread, but only if its code shows that calling it can't change anything. System records hold the solar system's bytes around what the function reads, and the session header its code. `RECORD_STARS` turns this off.
-- Three buttons on the tab record the guild of a region's space stations (`guild` lines). Galaxy attributes include the region's colour value.
+- Three buttons on the tab record the guild of a region's space stations (`guild` lines). Galaxy attributes include the region's color value.
 
 In the game: ran on a newer build of the game (Steam build 25732212) than earlier versions had, with NMS.py 180383.0. All of its hooks attached; it paired the multi-tool in each space station's case with its model and recorded the guilds clicked. It recorded none of the systems' sets of multi-tools, which the game builds just before it generates a system, not while it does, and no stars: the star count function changes a register it may not, to check the game mode, so 0.10.0 didn't call it.
 

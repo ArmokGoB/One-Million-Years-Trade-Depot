@@ -687,10 +687,10 @@ class NameTests(CaptureTestCase):
         """Call a name-generator detour the way pyMHF does."""
         result = self.game._alloc(basic.cTkFixedString[0x7F])
         result.value = name.encode()
-        localised = self.game._alloc(basic.cTkFixedString[0x7F])
-        localised.value = (name if local is None else local).encode()
+        localized = self.game._alloc(basic.cTkFixedString[0x7F])
+        localized.value = (name if local is None else local).encode()
         hook = self.capture.after_planet_name if kind == "planet" else self.capture.after_region_name
-        self.assertIsNone(hook(None, seed, ctypes.pointer(result), ctypes.pointer(localised)))
+        self.assertIsNone(hook(None, seed, ctypes.pointer(result), ctypes.pointer(localized)))
 
     def test_names_are_recorded_once_per_seed_with_the_loaded_system(self):
         self.name("planet", 0xAAAA000000000001, "Tupori")
@@ -3283,9 +3283,9 @@ class ReportTests(StarHelpers, CaptureTestCase):
                 "",
                 "Guilds recorded: 4 for 2 region(s)",
                 "  galaxy 1 region X -962, Y -13, Z 1349: Explorers x2; systems recorded there: 1, "
-                "by race: Explorers 1; region colour value 0.625",
+                "by race: Explorers 1; region color value 0.625",
                 "  galaxy 1 region X 1383, Y 1, Z 564: Merchants x1, Mercenaries x1; "
-                "systems recorded there: 1, by race: Explorers 1; region colour value 0.625",
+                "systems recorded there: 1, by race: Explorers 1; region color value 0.625",
                 "  regions recorded with more than one guild: 1",
                 "  the guild worked out from the address (guild_model.py): 1/4 recorded",
                 "    03E9F3545C3E galaxy 1 Shown-Name: recorded Explorers, worked out Merchants",
@@ -3350,7 +3350,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         )
         self.assertEqual(report.giant_lines(report.Captures(sessions=[session], records=records[3:])), [])
 
-    def test_a_regions_colour_comes_from_whichever_record_has_it(self):
+    def test_a_regions_color_comes_from_whichever_record_has_it(self):
         session = report.Session({"enums": {}}, "test")
         records = [
             report.SystemRecord({"ua": f"{UA:016X}", "ships": [[1]]}, session, 1),  # before 0.10.0
@@ -3360,7 +3360,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         captures = report.Captures(sessions=[session], records=records, guilds=[(guild, session)])
         self.assertIn(
             "  galaxy 1 region X -962, Y -13, Z 1349: Explorers x1; systems recorded there: 1, by race: ? 1; "
-            "region colour value 0.5",
+            "region color value 0.5",
             report.star_guild_lines(captures),
         )
 

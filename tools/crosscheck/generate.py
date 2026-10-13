@@ -61,7 +61,7 @@ def main() -> int:
         elif roll < 0.35:
             x, z, y = rnd.choice(EDGE_COORDS), rnd.choice(EDGE_COORDS), rnd.choice(EDGE_Y)
         elif roll < 0.45:
-            # near the galactic centre, where voxel attributes change shape
+            # near the galactic center, where voxel attributes change shape
             x = (rnd.randrange(-12, 13)) & 0xFFF
             z = (rnd.randrange(-12, 13)) & 0xFFF
             y = (rnd.randrange(-12, 13)) & 0xFF

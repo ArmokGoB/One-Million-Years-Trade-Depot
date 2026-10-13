@@ -17,7 +17,7 @@ export function voxelAttributes(code: bigint): VoxelAttributes {
   let y = Number((code & 0xff00_0000n) >> 24n);
   let z = Number((code & 0xff_f000n) >> 12n);
 
-  // Fold to signed offsets from the galactic centre.
+  // Fold to signed offsets from the galactic center.
   if (x > 0x7ff) x -= 0x1000;
   if (z > 0x7ff) z -= 0x1000;
   if (y > 0x7f) y -= 0x100;

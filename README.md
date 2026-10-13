@@ -7,7 +7,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 ## What it shows today
 
 - System name, region name and the galaxy's name
-- Star colour, faction (or uncharted / abandoned), economy, wealth and conflict
+- Star color, faction (or uncharted / abandoned), economy, wealth and conflict
 - Which guild's envoy the region's space stations have: the Merchants, the Mercenaries or the Explorers
 - How many stars it has: whether it's a binary or trinary system
 - Whether it is a region's black hole or Atlas Interface system, or a system of one giant planet and its moons
@@ -23,7 +23,7 @@ How often each field matches what players recorded in game, measured by nms_name
 
 | Field | Agreement |
 |---|---|
-| Star colour | 99.1% |
+| Star color | 99.1% |
 | Uncharted system | 99.8% |
 | Dominant race | 99.1% |
 | Conflict level | 99.0% |
@@ -41,7 +41,7 @@ The ships come from this project's own model of the game's generator (roadmap st
 
 Every recorded system lists its ships in the same 50 slots; only the first 20, the civilian ships, change: how many haulers, fighters and explorers depends on the dominant race, and the game makes some of them solar ships in a way not worked out yet. Outside outlaw systems, 85 of 746 shuttle slots held a solar ship and no other slot did; in outlaw systems, 66 of 77 shuttle slots did, and so did 13 of 143 other civilian slots.
 
-Whether the exotic is a squid comes from the exotic's own seed. As far as the captures show, the first number the game draws from a ship's seed picks the first part of the ship's model, each option getting one unbroken stretch of that number's range: that held for all 1,918 models the capture mod has recorded of the seven kinds of ship whose first part varies. For an exotic, the top of the range gives `_SCLASSSHIP_SQU` and the rest `_SCLASSSHIP_ROY`. The 64 exotics recorded split cleanly: the 11 with `_SCLASSSHIP_SQU` drew between 0.9531 and 0.9965 of the range, and the 53 with `_SCLASSSHIP_ROY` between 0.0023 and 0.9519. Of the first 12, five of the six squids were in systems where players had posted squids, and the one other exotic seen landing wasn't a squid; the 52 recorded since the site drew its line all fell on the side it predicted. The site draws the line at 20/21 (0.9524), where it would be if the game weighted the squid 0.05 against the others' 1, so about 1 exotic in 21 is a squid. For the 1 exotic in 800 or so whose draw falls in the gap between 0.9519 and 0.9531, the site says "probably".
+Whether the exotic is a squid comes from the exotic's own seed. As far as the captures show, the first number the game draws from a ship's seed picks the first part of the ship's model, each option getting one unbroken stretch of that number's range: that held for all 1,918 models the capture mod has recorded of the seven kinds of ship whose first part varies. For an exotic, the top of the range gives `_SCLASSSHIP_SQU` and the rest `_SCLASSSHIP_ROY`. The 64 exotics recorded split cleanly: the 11 with `_SCLASSSHIP_SQU` drew between 0.9531 and 0.9965 of the range, and the 53 with `_SCLASSSHIP_ROY` between 0.0023 and 0.9519. Of the first 12, five of the six squids were in systems where players had posted squids, and the one other exotic seen landing wasn't a squid; the 52 recorded since the site drew its line all fell on the side it predicted. The site draws the line at 20/21 (0.9524), where it would be if the game weighted the squid 0.05 against the others' 1, so about 1 exotic in 21 is a squid. For the 1 exotic in 800 or so whose draw falls in the gap between 0.9519 and 0.9531, the site says "probably."
 
 Which guild's envoy a region's space stations have comes from the address too. The first number the game draws from a system's address, scaled to three, picks the Merchants, the Mercenaries or the Explorers, the order the game lists its Trade, Warrior and Explorer guilds in. That number hardly depends on anything but the region's part of the address, so the guild is the same throughout a region. It matched all 32 guild envoys recorded with the capture mod, in 27 regions of three galaxies. A seed of the region's part alone fits those as well; it would give another guild in about 1 system in 20,000.
 
@@ -52,9 +52,9 @@ A system's own multi-tools come from its address as well. The game builds them j
 1. **System lookup.** Done: this site.
 2. **Capture mod.** In progress: [`mods/system_capture.py`](mods/system_capture.py), an [NMS.py](https://github.com/monkeyman192/NMS.py) mod that records, for every system a player enters, its address and the ship pool the game generates for it (`SystemShips` in the game's solar system data: each ship's seed and type). Version 0.10.0 added, when the player clicks a button, the guild of the region's space stations, which the site now works out from the address, and 0.11.0 how many stars a system has, worked out as the game's own star count function would, which the site now shows; 0.11.1 shows it on the mod's tab too. Needs a Windows PC; [how to run it](mods/README.md).
 3. **Address → ship pool.** On the site now. Every system captured so far has a 50-slot ship list with the same layout, with its one exotic in slot 20. [`tools/captures/ship_model.py`](tools/captures/ship_model.py) predicts all 50 ship seeds from the portal address alone, building on nms_namegen like the site does, and [`src/core/ships.ts`](src/core/ships.ts) is its port. It matched every ship and the Sentinel crash-site ship in 118 of the 123 systems captured so far, giant planet systems included, and the other 5 with a planet's two moons the other way round. The ships come last in a system's generation, after the space station and the "attractor" spawn points around each planet, and those decide where in the random-number stream the ships' seeds start. Still open: which way round the game puts a planet's two moons, and which civilian ships it makes solar.
-4. **Seed → appearance.** In progress: decode each ship seed into parts and colours. Squid versus other exotics is on the site now. Version 0.7.0 of the capture mod records the parts the game picks for each ship in a system's list as it builds the ship, which showed that the first draw from a ship's seed picks the first part of its model. Next: the rest of the exotic's parts, then every ship type.
-5. **Multi-tools and freighters**, then pictures. The game builds each system's own multi-tools as you arrive, 8 to 10 per system in the captures so far. Version 0.11.0 of the capture mod records them, with each one's seed and parts, and it has for 43 systems so far. Since 0.9.0 it has also recorded the one a space station offers, with its seed, parts, class and inventory. The seeds of all but three of each system's multi-tools come from its address, and the site shows them. Next: the other three, then what each multi-tool looks like and its class. With the starships' parts and colours from step 4, this makes release 1.0: look up a system and scout the starships, freighters and multi-tools it generates without going there.
-6. **Creatures**, after 1.0: the creatures each planet generates, with their colours and pattern, physical characteristics, aggression, genus, description and battle stats.
+4. **Seed → appearance.** In progress: decode each ship seed into parts and colors. Squid versus other exotics is on the site now. Version 0.7.0 of the capture mod records the parts the game picks for each ship in a system's list as it builds the ship, which showed that the first draw from a ship's seed picks the first part of its model. Next: the rest of the exotic's parts, then every ship type.
+5. **Multi-tools and freighters**, then pictures. The game builds each system's own multi-tools as you arrive, 8 to 10 per system in the captures so far. Version 0.11.0 of the capture mod records them, with each one's seed and parts, and it has for 43 systems so far. Since 0.9.0 it has also recorded the one a space station offers, with its seed, parts, class and inventory. The seeds of all but three of each system's multi-tools come from its address, and the site shows them. Next: the other three, then what each multi-tool looks like and its class. With the starships' parts and colors from step 4, this makes release 1.0: look up a system and scout the starships, freighters and multi-tools it generates without going there.
+6. **Creatures**, after 1.0: the creatures each planet generates, with their colors and pattern, physical characteristics, aggression, genus, description and battle stats.
 
 ## How it works
 
@@ -64,7 +64,7 @@ A system's own multi-tools come from its address as well. The game builds them j
 - an index-primed PRNG (Threefish-style 64-bit mixing) turns that into the system seed;
 - a 32-bit multiply-with-carry RNG then draws the system's attributes, names and body seeds in the game's order.
 
-All 64-bit maths uses `BigInt`, and float comparisons use `Math.fround` where the game compares in single precision.
+All 64-bit math uses `BigInt`, and float comparisons use `Math.fround` where the game compares in single precision.
 
 The ships and the stars are this project's additions: `src/core/ships.ts` follows the same generator on, from the system's universal address through the space station and the planets' attractor spawn points to the ships, and tells from the exotic's seed whether it's a squid, as `tools/captures/ship_model.py` does in Python; `src/core/stars.ts` draws the system's `NebulaSeed` from its universal address and counts its stars the way the game does, as `tools/captures/star_model.py` does.
 
