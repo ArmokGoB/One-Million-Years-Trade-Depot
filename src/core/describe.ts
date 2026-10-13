@@ -3,6 +3,8 @@
 // One call that gathers everything the site shows about a system.
 
 import { formatPortalCode, portalParts, toGalacticCoordinates, universalAddress, withPlanet } from "./address";
+import { guildFor, type Guild } from "./guild";
+import { multitoolRun, type MultitoolKind } from "./multitools";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
 import { shipPool, type ShipGroup, type SquidCall } from "./ships";
@@ -98,6 +100,21 @@ export const SOLAR_COUNTS = {
   outlawOther: [13, 143],
 } as const;
 
+/**
+ * How the guild prediction fares against the guild envoys recorded in game
+ * with the capture mod: the same in all `recorded` of them, in `regions`
+ * regions.
+ */
+export const GUILD_CHECKS = { recorded: 32, regions: 27 } as const;
+
+/**
+ * How the multi-tool prediction fares against the capture mod's records: the
+ * first run of every one of the `sets` systems' sets recorded, and every one
+ * of the `offered` multi-tools recorded on offer, all standard ones of that
+ * run, `offeredFirst` of them its first.
+ */
+export const MULTITOOL_CHECKS = { sets: 43, offered: 32, offeredFirst: 20 } as const;
+
 export interface ShipInfo {
   /** Position in the game's list, 0-49. */
   slot: number;
@@ -158,6 +175,14 @@ export interface SystemDescription {
   bodies: BodyInfo[];
   /** The ships predicted from the address. */
   ships: ShipsInfo;
+  /** The guild whose envoy the system's space station has (the same throughout a region). */
+  guild: Guild;
+  /**
+   * The first run of the system's own multi-tools, in the game's order: 2 to 4
+   * standard ones, then the royal, the Sentinel and the Atlas one. Three more
+   * standard ones follow, from a seed not worked out (see multitools.ts).
+   */
+  multitools: { kind: MultitoolKind; seed: string }[];
   raw: SystemAttributes;
 }
 
@@ -190,6 +215,7 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
   else if (a.abandoned) faction = `Abandoned (${race})`;
   else faction = race;
 
+  const ua = universalAddress(systemCode, galaxy);
   const bodies: BodyInfo[] = seeds.planet_seeds.map((seed, i) => ({
     index: i + 1,
     seed: seedText(seed),
@@ -205,7 +231,7 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     name: systemName(systemCode, galaxy),
     region: regionName(systemCode, galaxy),
     starColour: STAR_COLOURS[a.star_type] ?? "Yellow",
-    stars: starCount(universalAddress(systemCode, galaxy)),
+    stars: starCount(ua),
     faction,
     economy: a.uncharted ? "None" : ECONOMIES[a.economy_type] ?? "Unknown",
     wealth: a.uncharted ? "None" : TIERS[a.wealth] ?? "Unknown",
@@ -220,6 +246,8 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     moonCount: seeds.moon_count,
     bodies,
     ships: describeShips(systemCode, galaxy),
+    guild: guildFor(ua),
+    multitools: multitoolRun(ua).map(({ kind, seed }) => ({ kind, seed: seedText(seed) })),
     raw: a,
   };
 }

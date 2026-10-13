@@ -10,7 +10,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  guildFor,
   hex64,
+  multitoolRun,
   parsePortalCode,
   planetName,
   planetNameFromSeed,
@@ -45,7 +47,19 @@ interface Case {
   ships?: Maybe<ShipCase>;
   /** tools/captures/star_model.py's count. */
   stars?: number;
+  /** tools/captures/guild_model.py's guild. */
+  guild?: string;
+  /** tools/captures/multitool_model.py's first run: [model file, seed]. */
+  multitools?: [string, string][];
 }
+
+/** The model file of each kind of multi-tool, as multitool_model.py names them. */
+const MULTITOOL_FILES = {
+  Standard: "MULTITOOL",
+  Royal: "ROYALMULTITOOL",
+  Sentinel: "SENTINELMULTITOOL",
+  Atlas: "ATLASMULTITOOL",
+} as const;
 interface ShipCase {
   bodies: [number, number, boolean][];
   start: number;
@@ -96,6 +110,8 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     let shipPools = 0;
     let squids = 0;
     const starCounts = [0, 0, 0, 0];
+    const guilds = new Map<string, number>();
+    const standardCounts = new Map<number, number>();
     for (const line of lines) {
       const c = JSON.parse(line) as Case;
       const code = parsePortalCode(c.code);
@@ -124,11 +140,24 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
         same(c.stars, () => starCount(universalAddress(code, c.galaxy)), `${tag} stars`, mismatches);
         starCounts[c.stars] = (starCounts[c.stars] ?? 0) + 1;
       }
+      if (c.guild !== undefined) {
+        same(c.guild, () => guildFor(universalAddress(code, c.galaxy)), `${tag} guild`, mismatches);
+        guilds.set(c.guild, (guilds.get(c.guild) ?? 0) + 1);
+      }
+      if (c.multitools !== undefined) {
+        const run = () =>
+          multitoolRun(universalAddress(code, c.galaxy)).map((t) => [MULTITOOL_FILES[t.kind], hex64(t.seed)]);
+        same(c.multitools, run, `${tag} multitools`, mismatches);
+        const standard = c.multitools.filter(([file]) => file === "MULTITOOL").length;
+        standardCounts.set(standard, (standardCounts.get(standard) ?? 0) + 1);
+      }
     }
     expect(lines.length).toBeGreaterThan(0);
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
     expect(squids, "cases whose exotic is a squid").toBeGreaterThan(0);
     expect(starCounts.slice(1), "cases with one, two and three stars").not.toContain(0);
+    expect([...guilds.keys()].sort(), "cases with each guild").toEqual(["Explorers", "Mercenaries", "Merchants"]);
+    expect([...standardCounts.keys()].sort(), "cases with 2, 3 and 4 standard multi-tools").toEqual([2, 3, 4]);
     expect(mismatches.slice(0, 20)).toEqual([]);
   }, 300_000); // 20,000 cases take seconds, mostly the ship pools
 });

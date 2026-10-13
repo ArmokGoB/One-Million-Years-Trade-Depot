@@ -9,8 +9,9 @@ generator branches (guide stars, black hole, Atlas Interface, the purple
 window, the ends of the range). Each case also carries the ship pool that
 tools/captures/ship_model.py predicts, which builds on nms_namegen, with
 whether its exotic is a squid, and the start, exotic and crash-site seed of
-every other arrangement of a two-moon planet's moons; and how many stars
-tools/captures/star_model.py gives the system.
+every other arrangement of a two-moon planet's moons; how many stars
+tools/captures/star_model.py gives the system; and the guild and the first
+run of multi-tools that guild_model.py and multitool_model.py give it.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -39,6 +40,8 @@ def main() -> int:
 
     sys.path.insert(0, str(args.namegen.resolve()))
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "captures"))
+    import guild_model  # noqa: E402
+    import multitool_model  # noqa: E402
     import ship_model  # noqa: E402
     import star_model  # noqa: E402
     from nms_namegen.planet import planetName  # noqa: E402
@@ -93,6 +96,7 @@ def main() -> int:
     for _ in range(args.count):
         code, galaxy = random_case()
         seeds = guarded(planetSeeds, code, galaxy)
+        ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)  # the system's
         rec = {
             "code": f"{code:012X}",
             "galaxy": galaxy,
@@ -103,7 +107,9 @@ def main() -> int:
             "voxel": guarded(voxelAttributes, code),
             "ships": guarded(ships, code, galaxy),
             # tools/captures/star_model.py's count, from the system's universal address
-            "stars": star_model.stars((((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)),
+            "stars": star_model.stars(ua),
+            "guild": guild_model.guild(ua),
+            "multitools": [[name, f"{seed:016X}"] for name, seed in multitool_model.first_run(ua)],
         }
         if isinstance(seeds, dict):
             rec["seeds"] = [f"{s & 0xFFFFFFFFFFFFFFFF:016X}" for s in seeds["planet_seeds"]]

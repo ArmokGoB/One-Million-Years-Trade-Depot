@@ -13,8 +13,10 @@ import {
   galaxyLabel,
   galaxyName,
   GIANT_CHECKS,
+  GUILD_CHECKS,
   formatPortalCode,
   MEASURED_ACCURACY,
+  MULTITOOL_CHECKS,
   parseAnyAddress,
   parseGalaxyNumber,
   SHIP_ACCURACY,
@@ -268,6 +270,31 @@ function shipsSection(d: SystemDescription): HTMLElement {
   return el("section", "result__section", el("h3", "result__heading", "Ships"), ...warning, key, intro, squids, all);
 }
 
+/** The system's own multi-tools: the first run of its set, each with its seed. */
+function multitoolsSection(d: SystemDescription): HTMLElement {
+  const key = el("dl", "manifest");
+  let standard = 0;
+  for (const tool of d.multitools) {
+    const term = tool.kind === "Standard" ? `Standard ${++standard}` : tool.kind;
+    key.append(el("dt", undefined, term), el("dd", undefined, tool.seed));
+  }
+  const { sets, offered, offeredFirst } = MULTITOOL_CHECKS;
+  const sale =
+    d.uncharted || d.abandoned
+      ? ""
+      : `The space station sells one of the standard ones: all ${offered} recorded for sale were, ` +
+        `${offeredFirst} of them the first. `;
+  const intro = el(
+    "p",
+    "result__aside",
+    `The system's own multi-tools, which the game builds as you arrive: ${count(standard)} standard ones here, ` +
+      `then a royal, a Sentinel and an Atlas one, each with its seed. Worked out from the address, they matched ` +
+      `the game in all ${sets} systems recorded. ${sale}Three more standard ones come from a seed not worked out ` +
+      `yet, probably the stock of the system's settlements, which may change over time.`,
+  );
+  return el("section", "result__section", el("h3", "result__heading", "Multi-tools"), key, intro);
+}
+
 function render(d: SystemDescription): void {
   document.documentElement.dataset.star = d.starColour;
 
@@ -306,6 +333,13 @@ function render(d: SystemDescription): void {
         `${count(checks.outlawSystems)} of them outlaw systems.`,
     );
   }
+  row(
+    "Guild envoy",
+    d.guild,
+    d.uncharted || d.abandoned
+      ? "The region's. None has been recorded in an abandoned or uncharted system yet."
+      : "The same in every space station of the region.",
+  );
   const giants = GIANT_CHECKS;
   row(
     "Bodies",
@@ -330,7 +364,8 @@ function render(d: SystemDescription): void {
       `wealth ${pct(a.wealth)}, conflict ${pct(a.conflict)}, planet and moon counts ${pct(a.planetAndMoonCounts)}). ` +
       `The number of stars is worked out the way the game counts them, with its chances of a second star ` +
       `(1 in 5) and a third (1 in 20), and matched the game in all ${STAR_CHECKS.counted} systems whose stars ` +
-      `the capture mod counted, ${count(STAR_CHECKS.several)} of them with more than one.`,
+      `the capture mod counted, ${count(STAR_CHECKS.several)} of them with more than one. The guild envoy ` +
+      `matched all ${GUILD_CHECKS.recorded} recorded in game, in ${GUILD_CHECKS.regions} regions.`,
   );
 
   const bodies = el("ol", "bodies");
@@ -385,13 +420,19 @@ function render(d: SystemDescription): void {
     "section",
     "result__section result__next",
     el("h3", "result__heading", "Coming next"),
-    el("p", undefined, "The rest of what each ship looks like, then multi-tools. ", roadmap, "."),
+    el("p", undefined, "What each ship and multi-tool looks like: its parts, then its colours. ", roadmap, "."),
   );
 
   const header = el("header", "result__header", name, region, ...(flags.length ? [flagList] : []), actions);
   const facts = el("div", "result__facts", manifest, accuracy);
 
-  result.replaceChildren(header, el("div", "result__columns", facts, bodiesSection), shipsSection(d), next);
+  result.replaceChildren(
+    header,
+    el("div", "result__columns", facts, bodiesSection),
+    shipsSection(d),
+    multitoolsSection(d),
+    next,
+  );
   result.hidden = false;
 }
 

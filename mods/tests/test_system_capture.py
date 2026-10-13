@@ -44,6 +44,8 @@ report = importlib.util.module_from_spec(_spec)
 sys.modules["capture_report"] = report
 _spec.loader.exec_module(report)
 import game_rng  # noqa: E402  (tools/captures is on the path once report.py is loaded)
+import guild_model  # noqa: E402
+import multitool_model  # noqa: E402
 import ship_model  # noqa: E402
 
 # Portal 03E9F3545C3E in galaxy 1 (Hilbert Dimension), planet digit 0. In the
@@ -3285,6 +3287,10 @@ class ReportTests(StarHelpers, CaptureTestCase):
                 "  galaxy 1 region X 1383, Y 1, Z 564: Merchants x1, Mercenaries x1; "
                 "systems recorded there: 1, by race: Explorers 1; region colour value 0.625",
                 "  regions recorded with more than one guild: 1",
+                "  the guild worked out from the address (guild_model.py): 1/4 recorded",
+                "    03E9F3545C3E galaxy 1 Shown-Name: recorded Explorers, worked out Merchants",
+                "    03E9F3545C3E galaxy 1 Shown-Name: recorded Explorers, worked out Merchants",
+                "    007901234567 galaxy 1 Shown-Name: recorded Mercenaries, worked out Merchants",
             ],
         )
         for record in captures.records:  # had the game counted otherwise for one system
@@ -3391,6 +3397,34 @@ class ReportTests(StarHelpers, CaptureTestCase):
         chance = mod.float32(0.2)  # as the game keeps it; the function compares with 1 - it, rounded
         self.assertEqual(report.star_count(mod.float32(1.0 - chance), chance, 0.05), 1)
 
+    def test_sets_and_offers_against_the_multi_tool_model(self):
+        session = report.Session({"enums": {}}, "test")
+        ua = (0x0AB << 40) | (3 << 32) | 0xF3545C3E  # made up
+        folder = "MODELS/COMMON/WEAPONS/MULTITOOL/"
+        run = multitool_model.first_run(ua)
+        tools = [{"name": f"{folder}{name}.SCENE.MBIN", "seed": f"{seed:016X}"} for name, seed in run]
+        tools += [{"name": f"{folder}MULTITOOL.SCENE.MBIN", "seed": f"{0x5EED + n:016X}"} for n in range(3)]
+        pool = {"t": "pool", "system": f"{ua:016X}", "tools": tools}
+        elsewhere = dict(pool, system=f"{ua + 1:016X}")  # not that system's set
+        captures = report.Captures(sessions=[session], pools=[(pool, session), (elsewhere, session)])
+        lines = report.pool_lines(captures)
+        self.assertIn(
+            "  first run worked out from the address (multitool_model.py): 1/2 systems; followed by 3 more, as in "
+            "every set so far: 1/1",
+            lines,
+        )
+        self.assertIn("    not as worked out: 00ABF3545C3F galaxy 3", lines)
+        offers = [
+            ({"t": "item", "system": f"{ua:016X}", "where": 2, "itemType": 1, "model": tools[1]}, session),
+            ({"t": "item", "system": f"{ua:016X}", "where": 2, "itemType": 1, "model": tools[-1]}, session),
+        ]
+        lines = report.item_lines(report.Captures(sessions=[session], items=offers))
+        self.assertIn(
+            "  standard multi-tools of the system's first run worked out from the address: 1/2, by place in it: "
+            "2 x1, other x1",
+            lines,
+        )
+
     def test_mix_and_unmix_are_inverses(self):
         for value in (0, 1, 0xDEADBEEFCAFEBABE, report.MASK64):
             self.assertEqual(report.unmix(report.mix(value)), value)
@@ -3413,6 +3447,40 @@ class ReportTests(StarHelpers, CaptureTestCase):
             text = out.read()
         self.assertIn("Self-consistency of the game's data", text)
         self.assertIn("Ship seeds in the system seed's random-number stream", text)
+
+
+class GuildAndMultitoolModelTests(unittest.TestCase):
+    """tools/captures/guild_model.py and multitool_model.py; the report checks both against real captures."""
+
+    def test_the_first_draw_picks_the_guild_in_the_games_order(self):
+        for ua, first, guild in (  # made up, each well inside a third of the draw's range
+            (0x123000123468A, 0.488, "Merchants"),
+            (0x12300012345C8, 1.790, "Mercenaries"),
+            (0x1230001234629, 2.648, "Explorers"),
+        ):
+            with self.subTest(guild):
+                draw = report.stream_states(ua, 1)[0] & report.MASK32
+                self.assertAlmostEqual(draw * 3 / 2**32, first, places=3)
+                self.assertEqual(guild_model.guild(ua), guild)
+
+    def test_a_regions_systems_share_its_guild(self):
+        region = (5 << 32) | 0x0089ABCD
+        guilds = {guild_model.guild((system << 40) | region) for system in (1, 0x2A, 0x3E9, 0xFFF)}
+        self.assertEqual(guilds, {"Mercenaries"})
+
+    def test_a_systems_first_run_of_multi_tools(self):
+        ua = (0x0AB << 40) | (3 << 32) | 0xF3545C3E  # made up
+        run = multitool_model.first_run(ua)
+        self.assertEqual(
+            [name for name, _ in run],
+            ["MULTITOOL"] * 3 + ["ROYALMULTITOOL", "SENTINELMULTITOOL", "ATLASMULTITOOL"],
+        )
+        stream = game_rng.Stream(game_rng.mix(ua))
+        self.assertEqual(2 + stream.below(3), 3, "its first draw picks three standard multi-tools")
+        for name, seed in run:
+            low, high = stream.word(), stream.word()
+            self.assertEqual(seed, game_rng.mix((high << 32) | low), f"{name}: the next two draws, mixed")
+        self.assertEqual(f"{run[3][1]:016X}", "A8C3E4807478F556")
 
 
 class ShipModelTests(unittest.TestCase):
