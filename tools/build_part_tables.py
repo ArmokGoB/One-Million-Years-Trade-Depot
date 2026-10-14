@@ -23,7 +23,7 @@ and point this script at the folder it extracts them into:
     python3 tools/build_part_tables.py --game EXTRACTED
 
 A scene that an option brings in without a descriptor among the extracted
-files is taken to have no parts; the script lists those it met.
+files is taken to have no parts; the script says how many it met.
 """
 
 from __future__ import annotations
@@ -128,13 +128,18 @@ NORMAL, RARE, NEVER = 0, 1, 2
 
 
 def weight_class(name: str) -> int:
-    """What an option's name says about how often it's picked: xRARE options are rare, xNEVER ones never."""
-    upper = name.upper()
-    if "XNEVER" in upper:
+    """What an option's name says about how often it's picked: one whose name has xRARE in it is rare, one
+    with xNEVER is never picked. Case matters: the game's lists have a _SubWings_ContxRare, which it picks as
+    often as the options next to it."""
+    if "xNEVER" in name:
         return NEVER
-    if "XRARE" in upper:
+    if "xRARE" in name:
         return RARE
     return NORMAL
+
+
+# A part's level-of-detail copy carries a suffix, which the game drops from the ID it lists.
+LOD_SUFFIX = re.compile(r"LOD\d+$")
 
 
 def descriptor_path(scene: str) -> str:
@@ -169,7 +174,7 @@ class Builder:
 
     def convert(self, lists: list[dict]) -> list:
         out = []
-        for lst in lists:
+        for k, lst in enumerate(lists):
             options = []
             for o in lst["options"]:
                 if o["chance"]:
@@ -180,6 +185,15 @@ class Builder:
                 while len(entry) > 1 and entry[-1] in (None, [], NORMAL):
                     entry.pop()
                 options.append(entry[0] if len(entry) == 1 else entry)
+            listed = [LOD_SUFFIX.sub("", o["id"]) for o in lst["options"]]
+            if len(set(listed)) < len(listed):
+                # Several detail levels of one part as options of one list, as a living ship has: how the game
+                # picks among those isn't modeled.
+                raise DescriptorError(f"{lst['type']}: options that are the same part: {listed}")
+            if all(weight_class(o["name"]) == NEVER for o in lst["options"]) and k + 1 < len(lists):
+                # parts_model.py skips such a list without a draw; with another list after it, whether the game
+                # takes a draw for it would matter, and no capture has shown that yet.
+                print(f"warning: {lst['type']}, never picked, comes before {lists[k + 1]['type']}", file=sys.stderr)
             out.append([lst["type"], options])
         return out
 
@@ -201,8 +215,9 @@ def main() -> int:
 
     about = (
         "Derived from the game's model descriptors by tools/build_part_tables.py. Each tree is a model's lists of "
-        "options, [type ID, options]; an option is its ID, or [ID, weight class (0 normal, 1 rare, 2 never), the "
-        "scenes it brings in (the index of their tree, or -1 for a scene without parts), its child lists]."
+        "options, [type ID, options]; an option is its ID as the descriptor has it, or [ID, weight class (0 normal, "
+        "1 rare, 2 never), the scenes it brings in (the index of their tree, or -1 for a scene without parts), its "
+        "child lists]."
     )
 
     def compact(value) -> str:

@@ -4,31 +4,38 @@
 The game picks the parts of a procedural model from its descriptor (see
 tools/build_part_tables.py, which keeps what picking needs in
 src/core/data/part-tables.json) with the generator seeded with the model's
-seed, a ship's or multi-tool's seed as the capture mod records it:
+seed, a ship's or multi-tool's seed as the capture mod records it. It goes
+through the descriptor's lists in order:
 
-1. It goes through the descriptor's lists in order and picks one option from
-   each with one draw. Each option is as likely as the next, except that an
-   option whose name says xRARE weighs 0.05 against the others' 1, and one
-   whose name says xNEVER weighs nothing. A list of such options only is
-   skipped.
-2. If the option it picked has child lists, two more draws make a seed,
-   mixed as a ship's seed is (game_rng.mix), and the child lists are picked
-   from in the same way with the generator seeded with that, and their parts
-   follow the option.
-3. Then two more draws make a seed for each scene the option brings in; that
-   scene's descriptor, if it has one, is picked from with the generator seeded
-   with it, and its parts follow.
+1. A list one of whose options is already among the model's parts, by its
+   ID as the descriptor has it, is skipped, without a draw. That way a part
+   two scenes share, such as a wing and its mirror image, is picked once.
+2. Otherwise one draw picks one of its options. Each option is as likely as
+   the next, except that one whose name has xRARE in it weighs 0.05 against
+   the others' 1, and one with xNEVER weighs nothing (case matters). A list
+   of such options only is skipped.
+3. The part goes on the model's list under its ID less any LOD suffix (a
+   level of detail: _HULL_BLOD0 is listed as _HULL_B), unless it's on it
+   already.
+4. If the option has child lists, two more draws make a seed, mixed as a
+   ship's seed is (game_rng.mix), and the child lists are picked from in the
+   same way with the generator seeded with that, their parts following the
+   option.
+5. Then two more draws make a seed for each scene the option brings in; that
+   scene's descriptor, if it has one, is picked from with the generator
+   seeded with it, and its parts follow.
 
 The parts come out in that order, as the game lists them. Worked out from the
 parts the capture mod records with each seed; tools/captures/report.py checks
 every recorded model against this, and src/core/parts.ts is the site's port.
-Whether skipping a list of xNEVER options takes a draw doesn't show in the
-records yet: no such list is followed by another in the same stream.
+Whether skipping a list of xNEVER options takes a draw doesn't show: in the
+game's descriptors, no such list has another after it in the same stream.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,6 +45,8 @@ TABLES = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "part-t
 
 # How much an option weighs in a pick, by the weight class the table gives it: normal, xRARE, xNEVER.
 WEIGHTS = (1.0, 0.05, 0.0)
+# A level-of-detail suffix, which the game drops from the IDs it lists.
+LOD_SUFFIX = re.compile(r"LOD\d+$")
 
 
 @lru_cache(maxsize=1)
@@ -83,11 +92,15 @@ def _pick(stream: Stream, options: list) -> tuple | None:
 def _walk(lists: list, stream: Stream, out: list[str]) -> None:
     trees = tables()["trees"]
     for _type_id, options in lists:
+        if any(unpack(option)[0] in out for option in options):
+            continue  # decided already
         picked = _pick(stream, options)
         if picked is None:
             continue
         part, _, refs, children = picked
-        out.append(part)
+        listed = LOD_SUFFIX.sub("", part)
+        if listed not in out:
+            out.append(listed)
         if children:
             low, high = stream.word(), stream.word()
             _walk(children, Stream(mix((high << 32) | low)), out)
@@ -98,7 +111,8 @@ def _walk(lists: list, stream: Stream, out: list[str]) -> None:
 
 
 def reachable(model: str) -> dict[str, int]:
-    """Every option ``model``'s tables can pick, by ID, with its weight class (0 normal, 1 rare, 2 never)."""
+    """Every option ``model``'s tables can pick, by its ID as the descriptor has it, with its weight class
+    (0 normal, 1 rare, 2 never)."""
     t = tables()
     found: dict[str, int] = {}
     seen: set[int] = set()

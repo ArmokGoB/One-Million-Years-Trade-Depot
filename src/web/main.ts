@@ -307,7 +307,7 @@ function render(d: SystemDescription): void {
     "section",
     "result__section result__next",
     el("h3", "result__heading", "Coming next"),
-    el("p", undefined, "The rest of each ship's parts, then every ship's and multi-tool's colors. ", roadmap, "."),
+    el("p", undefined, "The colors of every ship and multi-tool. ", roadmap, "."),
   );
 
   const header = el("header", "result__header", name, region, ...(flags.length ? [flagList] : []), actions);

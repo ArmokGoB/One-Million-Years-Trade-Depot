@@ -3579,7 +3579,7 @@ class PartsModelTests(unittest.TestCase):
     """tools/captures/parts_model.py, with made-up tables; the report checks it against real captures."""
 
     TABLES = {
-        "models": {"PLAIN": 0, "RARE": 1, "NEVER": 2, "NESTED": 3},
+        "models": {"PLAIN": 0, "RARE": 1, "NEVER": 2, "NESTED": 3, "DECIDED": 5, "DETAIL": 6},
         "trees": [
             [["_A_", ["_A_1", "_A_2", "_A_3"]]],
             [["_B_", ["_B_1", ["_B_XRARE", 1]]]],
@@ -3589,6 +3589,10 @@ class PartsModelTests(unittest.TestCase):
                 ["_A_", ["_A_1", "_A_2", "_A_3"]],
             ],
             [["_E_", ["_E_1", "_E_2", "_E_3", "_E_4"]]],
+            # A list with an option already picked, then another list.
+            [["_A_", ["_A_1"]], ["_B_", ["_B_1", "_A_1"]], ["_C_", ["_C_1", "_C_2", "_C_3"]]],
+            # A part's level-of-detail copies, the second in a child list, then another child list.
+            [["_H_", ["_H_ALOD0"]], ["_I_", [["_I_1", 0, [], [["_H_", ["_H_ALOD1"]], ["_J_", ["_J_1", "_J_2"]]]]]]],
         ],
     }
 
@@ -3611,6 +3615,20 @@ class PartsModelTests(unittest.TestCase):
     def test_a_list_of_options_never_picked_is_skipped(self):
         self.assertNotIn("_N_XNEVER", parts_model.parts("NEVER", 0x0123456789ABCDEF))
         self.assertEqual(len(parts_model.parts("NEVER", 0x0123456789ABCDEF)), 1)
+
+    def test_a_list_with_an_option_already_picked_is_skipped_without_a_draw(self):
+        seed = 0x0123456789ABCDEF
+        stream = game_rng.Stream(seed)
+        stream.word()  # _A_1, the only option
+        self.assertEqual(parts_model.parts("DECIDED", seed), ["_A_1", f"_C_{1 + stream.below(3)}"])
+
+    def test_a_parts_level_of_detail_is_left_out_of_its_id_and_it_is_listed_once(self):
+        seed = 0x0123456789ABCDEF
+        stream = game_rng.Stream(seed)
+        stream.word(), stream.word()  # _H_ALOD0 and _I_1, the only options of their lists
+        child = game_rng.Stream(game_rng.mix(stream.word() | (stream.word() << 32)))
+        child.word()  # _H_ALOD1: not the ID picked before, so picked again, and listed as _H_A again
+        self.assertEqual(parts_model.parts("DETAIL", seed), ["_H_A", "_I_1", f"_J_{1 + child.below(2)}"])
 
     def test_child_lists_and_scenes_brought_in_are_picked_with_seeds_from_the_next_draws(self):
         seed = 0x0123456789ABCDEF
