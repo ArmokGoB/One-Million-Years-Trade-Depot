@@ -235,7 +235,7 @@ function render(d: SystemDescription): void {
     row("Conflict", d.conflict);
   }
   if (d.pirate) row("Outlaws", "Likely outlaw-controlled");
-  if (d.uncharted || d.abandoned) row("Guild envoy", `${d.guild} (the region's)`);
+  if (d.uncharted || d.abandoned) row("Guild envoy", d.guild, "(the region's)");
   else row("Guild envoy", d.guild);
   row("Bodies", `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`);
   row("Portal address", d.portalCode);
