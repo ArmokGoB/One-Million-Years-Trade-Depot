@@ -236,7 +236,7 @@ function render(d: SystemDescription): void {
   }
   if (d.pirate) row("Outlaws", "Likely outlaw-controlled");
   if (d.uncharted || d.abandoned) row("Guild envoy", `${d.guild} (the region's)`);
-  else row("Guild envoy", d.guild, "The same in every space station of the region.");
+  else row("Guild envoy", d.guild);
   row("Bodies", `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`);
   row("Portal address", d.portalCode);
   row("Galactic coordinates", d.galacticCoordinates);
