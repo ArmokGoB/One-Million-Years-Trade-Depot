@@ -27,14 +27,11 @@ which of them gets which azimuth varies in a way not worked out yet. So a
 system whose planets aren't prime and have two moons can come out one of
 two ways per such planet: predictions() gives them all, first moon at 0 first.
 
-Whether the exotic is a squid comes from the exotic's own seed. The game
-picks the first part of a ship's model with the first draw from the ship's
-seed, each option taking its own stretch of the draw's range. An exotic's
-first part is the squid's body (_SCLASSSHIP_SQU) when that draw is near
-the top of the range, and the other exotics' body (_SCLASSSHIP_ROY) below.
-exotic_squid() draws the line at 20/21 of the range: the squid weighted
-0.05 against the other's 1, the likeliest place for it between the closest
-exotics recorded on either side.
+Whether the exotic is a squid comes from the exotic's own seed: its first
+part, its body, is the squid's (_SCLASSSHIP_SQU) or the other exotics'
+(_SCLASSSHIP_ROY), picked as parts_model.py picks every part. The squid's
+body is a rare option, weighing 0.05 against the other's 1, so the first
+draw from the seed picks it in the top 1/21 of the draw's range.
 """
 
 from __future__ import annotations
@@ -43,6 +40,7 @@ import itertools
 import math
 from typing import NamedTuple
 
+import parts_model
 from game_rng import Stream, mix, seeded_state, step, stream_states
 
 MASK32 = 0xFFFFFFFF
@@ -61,10 +59,7 @@ CRASH_BEFORE = 42  # the crashed ship's seed is drawn before this ship
 # The first part of an exotic's model: the squid's body, or the other exotics'.
 SQUID_PART = "_SCLASSSHIP_SQU"
 OTHER_EXOTIC_PART = "_SCLASSSHIP_ROY"
-# Among the exotics recorded so far, the highest first draw of one that isn't a squid, and the
-# lowest of a squid. Between the two, where exactly the line lies isn't known.
-NOT_SQUID_HIGHEST = 4088215205
-SQUID_LOWEST = 4093481076
+EXOTIC_MODEL = "S-CLASS_PROC"
 
 
 class Body(NamedTuple):
@@ -78,11 +73,6 @@ class Prediction(NamedTuple):
     ships: list[int]
     crash: int
     uncertain: str | None  # why the prediction may be wrong, if a known gap applies
-
-
-class SquidCall(NamedTuple):
-    squid: bool  # whether the game makes the exotic with this seed a squid
-    close: bool  # its first draw lies where the line could still be, so `squid` rests on 20/21
 
 
 def bodies(ua: int) -> list[Body] | None:
@@ -260,7 +250,6 @@ def first_draw(seed: int) -> int:
     return step(seeded_state(seed)) & MASK32
 
 
-def exotic_squid(seed: int) -> SquidCall:
-    """Whether the exotic with this seed is a squid: its first draw is at least 20/21 of the range."""
-    draw = first_draw(seed)
-    return SquidCall(21 * draw >= 20 << 32, NOT_SQUID_HIGHEST < draw < SQUID_LOWEST)
+def exotic_squid(seed: int) -> bool:
+    """Whether the exotic with this seed is a squid: whether its first part is the squid's body."""
+    return parts_model.parts(EXOTIC_MODEL, seed)[0] == SQUID_PART

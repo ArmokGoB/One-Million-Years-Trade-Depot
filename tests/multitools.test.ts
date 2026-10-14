@@ -8,7 +8,15 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { describeSystem, hex64, multitoolRun, parsePortalCode, universalAddress, type MultitoolKind } from "../src/core";
+import {
+  describeSystem,
+  distinguishingParts,
+  hex64,
+  MULTITOOL_MODELS,
+  multitoolRun,
+  parsePortalCode,
+  universalAddress,
+} from "../src/core";
 
 interface MultitoolVector {
   code: string;
@@ -16,13 +24,6 @@ interface MultitoolVector {
   /** [model file, seed] of each multi-tool, in the game's order. */
   run: [string, string][];
 }
-
-const FILES: Record<MultitoolKind, string> = {
-  Standard: "MULTITOOL",
-  Royal: "ROYALMULTITOOL",
-  Sentinel: "SENTINELMULTITOOL",
-  Atlas: "ATLASMULTITOOL",
-};
 
 const file = JSON.parse(readFileSync(new URL("./fixtures/multitool-vectors.json", import.meta.url), "utf8")) as {
   vectors: MultitoolVector[];
@@ -38,9 +39,13 @@ describe("multi-tool vectors from the Python model", () => {
     it(`${v.code} in galaxy ${v.galaxy}: ${v.run.length} multi-tools`, () => {
       const code = parsePortalCode(v.code);
       const run = multitoolRun(universalAddress(code, v.galaxy));
-      expect(run.map((tool) => [FILES[tool.kind], hex64(tool.seed)])).toEqual(v.run);
+      expect(run.map((tool) => [MULTITOOL_MODELS[tool.kind], hex64(tool.seed)])).toEqual(v.run);
       expect(describeSystem(code, v.galaxy).multitools).toEqual(
-        run.map((tool) => ({ kind: tool.kind, seed: `0x${hex64(tool.seed)}` })),
+        run.map((tool) => ({
+          kind: tool.kind,
+          seed: `0x${hex64(tool.seed)}`,
+          parts: distinguishingParts(MULTITOOL_MODELS[tool.kind], tool.seed),
+        })),
       );
     });
   }

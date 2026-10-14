@@ -14,10 +14,19 @@
 // and the Atlas one. The second run, three more standard multi-tools, comes
 // from a seed not worked out yet.
 
+import type { PartModel } from "./parts";
 import { seededPRNG } from "./prng";
 import { mix64 } from "./u64";
 
 export type MultitoolKind = "Standard" | "Royal" | "Sentinel" | "Atlas";
+
+/** The model each kind of multi-tool is built from, whose parts parts.ts picks. */
+export const MULTITOOL_MODELS: Record<MultitoolKind, PartModel> = {
+  Standard: "MULTITOOL",
+  Royal: "ROYALMULTITOOL",
+  Sentinel: "SENTINELMULTITOOL",
+  Atlas: "ATLASMULTITOOL",
+};
 
 /** How many standard multi-tools the first run can have: its first draw picks one, each as likely. */
 export const STANDARD_COUNTS = [2, 3, 4] as const;

@@ -3,9 +3,9 @@
 """Summarize capture files written by mods/system_capture.py.
 
 Prints what was recorded (systems, ship pools, exotics, the parts the game
-picked for the ships it built, each exotic's against ship_model.py's squid
-rule, each system's own multi-tools, and the items the game offered, such as
-multi-tools); checks the game's
+picked for the ships and multi-tools it built, against those parts_model.py
+works out from their seeds, each system's own multi-tools, and the items the
+game offered, such as multi-tools); checks the game's
 data against itself, which is where a struct layout that no longer matches
 the game shows up first; and finds each system's ship seeds in the game's
 random-number stream seeded by the system seed. Given a path to nms_namegen,
@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from game_rng import MASK32, MASK64, MIX_A, MIX_B, mix, seeded_state, stream_states, unmix  # noqa: E402, F401
 import guild_model  # noqa: E402
 import multitool_model  # noqa: E402
+import parts_model  # noqa: E402
 import ship_model  # noqa: E402  (nms_namegen is only needed for its bodies(), which --namegen uses)
 from star_model import float32, nebula_seed, star_count  # noqa: E402, F401
 
@@ -667,79 +668,80 @@ def model_lines(captures: Captures) -> list[str]:
         seed = _hex_or_none(model.get("seed"))
         draw = f" (first draw {ship_model.first_draw(seed) / 2**32:.6f})" if seed is not None else ""
         lines.append(f"    {record.label()}: {model.get('seed')}{draw} {parts}")
-    return lines + squid_lines(exotics)
+    return lines
 
 
-def part_group(part: str) -> str:
-    """The group a part ID is one of the options of, by the game's naming: _COCKPIT_C is an option of
-    _COCKPIT_, and _COCKPITA_0NEW of _COCKPITA_; an ID without a leading underscore, such as
-    TEXTURE_TEMP, of its first word's group."""
-    if part.startswith("_"):
-        end = part.find("_", 1)
-        return part[: end + 1] if end > 0 else part
-    return part.split("_", 1)[0]
+# Not a part the game picks from a descriptor: it adds this after building a model's textures.
+TEXTURE_PART = "TEXTURE_TEMP"
 
 
-def unseen_options(counts: Counter) -> float:
-    """About how many options of a group no capture has shown yet, from how many showed up once and how
-    many twice (Chao1, bias-corrected). A lower bound: options the game rarely picks are easily missed."""
-    once = sum(1 for n in counts.values() if n == 1)
-    twice = sum(1 for n in counts.values() if n == 2)
-    return once * (once - 1) / (2 * (twice + 1))
+def _picked(parts: object) -> list[str]:
+    return [part for part in parts if part != TEXTURE_PART] if isinstance(parts, list) else []
 
 
-def part_coverage_lines(captures: Captures, groups_shown: int = 6) -> list[str]:
-    """For each ship model the game picks parts for (the *_PROC files, but for their lower-detail
-    copies), the parts recorded so far: how many options each group has shown, and about how many more
-    it probably has, so the ship types that need more captures stand out. The game's own option lists
-    aren't in the captures, so the totals are estimates."""
-    systems = captures.representative_by_system()
-    by_file: dict[str, dict[tuple, dict]] = {}
-    kinds: dict[str, set[str]] = {}
-    for model in captures.models:
+def recorded_parts(captures: Captures) -> dict[tuple[str, int], list[str]]:
+    """The parts recorded with each model file and seed that the parts tables have, ships' and
+    multi-tools' alike. Where a seed was recorded more than once, its longest list: the game also
+    builds some models again with their texture only."""
+    known = set(parts_model.models())
+    found: dict[tuple[str, int], list[str]] = {}
+
+    def note(model: object) -> None:
+        if not isinstance(model, dict):
+            return
         file = _model_file(model.get("name") or "")
-        if not model.get("parts") or "_PROC" not in file or "_LOD" in file:
-            continue
-        record = systems.get(int(model.get("system") or "0", 16) & ~PLANET_BITS)
-        slot = model.get("slot")
-        ships = (record.data.get("ships") or []) if record is not None else []
-        if record is not None and isinstance(slot, int) and 0 <= slot < len(ships):
-            name = record.session.name("shipClass", ships[slot][2])
-            kinds.setdefault(file, set()).add(SHIP_LABELS.get(name or "", name or f"class {ships[slot][2]}"))
-        elif slot == "crash":
-            kinds.setdefault(file, set()).add("Sentinel crash-site ship")
-        by_file.setdefault(file, {})[(model.get("name"), model.get("seed"))] = model  # each model once
-    if not by_file:
+        seed, parts = _hex_or_none(model.get("seed")), _picked(model.get("parts"))
+        if file in known and seed is not None and len(parts) > len(found.get((file, seed), [])):
+            found[(file, seed)] = parts
+
+    for model in captures.models:
+        note(model)
+    for pool, _session in captures.pools:
+        for tool in pool.get("tools") or []:
+            note(tool)
+    for item, _session in captures.items:
+        note(item.get("model"))
+    return found
+
+
+def _in_order(worked_out: list[str], recorded: list[str]) -> bool:
+    """Whether every part worked out appears in the recorded list, in the same order."""
+    rest = iter(recorded)
+    return all(any(part == other for other in rest) for part in worked_out)
+
+
+def part_model_lines(captures: Captures, examples: int = 5) -> list[str]:
+    """The parts recorded with each ship's and multi-tool's seed against those parts_model.py works out
+    from the seed. Where the tables lack the descriptor of a scene a part brings in, the record has
+    that scene's parts too, after the part; the parts worked out must still appear in it in order."""
+    found = recorded_parts(captures)
+    if not found:
         return []
-    lines = [
-        "",
-        "Ship parts recorded, by model: the options seen in each group of its parts, and about how many more "
-        "the game probably has, from how many options showed up only once or twice (a lower bound; the "
-        "game's own lists of options would give the totals)",
-    ]
-    for file, models in sorted(by_file.items(), key=lambda item: -len(item[1])):
-        groups: dict[str, Counter] = {}
-        for model in models.values():
-            for part in model["parts"]:
-                groups.setdefault(part_group(part), Counter())[part] += 1
-        seen = sum(len(counts) for counts in groups.values())
-        more = {group: unseen_options(counts) for group, counts in groups.items()}
-        used_by = f" ({', '.join(sorted(kinds[file]))})" if file in kinds else ""
-        lines.append(
-            f"  {file}{used_by}: {len(models)} models, {len(groups)} groups, {seen} options seen, "
-            f"about {round(sum(more.values()))} more"
-        )
-        open_groups = sorted((group for group in groups if round(more[group]) >= 1), key=lambda g: -more[g])
-        if open_groups:
-            said = ", ".join(
-                f"{group} {len(groups[group])} seen in {sum(groups[group].values())} picks "
-                f"(about {round(more[group])} more)"
-                for group in open_groups[:groups_shown]
-            )
-            others = len(open_groups) - groups_shown
-            lines.append(
-                f"    likely to have more: {said}" + (f", and {others} more groups" if others > 0 else "")
-            )
+    lines = ["", "Parts worked out from each seed (parts_model.py), against those recorded with it"]
+    disagree: list[str] = []
+    for file in parts_model.models():
+        seeds = sorted(seed for f, seed in found if f == file)
+        if not seeds:
+            continue
+        exact = in_order = 0
+        for seed in seeds:
+            worked_out, recorded = parts_model.parts(file, seed), found[(file, seed)]
+            if worked_out == recorded:
+                exact += 1
+            elif _in_order(worked_out, recorded):
+                in_order += 1
+            else:
+                disagree.append(
+                    f"    disagrees: {file} {seed:016X}: worked out {' '.join(worked_out)}; "
+                    f"recorded {' '.join(recorded)}"
+                )
+        line = f"  {file}: {exact + in_order} of {len(seeds)} agree"
+        if in_order:
+            line += f", {in_order} of them with more parts, of scenes the tables have no descriptor for"
+        lines.append(line)
+    lines += disagree[:examples]
+    if len(disagree) > examples:
+        lines.append(f"    and {len(disagree) - examples} more")
     return lines
 
 
@@ -1154,54 +1156,6 @@ def _hex_or_none(text: object) -> int | None:
         return None
 
 
-def squid_lines(exotics: list[tuple[SystemRecord, dict]]) -> list[str]:
-    """Each exotic's body, from its first part, against the squid rule in ship_model.py."""
-    bodies: dict[int, tuple[str, str | None]] = {}
-    known = (ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART)
-    for record, model in exotics:
-        seed = _hex_or_none(model.get("seed"))
-        if seed is not None:
-            parts = model.get("parts") or []
-            # The game builds an exotic again later with only its texture; that build says nothing of its body.
-            if seed not in bodies or bodies[seed][1] not in known:
-                bodies[seed] = (record.label(), parts[0] if parts else None)
-    checked, disagree, other = 0, [], 0
-    highest_not_squid = lowest_squid = None
-    for seed, (label, first) in bodies.items():
-        if first not in known:
-            other += 1
-            continue
-        checked += 1
-        squid, draw = first == ship_model.SQUID_PART, ship_model.first_draw(seed)
-        if squid:
-            lowest_squid = draw if lowest_squid is None else min(lowest_squid, draw)
-        else:
-            highest_not_squid = draw if highest_not_squid is None else max(highest_not_squid, draw)
-        if ship_model.exotic_squid(seed).squid != squid:
-            disagree.append(f"    disagrees: {label}: {seed:016X}, first draw {draw / 2**32:.6f}, {first}")
-    if not checked and not other:
-        return []
-    lines = [
-        f"  squid rule (a squid when the seed's first draw is at least 20/21 of its range): "
-        f"{checked - len(disagree)} of {checked} exotic seeds agree"
-    ]
-    lines += disagree
-    if other:
-        neither = f"neither {ship_model.SQUID_PART} nor {ship_model.OTHER_EXOTIC_PART}"
-        lines.append(f"    first part {neither}: {other}")
-    if highest_not_squid is not None and lowest_squid is not None:
-        closest = (
-            f"    closest to the line: not a squid at {highest_not_squid / 2**32:.6f} ({highest_not_squid}), "
-            f"a squid at {lowest_squid / 2**32:.6f} ({lowest_squid})"
-        )
-        if highest_not_squid >= lowest_squid:
-            closest += "; they overlap, so no line fits them all"
-        elif highest_not_squid > ship_model.NOT_SQUID_HIGHEST or lowest_squid < ship_model.SQUID_LOWEST:
-            closest += "; closer than ship_model.py's edges: update them and SQUID_EDGES in src/core/ships.ts"
-        lines.append(closest)
-    return lines
-
-
 def _region_name_candidates(seed: int) -> dict[str, str | None]:
     """The region name nms_namegen would make if the game's seed were each stage of its regionName()."""
     from nms_namegen.generator import generateName
@@ -1527,7 +1481,7 @@ def main(argv: list[str] | None = None) -> int:
         + trace_lines(captures)
         + lookup_lines(captures)
         + model_lines(captures)
-        + part_coverage_lines(captures)
+        + part_model_lines(captures, args.examples)
         + star_guild_lines(captures)
         + giant_lines(captures)
         + pool_lines(captures)

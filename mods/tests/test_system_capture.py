@@ -46,6 +46,7 @@ _spec.loader.exec_module(report)
 import game_rng  # noqa: E402  (tools/captures is on the path once report.py is loaded)
 import guild_model  # noqa: E402
 import multitool_model  # noqa: E402
+import parts_model  # noqa: E402
 import ship_model  # noqa: E402
 
 # Portal 03E9F3545C3E in galaxy 1 (Hilbert Dimension), planet digit 0. In the
@@ -992,41 +993,50 @@ class ModelTests(ModelHelpers, CaptureTestCase):
             "_SCLASSSHIP_ROY _WINGS_A",
             text,
         )
-        self.assertIn("squid rule (a squid when the seed's first draw is at least 20/21 of its range)", text)
-        self.assertIn("1 of 1 exotic seeds agree", text)
-        self.assertNotIn("disagrees", text)
         self.assertNotIn("not found in a recorded system's ship list", text)
 
-    def test_report_flags_an_exotic_body_the_squid_rule_gets_wrong(self):
+    def test_report_checks_recorded_parts_against_those_worked_out_from_the_seed(self):
         self.game.generate(self.capture)
-        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_SQU", "TEXTURE_TEMP"])
+        fighter = parts_model.parts("FIGHTER_PROC", 0x1111111111111111)
+        exotic = parts_model.parts("S-CLASS_PROC", 0x8000000000000001)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, [*fighter, "TEXTURE_TEMP"])
+        # With the parts of a scene its body brings in, which the tables have no descriptor for.
+        self.build(EXOTIC_MODEL, 0x8000000000000001, [exotic[0], "_FROM_ITS_SCENE_A", *exotic[1:]])
+        self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])  # not what the tables pick
         self.models()
-        text = "\n".join(report.model_lines(report.read_captures([mod.CAPTURE_FILE])))
-        self.assertIn("0 of 1 exotic seeds agree", text)
-        disagrees = "disagrees: 03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001, first draw 0.853393"
-        self.assertIn(disagrees, text)
+        lines = report.part_model_lines(report.read_captures([mod.CAPTURE_FILE]))
+        self.assertIn("  FIGHTER_PROC: 1 of 2 agree", lines)
+        self.assertIn(
+            "  S-CLASS_PROC: 1 of 1 agree, 1 of them with more parts, of scenes the tables have no descriptor for",
+            lines,
+        )
+        self.assertIn(
+            f"    disagrees: FIGHTER_PROC 0102030405060708: worked out "
+            f"{' '.join(parts_model.parts('FIGHTER_PROC', CRASH_SEED))}; recorded _COCKPIT_C",
+            lines,
+        )
 
-    def test_report_shows_how_many_part_options_each_ship_model_has_shown(self):
-        self.game.generate(self.capture)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B", "TEXTURE_TEMP"])
-        self.build(FIGHTER_MODEL.replace("_PROC", "_PROC_LOD1"), 0x1111111111111111, ["_COCKPIT_A"])  # a copy
-        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"])
-        self.models()
-        text = "\n".join(report.part_coverage_lines(report.read_captures([mod.CAPTURE_FILE])))
-        self.assertIn("  FIGHTER_PROC (Fighter): 1 models, 3 groups, 3 options seen, about 0 more", text)
-        self.assertIn("  S-CLASS_PROC (Exotic): 1 models, 2 groups, 2 options seen, about 0 more", text)
-        self.assertNotIn("LOD1", text)
-        # Groups by the game's naming, and how many options a group probably has that haven't shown up.
-        self.assertEqual([report.part_group(p) for p in ("_COCKPIT_C", "_COCKPITA_0NEW", "TEXTURE_TEMP", "_X")],
-                         ["_COCKPIT_", "_COCKPITA_", "TEXTURE", "_X"])  # fmt: skip
-        self.assertEqual(report.unseen_options(report.Counter({"A": 1, "B": 1, "C": 1, "D": 2})), 1.5)
-        self.assertEqual(report.unseen_options(report.Counter({"A": 9, "B": 4})), 0.0)
-        many = [
-            {"name": FIGHTER_MODEL, "seed": f"{i:016X}", "parts": [f"_ACC_{i}", "_WINGS_A"]} for i in range(4)
-        ]
-        lines = report.part_coverage_lines(report.Captures(models=many))
-        self.assertIn("  FIGHTER_PROC: 4 models, 2 groups, 5 options seen, about 6 more", lines)
-        self.assertIn("    likely to have more: _ACC_ 4 seen in 4 picks (about 6 more)", lines)
+    def test_recorded_parts_are_each_seeds_longest_list_of_a_model_the_tables_have(self):
+        captures = report.Captures(
+            models=[
+                {"name": EXOTIC_MODEL, "seed": "8000000000000001", "parts": ["_SCLASSSHIP_ROY", "_WINGS_A"]},
+                # The game builds an exotic again later with its texture only.
+                {"name": EXOTIC_MODEL, "seed": "8000000000000001", "parts": ["TEXTURE_TEMP"]},
+                # A lower-detail copy, which the tables don't have.
+                {"name": FIGHTER_MODEL.replace("_PROC", "_PROC_LOD1"), "seed": "1111111111111111", "parts": ["_A"]},
+            ],
+            pools=[({"tools": [{"name": MULTITOOL_MODEL, "seed": "00000000000000AB", "parts": ["_X"]}]}, None)],
+            items=[({"model": {"name": ROYAL_TOOL_MODEL, "seed": "00000000000000CD", "parts": ["_Y"]}}, None)],
+        )
+        self.assertEqual(
+            report.recorded_parts(captures),
+            {
+                ("S-CLASS_PROC", 0x8000000000000001): ["_SCLASSSHIP_ROY", "_WINGS_A"],
+                ("MULTITOOL", 0xAB): ["_X"],
+                ("ROYALMULTITOOL", 0xCD): ["_Y"],
+            },
+        )
+        self.assertEqual(report.part_model_lines(report.Captures()), [])
 
 
 MULTITOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/MULTITOOL.SCENE.MBIN"
@@ -3554,69 +3564,65 @@ class ShipModelTests(unittest.TestCase):
         assert high, "the game would make this high word 1; pick another low word"
         return ((high ^ game_rng.swap16(low) ^ low) << 32) | low
 
-    def test_squid_line_at_20_21_between_the_closest_exotics_recorded(self):
+    def test_an_exotic_is_a_squid_when_its_first_draw_is_at_least_20_21_of_the_range(self):
         line = 20 * 2**32 / 21
         self.assertEqual(ship_model.first_draw(0x0123456789ABCDEF), 4005469434)  # as in tests/ships.test.ts
-        self.assertLess(ship_model.NOT_SQUID_HIGHEST, line)
-        self.assertGreater(ship_model.SQUID_LOWEST, line)
-        expected = [  # first draw, (squid, close)
-            (0, (False, False)),
-            (ship_model.NOT_SQUID_HIGHEST, (False, False)),
-            (ship_model.NOT_SQUID_HIGHEST + 1, (False, True)),
-            (math.floor(line), (False, True)),
-            (math.ceil(line), (True, True)),
-            (ship_model.SQUID_LOWEST - 1, (True, True)),
-            (ship_model.SQUID_LOWEST, (True, False)),
-            (M32, (True, False)),
-        ]
-        for draw, call in expected:
+        for draw, squid in ((0, False), (math.floor(line), False), (math.ceil(line), True), (M32, True)):
             seed = self.seed_with_first_draw(draw)
             self.assertEqual(ship_model.first_draw(seed), draw)
-            self.assertEqual(tuple(ship_model.exotic_squid(seed)), call, draw)
+            self.assertEqual(ship_model.exotic_squid(seed), squid, draw)
+            body = parts_model.parts(ship_model.EXOTIC_MODEL, seed)[0]
+            self.assertEqual(body, ship_model.SQUID_PART if squid else ship_model.OTHER_EXOTIC_PART)
 
-    def test_report_checks_recorded_exotic_bodies_against_the_squid_line(self):
-        class Record(str):
-            def label(self) -> str:
-                return str(self)
 
-        def exotic(name: str, draw: int, body: str) -> tuple[Record, dict]:
-            seed = self.seed_with_first_draw(draw)
-            return Record(name), {"seed": f"{seed:016X}", "parts": [body, "TEXTURE_TEMP"]}
+class PartsModelTests(unittest.TestCase):
+    """tools/captures/parts_model.py, with made-up tables; the report checks it against real captures."""
 
-        squid, other = ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART
-        narrower = report.squid_lines(
+    TABLES = {
+        "models": {"PLAIN": 0, "RARE": 1, "NEVER": 2, "NESTED": 3},
+        "trees": [
+            [["_A_", ["_A_1", "_A_2", "_A_3"]]],
+            [["_B_", ["_B_1", ["_B_XRARE", 1]]]],
+            [["_N_", [["_N_XNEVER", 2]]], ["_A_", ["_A_1", "_A_2"]]],
             [
-                exotic("A", ship_model.NOT_SQUID_HIGHEST + 5, other),
-                exotic("B", ship_model.SQUID_LOWEST - 5, squid),
-            ]
-        )
-        self.assertIn("2 of 2 exotic seeds agree", narrower[0])
-        self.assertIn("closer than ship_model.py's edges: update them", narrower[1])
-        overlap = report.squid_lines([exotic("A", 4_100_000_000, other), exotic("B", 4_095_000_000, squid)])
-        overlap = "\n".join(overlap)
-        self.assertIn("1 of 2 exotic seeds agree", overlap)
-        self.assertIn("disagrees: A:", overlap)
-        self.assertIn("they overlap, so no line fits them all", overlap)
-        odd = "\n".join(report.squid_lines([exotic("A", 0, "_SOMETHING_ELSE")]))
-        self.assertIn("0 of 0 exotic seeds agree", odd)
-        self.assertIn("first part neither _SCLASSSHIP_SQU nor _SCLASSSHIP_ROY: 1", odd)
+                ["_C_", [["_C_1", 0, [4, -1], [["_D_", ["_D_1", "_D_2"]]]]]],
+                ["_A_", ["_A_1", "_A_2", "_A_3"]],
+            ],
+            [["_E_", ["_E_1", "_E_2", "_E_3", "_E_4"]]],
+        ],
+    }
 
-    def test_a_later_build_with_only_a_texture_leaves_an_exotics_body_known(self):
-        class Record(str):
-            def label(self) -> str:
-                return str(self)
+    def setUp(self):
+        patcher = mock.patch.object(parts_model, "tables", return_value=self.TABLES)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-        seed = f"{self.seed_with_first_draw(4_200_000_000):016X}"
-        builds = [
-            (Record("A"), {"seed": seed, "parts": [ship_model.SQUID_PART, "TEXTURE_TEMP"]}),
-            (Record("A"), {"seed": seed, "parts": ["TEXTURE_TEMP"]}),
-        ]
-        lines = "\n".join(report.squid_lines(builds))
-        self.assertIn("1 of 1 exotic seeds agree", lines)
-        self.assertNotIn("neither", lines)
-        lines = "\n".join(report.squid_lines(builds[::-1]))
-        self.assertIn("1 of 1 exotic seeds agree", lines)
-        self.assertNotIn("neither", lines)
+    seed_with_first_draw = staticmethod(ShipModelTests.seed_with_first_draw)
+
+    def test_each_option_takes_an_equal_stretch_of_the_draw(self):
+        for draw, part in ((0, "_A_1"), (2**32 // 3, "_A_1"), (2**32 // 3 + 1, "_A_2"), (M32, "_A_3")):
+            self.assertEqual(parts_model.parts("PLAIN", self.seed_with_first_draw(draw)), [part], draw)
+
+    def test_a_rare_option_weighs_0_05_against_1(self):
+        line = 20 * 2**32 / 21
+        self.assertEqual(parts_model.parts("RARE", self.seed_with_first_draw(math.floor(line))), ["_B_1"])
+        self.assertEqual(parts_model.parts("RARE", self.seed_with_first_draw(math.ceil(line))), ["_B_XRARE"])
+
+    def test_a_list_of_options_never_picked_is_skipped(self):
+        self.assertNotIn("_N_XNEVER", parts_model.parts("NEVER", 0x0123456789ABCDEF))
+        self.assertEqual(len(parts_model.parts("NEVER", 0x0123456789ABCDEF)), 1)
+
+    def test_child_lists_and_scenes_brought_in_are_picked_with_seeds_from_the_next_draws(self):
+        seed = 0x0123456789ABCDEF
+        stream = game_rng.Stream(seed)
+        self.assertEqual(stream.below(1), 0)  # _C_1, the only option
+        child = game_rng.Stream(game_rng.mix(stream.word() | (stream.word() << 32)))
+        scene = game_rng.Stream(game_rng.mix(stream.word() | (stream.word() << 32)))
+        stream.word(), stream.word()  # the scene without parts still takes its two draws
+        expected = ["_C_1", f"_D_{1 + child.below(2)}", f"_E_{1 + scene.below(4)}", f"_A_{1 + stream.below(3)}"]
+        self.assertEqual(parts_model.parts("NESTED", seed), expected)
+        reachable = ["_C_1", "_D_1", "_D_2", "_E_1", "_E_2", "_E_3", "_E_4", "_A_1", "_A_2", "_A_3"]
+        self.assertEqual(parts_model.reachable("NESTED"), dict.fromkeys(reachable, 0))
 
 
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")
