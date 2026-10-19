@@ -340,7 +340,9 @@ TEXTURES_RECORDED = 200
 # What NMS.py doesn't name of a solar system, where the game may keep the colors of a system's other stars
 # (RECORD_STARS): the bytes between the system's generated data and its address (`gap`), in every system
 # record, and the last SYSTEM_TAIL_BYTES of it (`rawTail`), which hold the solar system map, its generator
-# and whatever follows, once the system has settled.
+# and whatever follows, once the system has settled; and then too the sky the game draws, the suns among
+# it (`rawSky`: cGcSky, which NMS.py names only a few fields of, up to where the next part of the
+# environment begins).
 SYSTEM_TAIL_BYTES = 0xA220
 NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
@@ -462,6 +464,9 @@ class Layout:
         # The player's name with title: read only to take it out of what the mod records.
         self.player_name = nms.cGcPlayerState.mNameWithTitle.offset
         self.player_name_size = ctypes.sizeof(basic.cTkFixedString0x100)
+        # The sky the game draws, the suns among it: as far as the next part of the environment.
+        self.sky = nms.cGcSimulation.mEnvironment.offset + nms.cGcEnvironment.mSky.offset
+        self.sky_size = nms.cGcEnvironment.mPlayerEnvironment.offset - nms.cGcEnvironment.mSky.offset
         # Where the player is (in the space station, on foot on a planet...), from the simulation.
         environment = nms.cGcSimulation.mEnvironment.offset + nms.cGcEnvironment.mPlayerEnvironment.offset
         self.player_where = environment + nms.cGcPlayerEnvironment.meLocation.offset
@@ -886,6 +891,19 @@ def system_gap(address: int) -> str | None:
     hex: where the game may keep the colors of a system's other stars."""
     raw = read_memory(address + LAYOUT.data + LAYOUT.data_size, LAYOUT.ua - LAYOUT.data - LAYOUT.data_size)
     return None if raw is None else raw.hex().upper()
+
+
+def sky_bytes(pattern: re.Pattern[bytes]) -> str | None:
+    """The sky the game draws, compressed, with your name and title taken out (see SYSTEM_TAIL_BYTES), or
+    None while there's no simulation."""
+    try:
+        simulation = gameData.simulation
+    except (ValueError, AttributeError):
+        return None
+    if simulation is None:
+        return None
+    raw = read_memory(ctypes.addressof(simulation) + LAYOUT.sky, LAYOUT.sky_size)
+    return None if raw is None else packed(scrub(raw, pattern)[0])
 
 
 def system_tail(address: int, pattern: re.Pattern[bytes]) -> str | None:
@@ -3597,9 +3615,9 @@ class TradeDepotCapture(Mod):
         return context
 
     def _other_stars_context(self, system: int) -> dict:
-        """What NMS.py doesn't name of the solar system at ``system``, where the game may keep the colors of
-        its other stars (see SYSTEM_TAIL_BYTES): ``gap`` and ``rawTail``, the latter only if your name can
-        be read, to take it out."""
+        """What NMS.py doesn't name of the solar system at ``system`` and of the sky, where the game may keep
+        the colors of the system's other stars (see SYSTEM_TAIL_BYTES): ``gap``, and ``rawTail`` and
+        ``rawSky`` if your name can be read, to take it out."""
         context: dict = {}
         try:
             if (gap := system_gap(system)) is not None:
@@ -3607,6 +3625,8 @@ class TradeDepotCapture(Mod):
             pattern, _ = player_name_pattern()
             if pattern is not None and (tail := system_tail(system, pattern)) is not None:
                 context["rawTail"] = tail
+            if pattern is not None and (sky := sky_bytes(pattern)) is not None:
+                context["rawSky"] = sky
         except Exception:
             self._report_once("system-rest", "Couldn't read the rest of a solar system.")
         return context

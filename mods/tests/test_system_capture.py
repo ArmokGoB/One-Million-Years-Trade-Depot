@@ -2716,6 +2716,8 @@ class OtherStarsTests(CaptureTestCase):
         ctypes.memmove(self.game.address + layout.data_size, bytes(range(gap)), gap)
         tail = self.game.address + layout.system_size - mod.SYSTEM_TAIL_BYTES
         ctypes.memmove(tail + 8, PLAYER, len(PLAYER))
+        sun = self.game.simulation.mEnvironment.mSky.mSunDirection
+        sun.x, sun.y, sun.z = 0.25, -0.5, 0.75
         self.game.generate(self.capture)
         self.poll()
         self.poll()  # settled: recorded, without the tail, as your name can't be read yet
@@ -2731,6 +2733,10 @@ class OtherStarsTests(CaptureTestCase):
         shown = zlib.decompress(base64.b64decode(named["rawTail"]))
         self.assertEqual(len(shown), mod.SYSTEM_TAIL_BYTES)
         self.assertEqual(shown[8 : 8 + len(PLAYER)], b"*" * len(PLAYER))
+        self.assertNotIn("rawSky", polled)
+        sky = zlib.decompress(base64.b64decode(named["rawSky"]))
+        self.assertEqual(len(sky), mod.LAYOUT.sky_size)
+        self.assertEqual(sky[0x500:0x50C], struct.pack("<3f", 0.25, -0.5, 0.75), "where NMS.py puts the sun")
 
 
 class DiagnosticsTests(CaptureTestCase):
