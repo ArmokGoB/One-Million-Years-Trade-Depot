@@ -2,6 +2,15 @@
 
 What changed in each version of [`system_capture.py`](system_capture.py), newest first, and how it did when it ran in the game. Dates are when the version was written.
 
+## 0.13.0 (2026-10-19)
+
+- Records the paint the game picks for the ships and multi-tools it makes (`paint` lines), the NPCs' as well as yours: the texture option and color for each layer, the seed it painted with and the model's parts. NMS.py doesn't name the function that picks it, so the mod finds it by the pattern of its first bytes. Only the paint of the ships of a recorded system's list, of the multi-tools of a system's set or on offer, and of yours is written; the rest, such as other players', waits in memory up to two minutes for a line that names its seed, and is then dropped. `RECORD_PAINT` turns this off.
+- Records, once a session, the game's color variants for suns, from the Star entries of its space POI table (a `suns` line). In the game's code, a system's suns take their colors from these, picked by the system's star type.
+- System records no longer hold the bytes of the solar system that NMS.py doesn't name, nor of the sky the game draws (`gap`, `rawTail`, `rawSky`), which 0.12.0 recorded in case the colors of a system's other stars were kept there.
+- The session header says where the mod reads the paint (`paintLayout`) and the space POI table (`poiLayout`).
+
+Not run in the game.
+
 ## 0.12.0 (2026-10-18)
 
 - Records what the game makes your own ships, multi-tool and freighter from (`custom` lines), from `cGcResourceCustomisation::CreateGenerationTask`: the customisation's seed, its parts, the texture options picked for it and its two sets of colors, where they look like colors, with all the bytes the mod read; and again 1, 5 and 20 seconds later if it changed. Of anyone else's, only the model file. `RECORD_COLORS` turns this off.

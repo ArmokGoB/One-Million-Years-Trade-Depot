@@ -169,6 +169,10 @@ class Captures:
     owns: list[dict] = field(default_factory=list)
     # Textures of ships and multi-tools the game loaded with a descriptor (0.12.0 on).
     textures: list[dict] = field(default_factory=list)
+    # The paint the game picked for the ships and multi-tools it made (0.13.0 on), and its color variants for
+    # suns, from its space POI table (0.13.0 on).
+    paints: list[tuple[dict, Session]] = field(default_factory=list)
+    suns: list[dict] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
     def by_system(self) -> dict[int, list[SystemRecord]]:
@@ -249,6 +253,10 @@ def read_captures(paths: Iterable[Path]) -> Captures:
                     captures.owns.append(obj)
                 elif kind == "tex":
                     captures.textures.append(obj)
+                elif kind == "paint":
+                    captures.paints.append((obj, session))
+                elif kind == "suns":
+                    captures.suns.append(obj)
                 else:
                     captures.skipped.append(f"{where}: unknown record type {kind!r}")
     return captures
@@ -303,7 +311,8 @@ def summary_lines(captures: Captures) -> list[str]:
         f"{len(captures.models)} ship model(s), {sets} system multi-tool set(s), "
         f"{len(captures.items)} offered item(s), {len(captures.built)} model build note(s), "
         f"{len(captures.guilds)} guild(s), {len(captures.customs)} customisation(s), "
-        f"{len(captures.players)} record(s) of your ships, {len(captures.owns)} model(s) of yours"
+        f"{len(captures.players)} record(s) of your ships, {len(captures.owns)} model(s) of yours, "
+        f"{len(captures.paints)} paint record(s)"
     ]
     builds = Counter(
         (s.header.get("exe") or "unknown", s.header.get("steamBuild") or "?", s.header.get("nmspy") or "?")
@@ -817,8 +826,9 @@ def _star_function(info: object) -> str:
 
 
 def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
-    """How many stars each system has, as the game said and as worked out from its address, and the
-    guild seen in each region, with what else the captures say of the region, to find what decides it."""
+    """How many stars each system has, as the game said and as worked out from its address; the game's
+    color variants for suns; and the guild seen in each region, with what else the captures say of the
+    region, to find what decides it."""
     lines: list[str] = []
     headers = [s.header["starCount"] for s in captures.sessions if "starCount" in s.header]  # 0.10.0 on
     found = Counter(_star_function(info) for info in headers)
@@ -869,6 +879,15 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
             for system in several[:examples]:
                 counted = f" (the game counted {stars[system]})" if system in stars else ""
                 lines.append(f"    {systems[system].label()}: {worked[system]} stars{counted}")
+    if captures.suns:
+        variants: Counter[str] = Counter()
+        for suns in captures.suns:
+            for star in suns.get("stars") or []:
+                said = ", ".join(star.get("variants") or []) or f"behaviour {star.get('behaviour')}"
+                variants[f"{star.get('id')} (entry {star.get('index')}): {said}"] += 1
+        times = len(captures.suns)
+        lines += ["", f"Color variants for suns, from the game's space POI table, recorded {times} time(s):"]
+        lines += [f"  {said} (x{n})" for said, n in variants.items()] or ["  no Star entries in it"]
     if captures.guilds:
         by_region: dict[tuple[int, int], list[dict]] = {}
         for entry, _ in captures.guilds:
@@ -1190,8 +1209,9 @@ def color_lines(captures: Captures, limit: int = 50) -> list[str]:
     """What the game made your ships, multi-tool and so on from, as 0.12.0 on records it: each
     customisation's latest record, with its texture options and where its colors are; your ships as last
     recorded; and the models the game built with the seed of one of yours, against the parts the parts
-    tables pick for their seeds."""
-    if not (captures.customs or captures.players or captures.owns or captures.textures):
+    tables pick for their seeds. And the paint the game picked for the ships and multi-tools it made, as
+    0.13.0 on records it, with whether the same model and seed always got the same."""
+    if not (captures.customs or captures.players or captures.owns or captures.textures or captures.paints):
         return []
     lines = [""]
     seeded = [(custom, session) for custom, session in captures.customs if "seed" in custom]
@@ -1268,6 +1288,55 @@ def color_lines(captures: Captures, limit: int = 50) -> list[str]:
             f"system's ship: {sum(texture.get('seed') in ships for texture in captures.textures)}, of a "
             f"system's multi-tool: {sum(texture.get('seed') in tools for texture in captures.textures)}"
         )
+    if captures.paints:
+        lines.extend(_paint_lines(captures.paints, limit))
+    return lines
+
+
+def _paint_kind(paint: dict) -> str:
+    """Whose model a paint record says it is."""
+    for key, kind in (("system", "system ships"), ("own", "yours"), ("tool", "multi-tools")):
+        if key in paint:
+            return kind
+    return "other"
+
+
+def _paint_lines(paints: list[tuple[dict, Session]], limit: int) -> list[str]:
+    """The paint the game picked for the ships and multi-tools it made (`paint` lines): how many of whose,
+    whether the same model painted with the same seed always got the same options, and each one's options."""
+    kinds = Counter(_paint_kind(paint) for paint, _ in paints)
+    files = Counter(_model_file(paint.get("file") or "") for paint, _ in paints)
+    picked: dict[tuple, set[str]] = {}
+    latest: dict[tuple, tuple[dict, Session]] = {}
+    for paint, session in paints:
+        key = (paint.get("file"), paint.get("seed"), paint.get("modelSeed"), bool(paint.get("kept")))
+        picked.setdefault(key, set()).add(json.dumps(paint.get("options") or []))
+        latest[key] = (paint, session)
+    repeated = [key for key, options in picked.items() if len(options) > 1]
+    lines = [
+        f"Paint the game picked: {len(paints)} ({', '.join(f'{k} {n}' for k, n in kinds.most_common())}), "
+        f"{len(latest)} distinct model and seed(s); by file: "
+        + ", ".join(f"{name} {n}" for name, n in files.most_common(10)),
+        f"  kept from a customisation: {sum(1 for paint, _ in paints if paint.get('kept'))}; "
+        f"with read errors: {sum(1 for paint, _ in paints if paint.get('errors'))}; "
+        f"recorded again with other options: {len(repeated)}",
+    ]
+    for file, seed, *_ in repeated[:limit]:
+        lines.append(f"    {_model_file(file or '')} {seed}")
+    for (file, seed, model_seed, kept), (paint, session) in list(latest.items())[:limit]:
+        options = paint.get("options") or []
+        said = [f"{len(options)} texture options in {len({row[0] for row in options})} samplers"]
+        if model_seed:
+            said.append(f"made with seed {model_seed}")
+        if kept:
+            said.append("kept")
+        if paint.get("errors"):
+            said.append(f"errors: {'; '.join(paint['errors'])}")
+        lines.append(f"  {_model_file(file or '')} {seed}, {_whose(paint)}: {', '.join(said)}")
+        if options:
+            lines.append("    " + " ".join(_option_summary(row, session) for row in options[:12]))
+    if len(latest) > limit:
+        lines.append(f"  ... {len(latest) - limit} more")
     return lines
 
 

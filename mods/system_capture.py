@@ -32,7 +32,9 @@ the item holds: its inventories, and the seed and parts of its model. To work ou
 how the game colors ships and multi-tools, it also records what the game makes
 your own ships, multi-tool and freighter from: each one's seed, the texture
 option picked for each layer of its paint and the colors picked from each
-palette. The One Million Years Trade Depot uses these lines as ground truth for
+palette; the paint the game picks for the ships of each system's list and the
+system's multi-tools; and, once a session, the game's color variants for suns.
+The One Million Years Trade Depot uses these lines as ground truth for
 working out how the game picks a system's ships and multi-tools, and what a
 seed makes them look like.
 
@@ -70,6 +72,7 @@ import zlib
 from collections import Counter
 from importlib import metadata
 from pathlib import Path
+from typing import Annotated
 
 import nmspy.data.basic_types as basic
 import nmspy.data.enums as enums
@@ -79,12 +82,13 @@ import pymhf.core._internal as pymhf_internal
 from nmspy.common import gameData
 from nmspy.decorators import main_loop
 from pymhf import Mod
+from pymhf.core.hooking import Structure, static_function_hook
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.12.0"
+MOD_VERSION = "0.13.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.12.0 only add or drop record types, fields and controls, or let a field hold more
+# (0.3.0 to 0.13.0 only add or drop record types, fields and controls, or let a field hold more
 # kinds of thing, as 0.8.2 does with an item's "tools", so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
@@ -107,8 +111,9 @@ RECORD_MULTITOOLS = True
 # Record how many stars each system has. The mod finds the game's own function
 # for it, cGcSolarSystem::GetStarCount, which NMS.py names but can't hook, reads
 # its code, and works the count out the same way from the values it reads
-# (see StarCount). Set it to False if the game misbehaves with the mod, and the
-# mod won't look for the function.
+# (see StarCount). Once a session it also records the game's color variants for
+# suns, which a system's suns are drawn with (see STAR_POI_DATA). Set it to False
+# if the game misbehaves with the mod, and the mod won't look for the function.
 RECORD_STARS = True
 # Record what the game makes your own ships, multi-tool and freighter from, to work out how it colors
 # ships and multi-tools: the seed each one is made from, the texture option it picked for each layer of
@@ -117,6 +122,11 @@ RECORD_STARS = True
 # their customisation (see CUSTOMISATION_READ). Set it to False if the game misbehaves with the mod, and the
 # mod won't watch that function or read them.
 RECORD_COLORS = True
+# Record the paint the game picks for the ships and multi-tools it makes, the NPCs' as well as yours: the
+# texture option for each layer, and the color it's painted in. The mod watches the function the game picks
+# them with, which NMS.py doesn't name (see PAINT_PATTERN). Set it to False if the game misbehaves with the
+# mod, and the mod won't watch that function.
+RECORD_PAINT = True
 # Short tones tell you what happened while the log is hidden behind the game.
 PLAY_SOUNDS = True
 # Also play the "recorded" tone once per system, a few seconds after you
@@ -337,13 +347,44 @@ OWN_MODELS_RECORDED = 300
 # a seed: recorded (`tex` lines), the first this many of each file and seed a session.
 TEXTURE_FOLDERS = ("/SPACECRAFT/", "/WEAPONS/")
 TEXTURES_RECORDED = 200
-# What NMS.py doesn't name of a solar system, where the game may keep the colors of a system's other stars
-# (RECORD_STARS): the bytes between the system's generated data and its address (`gap`), in every system
-# record, and the last SYSTEM_TAIL_BYTES of it (`rawTail`), which hold the solar system map, its generator
-# and whatever follows, once the system has settled; and then too the sky the game draws, the suns among
-# it (`rawSky`: cGcSky, which NMS.py names only a few fields of, up to where the next part of the
-# environment begins).
-SYSTEM_TAIL_BYTES = 0xA220
+# The paint the game picks for a model it makes (RECORD_PAINT). In the game's code (NMS.exe, October 2026)
+# the task that makes a model first makes the model's 66 palettes from its seed, then hands one function the
+# part of the task that keeps what's picked, the seed and the palettes; for each of the model's samplers
+# that function picks a texture option for each layer of the model's textures, each painted in a color from
+# a palette, unless it's handed options to keep, as a customisation has. NMS.py doesn't name that function:
+# the mod finds it by PAINT_PATTERN, and once it returns reads the model's file from the task, and what was
+# picked (`paint` lines). Only ships and multi-tools are read (PAINT_FOLDERS), and only those of the ships in
+# a recorded system's ship list, of the multi-tools in recorded `pool` and `item` lines, and of yours are
+# written, at most PAINT_RECORDED a session. The others wait in memory, at most PAINT_WAITING of them, up to
+# PAINT_WAIT_SECONDS for such a line to name their seed, which the mod looks for every PAINT_CHECK_SECONDS,
+# and are then dropped unwritten, as other players' are.
+PAINT_PATTERN = (
+    "4C 89 4C 24 ? 48 89 54 24 ? 55 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 ? 48 81 EC ? ? ? ? 8B"
+)
+PAINT_FOLDERS = ("/SPACECRAFT/", "/WEAPONS/")
+PAINT_RECORDED = 5000
+PAINT_WAITING = 500
+PAINT_WAIT_SECONDS = 120.0
+PAINT_CHECK_SECONDS = 1.0
+# Where, as the game's code places them, the part of the task the function is handed sits in the task, the
+# task's model file (a cTkFixedString<0x100>) and descriptor (whose seed the function is handed, unless the
+# task holds another to paint with) are in the task, and the list of what was picked (a
+# cTkProceduralTextureChosenOptionList) is pointed to from the part handed over.
+PAINT_TASK_PART = 0x1D8
+PAINT_TASK_FILE = 0x28
+PAINT_TASK_DESCRIPTOR = 0x128
+PAINT_PART_OPTIONS = 0x10
+# A system's suns (RECORD_STARS). In the game's code (NMS.exe, October 2026) each sun is a copy of the
+# system's one space POI of type Star, numbered from 0, the main sun, by how many stars the system has. The
+# behaviour of that POI's entry in the game's space POI table is a cGcSpacePoiStarData, whose ColourVariants
+# name five color variants for suns; sun number k is drawn with the one at (the system's star type + k) mod 5.
+# The game tells a behaviour's class by a hash of its name, STAR_POI_DATA, next to the pointer to it. Once a
+# session, the mod records each Star entry of the table with the names (a `suns` line), looking for the table
+# every SUNS_RETRY_SECONDS until the game has loaded it.
+STAR_POI_DATA = 0x72DD9DBF
+MAX_POI_ITEMS = 1024
+MAX_POI_TYPE = 0xFF  # a type beyond this means the table isn't where, or as, NMS.py says
+SUNS_RETRY_SECONDS = 10.0
 NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
 MAX_LOCATORS = 4096
@@ -439,7 +480,6 @@ class Layout:
         generator = nms.cGcSolarSystemGenerator
         self.data = system.mSolarSystemData.offset
         self.data_size = ctypes.sizeof(data)
-        self.system_size = ctypes.sizeof(system)
         self.ua = system.mUA.offset
         self.attributes = system.mGalaxyAttributes.offset
         self.attributes_size = ctypes.sizeof(nms.cGcGalaxyAttributesAtAddress)
@@ -464,9 +504,6 @@ class Layout:
         # The player's name with title: read only to take it out of what the mod records.
         self.player_name = nms.cGcPlayerState.mNameWithTitle.offset
         self.player_name_size = ctypes.sizeof(basic.cTkFixedString0x100)
-        # The sky the game draws, the suns among it: as far as the next part of the environment.
-        self.sky = nms.cGcSimulation.mEnvironment.offset + nms.cGcEnvironment.mSky.offset
-        self.sky_size = nms.cGcEnvironment.mPlayerEnvironment.offset - nms.cGcEnvironment.mSky.offset
         # Where the player is (in the space station, on foot on a planet...), from the simulation.
         environment = nms.cGcSimulation.mEnvironment.offset + nms.cGcEnvironment.mPlayerEnvironment.offset
         self.player_where = environment + nms.cGcPlayerEnvironment.meLocation.offset
@@ -501,6 +538,21 @@ class Layout:
         # The customisations as one region: as many bytes as the biggest a customisation may be (see
         # CUSTOMISATION_READ) times how many there are.
         self.customisations_size = CUSTOMISATION_SLOTS * max(CUSTOMISATION_READ, self.customisation_size)
+        # The game's space POI table, for its color variants for suns (see STAR_POI_DATA).
+        item = nmse.cGcSpacePoiTableItem
+        self.application_data = nms.cGcApplication.mpData.offset
+        self.poi_table = (
+            nms.cGcApplication.Data.mRealityManager.offset + nms.cGcRealityManager.mpSpacePoiTable.offset
+        )
+        self.poi_items = nmse.cGcSpacePoiTable.Items.offset
+        self.poi_item_size = ctypes.sizeof(item)
+        self.poi_id = item.Id.offset
+        self.poi_behaviour = item.Behaviour.offset
+        self.poi_type = item.Type.offset
+        variants = dict(nmse.cGcSpacePoiStarData._fields_)["ColourVariants"]  # a ctypes array of names
+        self.star_variants = nmse.cGcSpacePoiStarData.ColourVariants.offset
+        self.star_variant_size = ctypes.sizeof(variants._type_)
+        self.star_variant_count = variants._length_
 
     def color_layout(self) -> dict:
         """Where the mod reads your ships and their customisations, as NMS.py places them, for the
@@ -520,6 +572,20 @@ class Layout:
             },
             "colorSets": [f"{offset:X}" for offset in self.color_sets],
         }  # fmt: skip
+
+    def poi_layout(self) -> dict:
+        """Where the mod reads the game's space POI table, as NMS.py places it, for the session header."""
+        return {
+            "table": f"{self.application_data:X}>{self.poi_table:X}",
+            "items": f"{self.poi_items:X}",
+            "itemSize": self.poi_item_size,
+            "fields": {
+                "id": f"{self.poi_id:X}",
+                "behaviour": f"{self.poi_behaviour:X}",
+                "type": f"{self.poi_type:X}",
+            },
+            "variants": [f"{self.star_variants:X}", self.star_variant_size, self.star_variant_count],
+        }
 
 
 LAYOUT = Layout()
@@ -886,33 +952,6 @@ def raw_galaxy(address: int) -> str | None:
     return packed(read_memory(address + LAYOUT.attributes, LAYOUT.attributes_size))
 
 
-def system_gap(address: int) -> str | None:
-    """The bytes between the solar system's generated data and its address, which NMS.py doesn't name, as
-    hex: where the game may keep the colors of a system's other stars."""
-    raw = read_memory(address + LAYOUT.data + LAYOUT.data_size, LAYOUT.ua - LAYOUT.data - LAYOUT.data_size)
-    return None if raw is None else raw.hex().upper()
-
-
-def sky_bytes(pattern: re.Pattern[bytes]) -> str | None:
-    """The sky the game draws, compressed, with your name and title taken out (see SYSTEM_TAIL_BYTES), or
-    None while there's no simulation."""
-    try:
-        simulation = gameData.simulation
-    except (ValueError, AttributeError):
-        return None
-    if simulation is None:
-        return None
-    raw = read_memory(ctypes.addressof(simulation) + LAYOUT.sky, LAYOUT.sky_size)
-    return None if raw is None else packed(scrub(raw, pattern)[0])
-
-
-def system_tail(address: int, pattern: re.Pattern[bytes]) -> str | None:
-    """The last SYSTEM_TAIL_BYTES of the solar system object, compressed, with your name and title taken
-    out (see SYSTEM_TAIL_BYTES)."""
-    raw = read_memory(address + LAYOUT.system_size - SYSTEM_TAIL_BYTES, SYSTEM_TAIL_BYTES)
-    return None if raw is None else packed(scrub(raw, pattern)[0])
-
-
 def read_text(address: int, size: int) -> str | None:
     raw = read_memory(address, size)
     return None if raw is None else raw.split(b"\0", 1)[0].decode("utf-8", errors="backslashreplace")
@@ -1004,6 +1043,12 @@ def is_texture(name: str) -> bool:
     """Whether ``name`` is one of the textures of a ship or a multi-tool."""
     path = name.replace("\\", "/").upper()
     return path.startswith("TEXTURES/") and any(folder in path for folder in TEXTURE_FOLDERS)
+
+
+def is_painted_model(name: str) -> bool:
+    """Whether ``name`` is the model of a ship or a multi-tool, whose paint the mod reads (RECORD_PAINT)."""
+    path = name.replace("\\", "/").upper()
+    return path.startswith("MODELS/") and any(folder in path for folder in PAINT_FOLDERS)
 
 
 def model_file(name: str) -> str:
@@ -1727,6 +1772,98 @@ def locate_star_count() -> StarCount | str | None:
     return StarCount(base + offset, offset, code)
 
 
+def application_data() -> int | None:
+    """Where the game's application data is (cGcApplication::Data), or None while NMS.py hasn't found
+    the game."""
+    application = gameData.GcApplication
+    if not isinstance(application, ctypes.Structure):
+        return None
+    return read_u64(ctypes.addressof(application) + LAYOUT.application_data) or None
+
+
+def star_pois() -> list[dict] | None:
+    """The Star entries of the game's space POI table (see STAR_POI_DATA): each one's place in the table
+    and ID, and the names of the color variants for suns that its behaviour holds (``variants``), or the hash
+    of its behaviour's class (``behaviour``) if that isn't cGcSpacePoiStarData. None while the table can't be
+    read; raises CaptureError if what's read there doesn't look like the table."""
+    data = application_data()
+    table = read_u64(data + LAYOUT.poi_table) if data else None
+    header = read_memory(table + LAYOUT.poi_items, 12) if table else None
+    if header is None:
+        return None
+    pointer, count = struct.unpack("<QI", header)
+    if not count:
+        return None  # not loaded yet
+    if not pointer or count > MAX_POI_ITEMS:
+        raise CaptureError(f"implausible space POI table (count {count}, pointer {pointer:#x})")
+    size = LAYOUT.poi_item_size
+    raw = read_memory(pointer, count * size)
+    if raw is None:
+        raise CaptureError("the space POI table couldn't be read")
+    stars: list[dict] = []
+    for index in range(count):
+        item = raw[index * size : (index + 1) * size]
+        kind = int.from_bytes(item[LAYOUT.poi_type : LAYOUT.poi_type + 4], "little")
+        if kind > MAX_POI_TYPE:
+            raise CaptureError(f"implausible space POI type {kind} in entry {index}")
+        if kind != enums.cGcSpacePoiType.Star:
+            continue
+        name = item[LAYOUT.poi_id : LAYOUT.poi_id + 16].split(b"\0", 1)[0]
+        star: dict = {"index": index, "id": name.decode("utf-8", errors="backslashreplace")}
+        behaviour, hashed = struct.unpack_from("<QI", item, LAYOUT.poi_behaviour)
+        length, many = LAYOUT.star_variant_size, LAYOUT.star_variant_count
+        names = None
+        if hashed == STAR_POI_DATA and behaviour:
+            names = read_memory(behaviour + LAYOUT.star_variants, length * many)
+        if names is None:
+            star["behaviour"] = f"{hashed:08X}"
+        else:
+            texts = (names[i * length : (i + 1) * length].split(b"\0", 1)[0] for i in range(many))
+            star["variants"] = [name.decode("utf-8", errors="backslashreplace") for name in texts]
+        stars.append(star)
+    return stars
+
+
+def paint_layout() -> dict:
+    """Where the mod reads the paint the game picks (see PAINT_PATTERN), for the session header."""
+    return {
+        "pattern": PAINT_PATTERN,
+        "taskPart": f"{PAINT_TASK_PART:X}",
+        "taskFile": f"{PAINT_TASK_FILE:X}",
+        "taskDescriptor": f"{PAINT_TASK_DESCRIPTOR:X}",
+        "partOptions": f"{PAINT_PART_OPTIONS:X}",
+    }
+
+
+def painted_task(part: int) -> str | None:
+    """The model file of the task the game handed the part at ``part`` of to the function that picks paint
+    (see PAINT_PATTERN), if it's a ship's or a multi-tool's (PAINT_FOLDERS), or None."""
+    name = read_c_string(part - PAINT_TASK_PART + PAINT_TASK_FILE, MODEL_NAME_LENGTH)
+    return name if name and is_painted_model(name) else None
+
+
+class ProceduralTextures(Structure):
+    """Functions of the game's procedural textures that NMS.py doesn't name, found in NMS.exe by their
+    patterns (October 2026)."""
+
+    # Picks the paint of a model the game is making (see PAINT_PATTERN), for each of its samplers: the
+    # part of the task that keeps what's picked, the model's resource handle, the seed to pick with, the
+    # model's palettes, a name and a color the textures may be matched against and painted with, whether
+    # to paint them all with that color, and whether to keep the options already in the list instead.
+    @static_function_hook(PAINT_PATTERN)
+    @staticmethod
+    def PickPaint(
+        lpTaskPart: ctypes.c_uint64,
+        lpResourceHandle: ctypes.c_uint64,
+        lpSeed: ctypes.c_uint64,
+        lpPalettes: ctypes.c_uint64,
+        lpMatch: ctypes.c_uint64,
+        lpColour: ctypes.c_uint64,
+        lbUseColour: Annotated[bool, ctypes.c_bool],
+        lbKeepOptions: Annotated[bool, ctypes.c_bool],
+    ) -> None: ...
+
+
 def query_metadata(generation_data: int) -> dict:
     """What GenerateQueryInfo wrote into its cGcSolarSystemData."""
     pointer = read_u64(generation_data + LAYOUT.metadata) if generation_data else None
@@ -1853,6 +1990,9 @@ def session_header(mod: Mod | None = None) -> dict:
         "starCount": _guarded(star_info, getattr(mod, "_stars", None)),
         # Where the mod reads your ships and their customisations, if it does (RECORD_COLORS).
         "colorLayout": _guarded(LAYOUT.color_layout) if RECORD_COLORS else None,
+        # Where it reads the paint the game picks (RECORD_PAINT), and the ways it draws suns (RECORD_STARS).
+        "paintLayout": paint_layout() if RECORD_PAINT else None,
+        "poiLayout": _guarded(LAYOUT.poi_layout) if RECORD_STARS else None,
         "nmspy": package_version("nmspy"),
         "pymhf": package_version("pymhf"),
         "python": platform.python_version(),
@@ -2103,6 +2243,17 @@ class TradeDepotCapture(Mod):
         self._custom_since_player = False
         self._own_model_keys: set[tuple] = set()
         self._texture_keys: set[tuple] = set()  # textures written, by (file, seed, parts)
+        # Paint (RECORD_PAINT): written, by (file, seed, model seed, kept); waiting for a line to name their
+        # seed, by the same, with when they started waiting; how many written; whether the log has said so.
+        self._paint_keys: set[tuple] = set()
+        self._waiting_paint: dict[tuple, dict] = {}
+        self._next_paint_check = 0.0
+        self._paint_count = 0
+        self._paint_logged = False
+        # The color variants for suns (RECORD_STARS): whether they're recorded this session, and when to look
+        # for them next.
+        self._suns_recorded = False
+        self._next_suns = 0.0
         # Resources the game has loaded, and how many came with a descriptor, for the log.
         self._resources = 0
         self._described = 0
@@ -2190,6 +2341,13 @@ class TradeDepotCapture(Mod):
             f"{self._custom_count} customisations, {self._own_count} models of yours; your ships "
             f"{self._player_count} times"
         )
+
+    @property
+    @STRING("Paint recorded")
+    def paint(self):
+        if not RECORD_PAINT:
+            return "Off (RECORD_PAINT is False)"
+        return f"{self._paint_count} ships and multi-tools"
 
     @property
     @STRING("Last system")
@@ -2379,12 +2537,33 @@ class TradeDepotCapture(Mod):
             except Exception:
                 self._report_once("colors", "Couldn't record what the game made one of yours from.")
 
+    if RECORD_PAINT:  # otherwise the mod leaves this function alone
+        # Once the game has picked the paint of a model it's making (see PAINT_PATTERN), read what it picked.
+        @ProceduralTextures.PickPaint.after
+        def after_pick_paint(
+            self,
+            lpTaskPart,
+            lpResourceHandle,
+            lpSeed,
+            lpPalettes,
+            lpMatch,
+            lpColour,
+            lbUseColour,
+            lbKeepOptions,
+        ):
+            try:
+                self._paint_picked(lpTaskPart, lpSeed, lbKeepOptions)
+            except Exception:
+                self._report_once("paint", "Couldn't record the paint the game picked for a model.")
+
     @main_loop.after
     def on_frame(self):
         try:
             self._watch_for_game(time.monotonic())
             self._record_guild()
             self._colors(time.monotonic())
+            self._resolve_paint(time.monotonic())
+            self._record_suns(time.monotonic())
             self._flush_pending()
             self._poll()
             self._count_resources(time.monotonic())
@@ -3168,8 +3347,6 @@ class TradeDepotCapture(Mod):
             context["raw"] = raw
         if (raw := raw_galaxy(address)) is not None:
             context["rawGalaxy"] = raw
-        if RECORD_STARS and (gap := system_gap(address)) is not None:
-            context["gap"] = gap
         try:
             if (locators := locator_data(address)) is not None:
                 context["locators"] = locators
@@ -3476,6 +3653,140 @@ class TradeDepotCapture(Mod):
             model_file(name) or "something",
         )
 
+    def _paint_picked(self, part_pointer, seed_pointer, keep) -> None:
+        """Note the paint the game picked for a ship or multi-tool it's making (see PAINT_PATTERN): write it
+        if it's one the mod records, else keep it waiting for a line that names its seed."""
+        part = address_of(part_pointer)
+        name = painted_task(part) if part else None
+        if name is None:
+            return
+        raw = read_memory(address_of(seed_pointer), ctypes.sizeof(basic.GcSeed))
+        if raw is None:
+            raise CaptureError("the seed the paint was picked with couldn't be read")
+        seed = basic.GcSeed.from_buffer_copy(raw)
+        problems: list[str] = []
+        options = read_u64(part + PAINT_PART_OPTIONS)
+        rows = texture_options(options, problems) if options else []
+        entry: dict = {
+            "at": int(time.time()),
+            "file": name,
+            "seed": hex64(seed.Seed),
+            "useSeed": as_int(seed.UseSeedValue),
+            "options": rows,
+        }
+        if keep:
+            entry["kept"] = 1  # the options the task was handed, as a customisation has, not picked now
+        try:
+            model = resource_descriptor(part - PAINT_TASK_PART + PAINT_TASK_DESCRIPTOR)
+        except CaptureError as exc:
+            problems.append(str(exc))
+        else:
+            if model is not None:
+                entry["parts"] = model["parts"]
+                if model["seed"] != entry["seed"]:
+                    entry["modelSeed"] = model["seed"]
+                problems.extend(model.get("errors", []))
+        if problems:
+            entry["errors"] = problems
+        key = (name, entry["seed"], entry.get("modelSeed"), bool(keep))
+        with self._lock:
+            if key in self._paint_keys or key in self._waiting_paint:
+                return
+            place = self._paint_place(entry)
+            if place is not None:
+                self._write_paint(key, entry, place)
+                return
+            self._waiting_paint[key] = dict(entry, waited=time.monotonic())
+            while len(self._waiting_paint) > PAINT_WAITING:
+                del self._waiting_paint[next(iter(self._waiting_paint))]
+
+    def _paint_place(self, entry: dict) -> dict | None:
+        """What the model whose paint is in ``entry`` is, by the seed it was painted with or else the one it
+        was made with, if the mod records it: one of yours (``own``), one of the multi-tools in recorded
+        lines (``tool``), or a ship in a recorded system's ship list (``system`` and ``slot``); else None.
+        The caller holds the lock."""
+        for seed in (entry["seed"], entry.get("modelSeed")):
+            if seed is None or seed == ZERO_SEED:
+                continue
+            if (what := self._own_seeds.get(seed)) is not None:
+                return {"own": what}
+            if is_multitool_model(entry["file"]):
+                if seed in self._tools_heard:
+                    return {"tool": 1}
+            elif (place := self._ship_place(seed)) is not None:
+                return {"system": hex64(place[0]), "slot": place[1]}
+        return None
+
+    def _write_paint(self, key: tuple, entry: dict, place: dict) -> None:
+        """Queue a model's paint for the capture file. The caller holds the lock."""
+        if key in self._paint_keys:
+            return
+        if len(self._paint_keys) >= PAINT_RECORDED:
+            self._report_once(
+                "paint-full",
+                "Recorded the paint of %d ships and multi-tools this session; no more until the next.",
+                PAINT_RECORDED,
+                with_traceback=False,
+            )
+            return
+        self._paint_keys.add(key)
+        record = {"t": "paint", "at": entry["at"], **place}
+        record.update((k, v) for k, v in entry.items() if k not in ("at", "waited"))
+        self._pending.append(record)
+        self._paint_count = len(self._paint_keys)
+        if not self._paint_logged:
+            self._paint_logged = True
+            logger.info(
+                "Recorded the paint the game picked for %s (seed %s): %d texture options. The paint of the "
+                "ships and multi-tools the mod records is recorded from now on.",
+                model_file(entry["file"]),
+                entry["seed"],
+                len(entry["options"]),
+            )
+
+    def _resolve_paint(self, now: float) -> None:
+        """Write the paint waiting for a line that has since named its seed, and drop what has waited too
+        long (see PAINT_WAIT_SECONDS)."""
+        if not self._waiting_paint or now < self._next_paint_check:
+            return
+        self._next_paint_check = now + PAINT_CHECK_SECONDS
+        with self._lock:
+            for key, entry in list(self._waiting_paint.items()):
+                place = self._paint_place(entry)
+                if place is not None:
+                    del self._waiting_paint[key]
+                    self._write_paint(key, entry, place)
+                elif now - entry["waited"] > PAINT_WAIT_SECONDS:
+                    del self._waiting_paint[key]
+
+    def _record_suns(self, now: float) -> None:
+        """Once a session, record the game's color variants for suns (see STAR_POI_DATA)."""
+        if not RECORD_STARS or self._suns_recorded or now < self._next_suns:
+            return
+        self._next_suns = now + SUNS_RETRY_SECONDS
+        try:
+            stars = star_pois()
+        except CaptureError as exc:
+            self._suns_recorded = True  # what's there doesn't look like the table: don't read it again
+            self._report_once(
+                "suns", "Couldn't read the game's space POI table: %s.", exc, with_traceback=False
+            )
+            return
+        except Exception:
+            self._suns_recorded = True
+            self._report_once("suns", "Couldn't read the game's space POI table.")
+            return
+        if stars is None:
+            return
+        self._suns_recorded = True
+        with self._lock:
+            self._pending.append({"t": "suns", "at": int(time.time()), "stars": stars})
+        named = [star for star in stars if "variants" in star]
+        if named:
+            logger.info("Recorded the game's color variants for suns: %s.", ", ".join(named[0]["variants"]))
+        else:
+            logger.info("Read the game's space POI table, but none of its stars has color variants for suns.")
+
     def _texture_requested(self, name: str, resource_type: int, descriptor: dict) -> None:
         """Queue a texture of a ship or multi-tool that the game loads with a descriptor, and the seed and
         parts in it, once a session per file and seed (see TEXTURES_RECORDED)."""
@@ -3610,25 +3921,6 @@ class TradeDepotCapture(Mod):
             except Exception:
                 self._report_once("name", "Couldn't get the system's name from the game.")
             context.update(self._star_context(named_system))
-            if RECORD_STARS:
-                context.update(self._other_stars_context(named_system))
-        return context
-
-    def _other_stars_context(self, system: int) -> dict:
-        """What NMS.py doesn't name of the solar system at ``system`` and of the sky, where the game may keep
-        the colors of the system's other stars (see SYSTEM_TAIL_BYTES): ``gap``, and ``rawTail`` and
-        ``rawSky`` if your name can be read, to take it out."""
-        context: dict = {}
-        try:
-            if (gap := system_gap(system)) is not None:
-                context["gap"] = gap
-            pattern, _ = player_name_pattern()
-            if pattern is not None and (tail := system_tail(system, pattern)) is not None:
-                context["rawTail"] = tail
-            if pattern is not None and (sky := sky_bytes(pattern)) is not None:
-                context["rawSky"] = sky
-        except Exception:
-            self._report_once("system-rest", "Couldn't read the rest of a solar system.")
         return context
 
     def _star_context(self, system: int) -> dict:

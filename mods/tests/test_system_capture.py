@@ -359,10 +359,21 @@ class WiringTests(CaptureTestCase):
         expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
         expected |= {name for pair in STEPS for name in pair}
         expected |= {"before_add_resource", "after_add_resource", "before_item_update"}
-        expected |= {"before_generation_task", "after_generation_task"}
+        expected |= {"before_generation_task", "after_generation_task", "after_pick_paint"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 16)
+        self.assertEqual(len(self.capture._gui_widgets), 17)
+
+    def test_paint_hook_watches_the_function_its_pattern_finds_once_it_returns(self):
+        hook = mod.TradeDepotCapture.after_pick_paint
+        self.assertEqual(hook._hook_func_name, "ProceduralTextures.PickPaint")
+        self.assertEqual(hook._hook_time, DetourTime.AFTER)
+        self.assertEqual(hook._hook_pattern, mod.PAINT_PATTERN)
+        definition = hook._hook_func_def
+        self.assertIsNone(definition.restype)
+        # The part of the task, the resource handle, the seed, the palettes, a name and a color to match, as
+        # addresses; whether to paint with that color, and whether to keep the options, as single bytes.
+        self.assertEqual(definition.argtypes, [ctypes.c_uint64] * 6 + [ctypes.c_bool] * 2)
 
     def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
         hook = mod.TradeDepotCapture.before_add_resource
@@ -2709,34 +2720,285 @@ class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.assertEqual(header["enums"]["colorAlt"][ALT1], "Alternative1")
 
 
-class OtherStarsTests(CaptureTestCase):
-    def test_system_records_keep_what_nms_py_doesnt_name_of_the_solar_system(self):
-        layout = mod.LAYOUT
-        gap = layout.ua - layout.data_size
-        ctypes.memmove(self.game.address + layout.data_size, bytes(range(gap)), gap)
-        tail = self.game.address + layout.system_size - mod.SYSTEM_TAIL_BYTES
-        ctypes.memmove(tail + 8, PLAYER, len(PLAYER))
-        sun = self.game.simulation.mEnvironment.mSky.mSunDirection
-        sun.x, sun.y, sun.z = 0.25, -0.5, 0.75
-        self.game.generate(self.capture)
+class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
+    def setUp(self):
+        super().setUp()
+        self.now = 100.0  # the mod's clock (time.monotonic), which the tests move on
+        self._patch("time", types.SimpleNamespace(monotonic=lambda: self.now, time=mod.time.time))
+        self._patch("CHIME_ON_ARRIVAL", False)
+        self.game.generate(self.capture)  # the mod reads the system's ship list
+
+    def paint(
+        self, name, seed, samplers=(), parts=(), model_seed=None, keep=False, options=None, **descriptor
+    ):
+        """Call the PickPaint detour the way pyMHF does once the game has picked the paint of a model it's
+        making: with the part of the model's task that keeps what's picked, in a task laid out as the game's
+        code lays it out (see PAINT_TASK_PART), and the seed it picked with. The task's descriptor holds
+        ``model_seed`` if given, else ``seed``."""
+        task = self.keep((ctypes.c_ubyte * (mod.PAINT_TASK_PART + 0x40))())
+        ctypes.memmove(task + mod.PAINT_TASK_FILE, name.encode(), len(name))
+        made = self.descriptor(seed if model_seed is None else model_seed, list(parts), **descriptor).contents
+        ctypes.memmove(task + mod.PAINT_TASK_DESCRIPTOR, ctypes.addressof(made), ctypes.sizeof(made))
+        if options is None:
+            options = self.keep((ctypes.c_ubyte * ctypes.sizeof(nmse.cTkProceduralTextureChosenOptionList))())
+            self.options_list(options, list(samplers))
+        part = task + mod.PAINT_TASK_PART
+        ctypes.c_uint64.from_address(part + mod.PAINT_PART_OPTIONS).value = options
+        picked = self.game._alloc(basic.GcSeed)
+        picked.Seed, picked.UseSeedValue = seed, 1
+        args = (part, 0, ctypes.addressof(picked), 0, 0, 0, False, keep)
+        self.assertIsNone(self.capture.after_pick_paint(*args), "detours must return None")
+
+    def test_the_paint_of_a_systems_ship_is_recorded_once(self):
+        parts = ["_COCKPIT_A", "_WINGS_B"]
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.paint(FIGHTER_MODEL, 0x1111111111111111, [[OPTION], []], parts=parts)
+        self.paint(FIGHTER_MODEL, 0x1111111111111111, [[OPTION], []], parts=parts)  # again: the same
+        (record,) = self.records("paint")
+        self.assertEqual(
+            {k: v for k, v in record.items() if k != "at"},
+            {
+                "t": "paint",
+                "system": f"{UA:016X}",
+                "slot": 0,
+                "file": FIGHTER_MODEL,
+                "seed": "1111111111111111",
+                "useSeed": 1,
+                "options": [OPTION_ROW],
+                "parts": ["_COCKPIT_A", "_WINGS_B"],
+            },
+        )
+        self.assertIn(
+            "Recorded the paint the game picked for FIGHTER_PROC (seed 1111111111111111): 1 texture options.",
+            "\n".join(logs.output),
+        )
+        self.assertEqual(self.capture.paint, "1 ships and multi-tools")
+        self.assertEqual(self.sounds, [], "no tone: the game paints ships all the time")
+
+    def test_paint_waits_for_a_line_that_names_its_seed(self):
+        self.paint(MULTITOOL_MODEL, 0xABCDEF01, [[OPTION]])
+        self.paint(FIGHTER_MODEL, 0x9999999999999999)  # another player's ship, say
+        self.assertEqual(self.records("paint"), [], "not known yet to be one the mod records")
+        self.capture._tools_heard.add("00000000ABCDEF01")  # as when a system's set or an item names it
+        self.now += 1
+        (tool,) = self.records("paint")
+        self.assertEqual((tool["tool"], tool["seed"], tool["options"]), (1, "00000000ABCDEF01", [OPTION_ROW]))
+        self.assertNotIn("waited", tool)
+        self.now += mod.PAINT_WAIT_SECONDS + 1
+        self.assertEqual(len(self.records("paint")), 1)
+        self.assertEqual(self.capture._waiting_paint, {}, "dropped unwritten")
+
+    def test_the_paint_of_yours_and_of_a_ship_painted_with_another_seed(self):
+        self.capture._own_seeds[f"{MY_SHIP_SEED:016X}"] = "ship 2"
+        self.paint(FIGHTER_MODEL, MY_SHIP_SEED, [[OPTION]], keep=True)
+        self.paint(FIGHTER_MODEL, 0x0123456789ABCDEF, model_seed=0x2222222222222222)
+        mine, ship = self.records("paint")
+        self.assertEqual((mine["own"], mine["kept"], mine["options"]), ("ship 2", 1, [OPTION_ROW]))
+        self.assertEqual(
+            (ship["system"], ship["slot"], ship["seed"], ship["modelSeed"]),
+            (f"{UA:016X}", 1, "0123456789ABCDEF", "2222222222222222"),
+        )
+        self.assertNotIn("kept", ship)
+
+    def test_only_the_paint_of_ships_and_multi_tools_is_read(self):
+        reads = []
+        self._patch("texture_options", lambda address, problems: reads.append(address) or [])
+        self.paint("MODELS/PLANETS/CREATURES/MADEUP/MADEUP.SCENE.MBIN", 0x1111111111111111, [[OPTION]])
+        self.paint("TEXTURES/COMMON/SPACECRAFT/FIGHTERS/SHARED/PRIMARY.DDS", 0x1111111111111111, [[OPTION]])
+        self.assertEqual((reads, self.capture._waiting_paint), ([], {}))
+        self.assertEqual(self.records("paint"), [])
+
+    def test_unreadable_lists_are_noted_and_the_rest_recorded(self):
+        self.paint(FIGHTER_MODEL, 0x1111111111111111, options=0xDEAD1000, count=4, pointer=0xDEAD0000)
+        (record,) = self.records("paint")
+        self.assertEqual(
+            record["errors"],
+            ["texture options at 0xdead1000 couldn't be read", "part list at 0xdead0000 couldn't be read"],
+        )
+        self.assertEqual((record["options"], record["parts"]), ([], []))
+
+    def test_what_the_mod_records_and_keeps_waiting_is_limited(self):
+        self._patch("PAINT_RECORDED", 1)
+        self._patch("PAINT_WAITING", 2)
+        self.paint(FIGHTER_MODEL, 0x1111111111111111)
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.paint(FIGHTER_MODEL, 0x2222222222222222)
+            self.paint(FIGHTER_MODEL, 0x8000000000000001)
+        self.assertEqual(len(self.records("paint")), 1)
+        self.assertEqual(
+            logs.output,
+            [
+                "WARNING:TradeDepotCapture:Recorded the paint of 1 ships and multi-tools this session; "
+                "no more until the next."
+            ],
+        )
+        for seed in range(1, 5):
+            self.paint(FIGHTER_MODEL, 0x9000 + seed)  # none of the system's ships
+        waiting = [key[1] for key in self.capture._waiting_paint]
+        self.assertEqual(waiting, ["0000000000009003", "0000000000009004"], "the latest")
+
+    def test_turning_paint_off_leaves_the_function_alone(self):
+        source = harness.MOD_PATH.read_text(encoding="utf-8")
+        self.assertIn("\nRECORD_PAINT = True\n", source)
+        path = Path(self._tmp.name) / "system_capture_without_paint.py"
+        path.write_text(source.replace("\nRECORD_PAINT = True\n", "\nRECORD_PAINT = False\n"))
+        spec = importlib.util.spec_from_file_location("system_capture_without_paint", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        capture = module.TradeDepotCapture()
+        self.assertNotIn("after_pick_paint", {hook.__name__ for hook in capture.hooks})
+        self.assertEqual(capture.paint, "Off (RECORD_PAINT is False)")
+        self.assertIsNone(module.session_header()["paintLayout"])
+
+    def test_session_header_says_where_the_mod_reads_paint_and_the_poi_table(self):
+        header = self.lines()[0]
+        self.assertEqual(
+            header["paintLayout"],
+            {
+                "pattern": mod.PAINT_PATTERN,
+                "taskPart": "1D8",
+                "taskFile": "28",
+                "taskDescriptor": "128",
+                "partOptions": "10",
+            },
+        )
+        self.assertEqual(header["poiLayout"]["table"], f"{nms.cGcApplication.mpData.offset:X}>128")
+        self.assertEqual(header["poiLayout"]["fields"], {"id": "E8", "behaviour": "A8", "type": "168"})
+        self.assertEqual(header["poiLayout"]["variants"], ["0", 64, 5])
+
+    def test_report_lists_the_paint_and_any_model_and_seed_painted_otherwise(self):
+        self.capture._own_seeds[f"{MY_SHIP_SEED:016X}"] = "ship 2"
+        self.paint(FIGHTER_MODEL, 0x1111111111111111, [[OPTION]], parts=["_COCKPIT_A"])
+        self.paint(FIGHTER_MODEL, MY_SHIP_SEED, [[OPTION]], keep=True)
         self.poll()
-        self.poll()  # settled: recorded, without the tail, as your name can't be read yet
-        self.game.player_state.mNameWithTitle.value = PLAYER
-        self.game.display_name = "Shown-Again"  # so that the button makes a new record
-        self.capture.record_now()
-        self.capture.on_frame()
-        generated, polled, named = [line for line in self.lines() if line["t"] == "sys"]
-        self.assertEqual(generated["gap"], bytes(range(gap)).hex().upper())
-        self.assertNotIn("rawTail", generated)
-        self.assertEqual(polled["gap"], generated["gap"])
-        self.assertNotIn("rawTail", polled, "only once your name can be taken out")
-        shown = zlib.decompress(base64.b64decode(named["rawTail"]))
-        self.assertEqual(len(shown), mod.SYSTEM_TAIL_BYTES)
-        self.assertEqual(shown[8 : 8 + len(PLAYER)], b"*" * len(PLAYER))
-        self.assertNotIn("rawSky", polled)
-        sky = zlib.decompress(base64.b64decode(named["rawSky"]))
-        self.assertEqual(len(sky), mod.LAYOUT.sky_size)
-        self.assertEqual(sky[0x500:0x50C], struct.pack("<3f", 0.25, -0.5, 0.75), "where NMS.py puts the sun")
+        self.capture = mod.TradeDepotCapture()  # another session, in which the same ship is painted otherwise
+        self.game.generate(self.capture)
+        stripes = (b"BASE", b"PRIMARY", b"STRIPES", PAINT, ALT1, 3, (0.5, 0.5, 0.5, 1.0), False)
+        self.paint(FIGHTER_MODEL, 0x1111111111111111, [[stripes]], parts=["_COCKPIT_A"])
+        self.poll()
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        self.assertIn("3 paint record(s)", report.summary_lines(captures)[0])
+        lines = report.color_lines(captures)
+        self.assertIn(
+            "Paint the game picked: 3 (system ships 2, yours 1), 2 distinct model and seed(s); by file: "
+            "FIGHTER_PROC 3",
+            lines,
+        )
+        self.assertIn(
+            "  kept from a customisation: 1; with read errors: 0; recorded again with other options: 1", lines
+        )
+        self.assertIn("    FIGHTER_PROC 1111111111111111", lines)
+        self.assertIn(
+            f"  FIGHTER_PROC 1111111111111111, ship 0 of {report._portal_label(UA)}: 1 texture options in 1 "
+            "samplers",
+            lines,
+        )
+        self.assertIn("    0:BASE=STRIPES (Paint/Alternative1 3)", lines)
+        self.assertIn(
+            f"  FIGHTER_PROC {MY_SHIP_SEED:016X}, yours (ship 2): 1 texture options in 1 samplers, kept",
+            lines,
+        )
+
+
+class SunTests(CaptureTestCase):
+    VARIANTS = ["SUN_A", "SUN_B", "SUN_C", "SUN_D", "SUN_E"]  # made up
+
+    def setUp(self):
+        super().setUp()
+        self.now = 100.0  # the mod's clock (time.monotonic), which the tests move on
+        self._patch("time", types.SimpleNamespace(monotonic=lambda: self.now, time=mod.time.time))
+        data = self.game._alloc(nms.cGcApplication.Data)
+        application = self.game._alloc(nms.cGcApplication)
+        application.mpData = ctypes.pointer(data)
+        mod.gameData.GcApplication = application  # NMS.py has found the game
+        self.data = ctypes.addressof(data)
+
+    def bytes_at(self, size: int) -> int:
+        buffer = (ctypes.c_ubyte * size)()
+        self.game.memory.keep(buffer)
+        self.game._keep.append(buffer)
+        return ctypes.addressof(buffer)
+
+    def table(self, items) -> None:
+        """The game's space POI table, as NMS.py places it: ``items``, each (type, ID, the class hash of its
+        behaviour, and the color variants its behaviour holds, or None for no behaviour)."""
+        layout = mod.LAYOUT
+        table = self.bytes_at(ctypes.sizeof(nmse.cGcSpacePoiTable))
+        entries = self.bytes_at(layout.poi_item_size * max(len(items), 1))
+        for index, (kind, name, hashed, variants) in enumerate(items):
+            at = entries + index * layout.poi_item_size
+            behaviour = 0
+            if variants is not None:
+                behaviour = self.bytes_at(ctypes.sizeof(nmse.cGcSpacePoiStarData))
+                for k, variant in enumerate(variants):
+                    where = behaviour + layout.star_variants + k * layout.star_variant_size
+                    ctypes.memmove(where, variant.encode(), len(variant))
+            ctypes.memmove(at + layout.poi_id, name, len(name))
+            ctypes.memmove(at + layout.poi_behaviour, struct.pack("<QI", behaviour, hashed), 12)
+            ctypes.memmove(at + layout.poi_type, struct.pack("<I", kind), 4)
+        ctypes.memmove(table + layout.poi_items, struct.pack("<QI", entries, len(items)), 12)
+        ctypes.memmove(self.data + layout.poi_table, struct.pack("<Q", table), 8)
+
+    def suns(self) -> list[dict]:
+        return [line for line in self.lines() if line["t"] == "suns"]
+
+    def test_the_color_variants_for_suns_are_recorded_once_a_session(self):
+        poi = mod.enums.cGcSpacePoiType
+        self.poll()  # the game hasn't loaded the table yet
+        self.table(
+            [
+                (poi.AsteroidBelt, b"ROCKS", 0x1234ABCD, None),
+                (poi.Star, b"SUN", mod.STAR_POI_DATA, self.VARIANTS),
+                (poi.Star, b"ODD_SUN", 0x0BADF00D, None),
+                (99, b"NEWER", 0x1234ABCD, None),  # a type newer than NMS.py, say
+            ]
+        )
+        self.poll()
+        self.assertEqual(self.suns(), [], "looked for again only after a while")
+        self.now += mod.SUNS_RETRY_SECONDS
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+        self.now += 1000
+        self.poll()
+        (suns,) = self.suns()
+        self.assertEqual(
+            suns["stars"],
+            [
+                {"index": 1, "id": "SUN", "variants": self.VARIANTS},
+                {"index": 2, "id": "ODD_SUN", "behaviour": "0BADF00D"},
+            ],
+        )
+        self.assertIn(
+            "Recorded the game's color variants for suns: SUN_A, SUN_B, SUN_C, SUN_D, SUN_E.",
+            "\n".join(logs.output),
+        )
+
+    def test_a_table_that_doesnt_look_like_one_is_noted_once_and_left_alone(self):
+        self.table([(0x3F800000, b"ODD", 0, None)])  # a float where the type should be, say
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+        self.now += 1000
+        self.poll()
+        self.assertEqual(self.suns(), [])
+        self.assertIn(
+            "Couldn't read the game's space POI table: implausible space POI type 1065353216 in entry 0.",
+            "\n".join(logs.output),
+        )
+
+    def test_turning_stars_off_leaves_the_table_alone(self):
+        self._patch("RECORD_STARS", False)
+        self.table([(mod.enums.cGcSpacePoiType.Star, b"SUN", mod.STAR_POI_DATA, self.VARIANTS)])
+        self.poll()
+        self.assertEqual(self.suns(), [])
+
+    def test_report_lists_the_color_variants_for_suns(self):
+        self.table([(mod.enums.cGcSpacePoiType.Star, b"SUN", mod.STAR_POI_DATA, self.VARIANTS)])
+        self.poll()
+        lines = report.star_guild_lines(report.read_captures([mod.CAPTURE_FILE]))
+        self.assertIn("Color variants for suns, from the game's space POI table, recorded 1 time(s):", lines)
+        self.assertIn("  SUN (entry 0): SUN_A, SUN_B, SUN_C, SUN_D, SUN_E (x1)", lines)
 
 
 class DiagnosticsTests(CaptureTestCase):
