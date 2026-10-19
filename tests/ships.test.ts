@@ -9,19 +9,21 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   describeSystem,
+  distinguishingParts,
   exoticSquid,
   firstDraw,
   hex64,
   MULTIPLIER,
   parsePortalCode,
   planetSeeds,
+  partsFor,
   shipPool,
   slotTypes,
-  SQUID_EDGES,
+  SQUID_PART,
   systemAttributes,
+  typeModels,
   withPlanet,
   type ShipGroup,
-  type SquidCall,
 } from "../src/core";
 
 interface ShipVector {
@@ -32,10 +34,10 @@ interface ShipVector {
   start: number;
   uncertain: string | null;
   ships: string[];
-  exoticSquid: SquidCall;
+  exoticSquid: boolean;
   crash: string;
   /** The other ways a two-moon planet's moons can be arranged. */
-  others: { start: number; exotic: string; exoticSquid: SquidCall; crash: string }[];
+  others: { start: number; exotic: string; exoticSquid: boolean; crash: string }[];
 }
 
 const file = JSON.parse(readFileSync(new URL("./fixtures/ship-vectors.json", import.meta.url), "utf8")) as {
@@ -175,6 +177,27 @@ describe("slot types", () => {
   });
 });
 
+describe("slot models", () => {
+  it("are the models each type of ship is built from", () => {
+    expect(typeModels("Hauler")).toEqual(["DROPSHIP_PROC"]);
+    expect(typeModels("Explorer or solar")).toEqual(["SCIENTIFIC_PROC", "SAILSHIP_PROC"]);
+    expect(typeModels("Shuttle or solar")).toEqual(["SHUTTLE_PROC", "SAILSHIP_PROC"]);
+    expect(typeModels("Solar or shuttle")).toEqual(["SAILSHIP_PROC", "SHUTTLE_PROC"]);
+    expect(typeModels("Pirate fighter")).toEqual(["FIGHTER_PROC"]);
+    expect(typeModels("Combat frigate")).toEqual([]);
+  });
+
+  it("give parts to the civilian ships, the exotic, the freighters, the Sentinel ship and the pirates", () => {
+    const v = file.vectors.find((v) => v.what === "Gek, no moons")!;
+    const ships = shipPool(parsePortalCode(v.code), v.galaxy).ships;
+    const withParts = ships.filter((s) => s.models.length).map((s) => s.slot);
+    expect(withParts).toEqual([...Array(25).keys(), 35, 37, 38, 39, 40, 41]);
+    expect(ships[20]!.models).toEqual(["S-CLASS_PROC"]);
+    expect(ships[24]!.models).toEqual(["CAPITALFREIGHTER_PROC"]);
+    expect(ships[35]!.models).toEqual(["SENTINELSHIP_PROC"]);
+  });
+});
+
 describe("squid exotics", () => {
   const M32 = 0xffffffffn;
   const swap16 = (x: bigint) => ((x >> 16n) | (x << 16n)) & M32;
@@ -185,28 +208,25 @@ describe("squid exotics", () => {
     return ((high ^ swap16(low) ^ low) << 32n) | low;
   }
   const line = (20 * 2 ** 32) / 21;
-  const call = (draw: number) => exoticSquid(seedWithFirstDraw(draw));
+  const squid = (draw: number) => exoticSquid(seedWithFirstDraw(draw));
 
   it("takes the first draw from the seed as the Python model does", () => {
     expect(firstDraw(0x0123456789abcdefn)).toBe(4005469434);
     expect(firstDraw(0xfedcba9876543210n)).toBe(3066718828);
     expect(firstDraw(1n)).toBe(1517811866);
-    for (const draw of [0, 1, SQUID_EDGES.notSquid, Math.floor(line), Math.ceil(line), 2 ** 32 - 1]) {
+    for (const draw of [0, 1, Math.floor(line), Math.ceil(line), 2 ** 32 - 1]) {
       expect(firstDraw(seedWithFirstDraw(draw))).toBe(draw);
     }
   });
 
-  it("draws the line at 20/21 of the range, between the closest exotics recorded", () => {
-    expect(SQUID_EDGES.notSquid).toBeLessThan(line);
-    expect(SQUID_EDGES.squid).toBeGreaterThan(line);
-    expect(call(0)).toEqual({ squid: false, close: false });
-    expect(call(SQUID_EDGES.notSquid)).toEqual({ squid: false, close: false });
-    expect(call(SQUID_EDGES.notSquid + 1)).toEqual({ squid: false, close: true });
-    expect(call(Math.floor(line))).toEqual({ squid: false, close: true });
-    expect(call(Math.ceil(line))).toEqual({ squid: true, close: true });
-    expect(call(SQUID_EDGES.squid - 1)).toEqual({ squid: true, close: true });
-    expect(call(SQUID_EDGES.squid)).toEqual({ squid: true, close: false });
-    expect(call(2 ** 32 - 1)).toEqual({ squid: true, close: false });
+  it("are the exotics whose first draw is at least 20/21 of its range: the squid's body weighs 0.05 to 1", () => {
+    for (const draw of [0, 1, Math.floor(line) - 1, Math.floor(line)]) expect(squid(draw), String(draw)).toBe(false);
+    for (const draw of [Math.ceil(line), Math.ceil(line) + 1, 2 ** 32 - 1]) expect(squid(draw), String(draw)).toBe(true);
+  });
+
+  it("have the squid's body as their first part", () => {
+    expect(partsFor("S-CLASS_PROC", seedWithFirstDraw(Math.ceil(line)))[0]).toBe(SQUID_PART);
+    expect(partsFor("S-CLASS_PROC", seedWithFirstDraw(Math.floor(line)))[0]).not.toBe(SQUID_PART);
   });
 });
 
@@ -223,8 +243,11 @@ describe("describeSystem", () => {
       type: "Hauler",
       group: "civilian",
       seed: `0x${v.ships[0]}`,
+      parts: [{ model: "Hauler", parts: distinguishingParts("DROPSHIP_PROC", BigInt(`0x${v.ships[0]}`)) }],
       note: null,
     });
+    expect(d.ships.exoticParts).toEqual(distinguishingParts("S-CLASS_PROC", BigInt(`0x${v.ships[20]}`)));
+    expect(d.ships.crashSiteParts).toEqual(distinguishingParts("SENTINELSHIP_PROC", BigInt(`0x${v.crash}`)));
     expect(d.ships.ships[32]!.note).toMatch(/Beachhead expedition/);
     expect(d.ships.uncertain).toBeNull();
     expect(d.ships.alternatives).toEqual([]);
@@ -235,7 +258,13 @@ describe("describeSystem", () => {
     const ships = describeSystem(parsePortalCode(v.code), v.galaxy).ships;
     expect(ships.uncertain).toBe(v.uncertain);
     expect(ships.alternatives).toEqual(
-      v.others.map((o) => ({ exotic: `0x${o.exotic}`, exoticSquid: o.exoticSquid, crashSite: `0x${o.crash}` })),
+      v.others.map((o) => ({
+        exotic: `0x${o.exotic}`,
+        exoticSquid: o.exoticSquid,
+        exoticParts: distinguishingParts("S-CLASS_PROC", BigInt(`0x${o.exotic}`)),
+        crashSite: `0x${o.crash}`,
+        crashSiteParts: distinguishingParts("SENTINELSHIP_PROC", BigInt(`0x${o.crash}`)),
+      })),
     );
     expect(ships.alternatives).toHaveLength(1);
   });

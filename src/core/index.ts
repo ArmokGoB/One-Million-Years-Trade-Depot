@@ -8,12 +8,21 @@ export * from "./describe";
 export { GALAXY_NAMES, galaxyLabel, galaxyName } from "./galaxies";
 export { GUILDS, guildFor, type Guild } from "./guild";
 export { indexPrimedPRNG } from "./iprng";
-export { multitoolRun, SECOND_RUN, STANDARD_COUNTS, type Multitool, type MultitoolKind } from "./multitools";
+export {
+  MULTITOOL_MODELS,
+  multitoolRun,
+  SECOND_RUN,
+  STANDARD_COUNTS,
+  type Multitool,
+  type MultitoolKind,
+} from "./multitools";
 export { generateName } from "./namegen";
+export { distinguishingParts, PART_MODELS, partsFor, type PartModel } from "./parts";
 export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";
 export { MULTIPLIER, PRNG, seededPRNG } from "./prng";
 export { regionName } from "./region";
 export {
+  CRASH_SITE_MODEL,
   drawsBeforeShips,
   exoticSquid,
   firstDraw,
@@ -21,13 +30,13 @@ export {
   shipSeeds,
   shipUncertainty,
   slotTypes,
-  SQUID_EDGES,
+  SQUID_PART,
   twoMoonPlanets,
+  typeModels,
   type Alternative,
   type Ship,
   type ShipGroup,
   type ShipPool,
-  type SquidCall,
 } from "./ships";
 export { nebulaSeed, STAR_CHANCES, starCount, starsFromNebula } from "./stars";
 export {

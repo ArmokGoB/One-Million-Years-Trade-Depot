@@ -46,6 +46,7 @@ _spec.loader.exec_module(report)
 import game_rng  # noqa: E402  (tools/captures is on the path once report.py is loaded)
 import guild_model  # noqa: E402
 import multitool_model  # noqa: E402
+import parts_model  # noqa: E402
 import ship_model  # noqa: E402
 
 # Portal 03E9F3545C3E in galaxy 1 (Hilbert Dimension), planet digit 0. In the
@@ -358,9 +359,10 @@ class WiringTests(CaptureTestCase):
         expected = {"before_generate", "after_generate", "after_planet_name", "after_region_name"}
         expected |= {name for pair in STEPS for name in pair}
         expected |= {"before_add_resource", "after_add_resource", "before_item_update"}
+        expected |= {"before_generation_task", "after_generation_task"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 14)
+        self.assertEqual(len(self.capture._gui_widgets), 16)
 
     def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
         hook = mod.TradeDepotCapture.before_add_resource
@@ -397,7 +399,15 @@ class WiringTests(CaptureTestCase):
             if type(getattr(w, "_widget_data", None)).__name__ == "ButtonWidgetData"
         ]
         guilds = [f"Guild envoy here: {guild}" for guild in ("Merchants", "Explorers", "Mercenaries")]
-        self.assertEqual(buttons, ["Record the current system now", *guilds, "Open the captures folder"])
+        self.assertEqual(
+            buttons,
+            [
+                "Record the current system now",
+                *guilds,
+                "Record your ships' colors now",
+                "Open the captures folder",
+            ],
+        )
 
     def test_layout_reads_inside_the_structs(self):
         self.assertEqual(mod.LAYOUT.ua, nms.cGcSolarSystem.mUA.offset)
@@ -862,17 +872,17 @@ class ModelTests(ModelHelpers, CaptureTestCase):
     def test_other_models_are_named_in_the_log_once_and_not_recorded(self):
         self.game.generate(self.capture)
         creature = "MODELS/PLANETS/CREATURES/QUADRUPED/QUADRUPED.SCENE.MBIN"
-        texture = "TEXTURES/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_BODY.DDS"
+        lod = "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC_LOD1.SCENE.MBIN"
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.build(creature, 0x1111111111111111, ["_HEAD_A", "_LEGS_B"])
             self.build(creature, 0x1111111111111111, ["_HEAD_A", "_LEGS_C"])
-            self.build(texture, 0x1111111111111111, [], resource_type=7)
+            self.build(lod, 0x1111111111111111, [], resource_type=7)
         self.assertEqual(
             logs.output,
             [
                 f"INFO:TradeDepotCapture:Model {creature}: not a ship, so its parts aren't recorded "
                 "(2 parts).",
-                f"INFO:TradeDepotCapture:Model {texture}: a ship's, but without parts, so not recorded "
+                f"INFO:TradeDepotCapture:Model {lod}: a ship's, but without parts, so not recorded "
                 "(resource type 7).",
             ],
         )
@@ -992,41 +1002,50 @@ class ModelTests(ModelHelpers, CaptureTestCase):
             "_SCLASSSHIP_ROY _WINGS_A",
             text,
         )
-        self.assertIn("squid rule (a squid when the seed's first draw is at least 20/21 of its range)", text)
-        self.assertIn("1 of 1 exotic seeds agree", text)
-        self.assertNotIn("disagrees", text)
         self.assertNotIn("not found in a recorded system's ship list", text)
 
-    def test_report_flags_an_exotic_body_the_squid_rule_gets_wrong(self):
+    def test_report_checks_recorded_parts_against_those_worked_out_from_the_seed(self):
         self.game.generate(self.capture)
-        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_SQU", "TEXTURE_TEMP"])
+        fighter = parts_model.parts("FIGHTER_PROC", 0x1111111111111111)
+        exotic = parts_model.parts("S-CLASS_PROC", 0x8000000000000001)
+        self.build(FIGHTER_MODEL, 0x1111111111111111, [*fighter, "TEXTURE_TEMP"])
+        # With the parts of a scene its body brings in, which the tables have no descriptor for.
+        self.build(EXOTIC_MODEL, 0x8000000000000001, [exotic[0], "_FROM_ITS_SCENE_A", *exotic[1:]])
+        self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])  # not what the tables pick
         self.models()
-        text = "\n".join(report.model_lines(report.read_captures([mod.CAPTURE_FILE])))
-        self.assertIn("0 of 1 exotic seeds agree", text)
-        disagrees = "disagrees: 03E9F3545C3E galaxy 1 Abarof-Dulin: 8000000000000001, first draw 0.853393"
-        self.assertIn(disagrees, text)
+        lines = report.part_model_lines(report.read_captures([mod.CAPTURE_FILE]))
+        self.assertIn("  FIGHTER_PROC: 1 of 2 agree", lines)
+        self.assertIn(
+            "  S-CLASS_PROC: 1 of 1 agree, 1 of them with more parts, of scenes the tables have no descriptor for",
+            lines,
+        )
+        self.assertIn(
+            f"    disagrees: FIGHTER_PROC 0102030405060708: worked out "
+            f"{' '.join(parts_model.parts('FIGHTER_PROC', CRASH_SEED))}; recorded _COCKPIT_C",
+            lines,
+        )
 
-    def test_report_shows_how_many_part_options_each_ship_model_has_shown(self):
-        self.game.generate(self.capture)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B", "TEXTURE_TEMP"])
-        self.build(FIGHTER_MODEL.replace("_PROC", "_PROC_LOD1"), 0x1111111111111111, ["_COCKPIT_A"])  # a copy
-        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"])
-        self.models()
-        text = "\n".join(report.part_coverage_lines(report.read_captures([mod.CAPTURE_FILE])))
-        self.assertIn("  FIGHTER_PROC (Fighter): 1 models, 3 groups, 3 options seen, about 0 more", text)
-        self.assertIn("  S-CLASS_PROC (Exotic): 1 models, 2 groups, 2 options seen, about 0 more", text)
-        self.assertNotIn("LOD1", text)
-        # Groups by the game's naming, and how many options a group probably has that haven't shown up.
-        self.assertEqual([report.part_group(p) for p in ("_COCKPIT_C", "_COCKPITA_0NEW", "TEXTURE_TEMP", "_X")],
-                         ["_COCKPIT_", "_COCKPITA_", "TEXTURE", "_X"])  # fmt: skip
-        self.assertEqual(report.unseen_options(report.Counter({"A": 1, "B": 1, "C": 1, "D": 2})), 1.5)
-        self.assertEqual(report.unseen_options(report.Counter({"A": 9, "B": 4})), 0.0)
-        many = [
-            {"name": FIGHTER_MODEL, "seed": f"{i:016X}", "parts": [f"_ACC_{i}", "_WINGS_A"]} for i in range(4)
-        ]
-        lines = report.part_coverage_lines(report.Captures(models=many))
-        self.assertIn("  FIGHTER_PROC: 4 models, 2 groups, 5 options seen, about 6 more", lines)
-        self.assertIn("    likely to have more: _ACC_ 4 seen in 4 picks (about 6 more)", lines)
+    def test_recorded_parts_are_each_seeds_longest_list_of_a_model_the_tables_have(self):
+        captures = report.Captures(
+            models=[
+                {"name": EXOTIC_MODEL, "seed": "8000000000000001", "parts": ["_SCLASSSHIP_ROY", "_WINGS_A"]},
+                # The game builds an exotic again later with its texture only.
+                {"name": EXOTIC_MODEL, "seed": "8000000000000001", "parts": ["TEXTURE_TEMP"]},
+                # A lower-detail copy, which the tables don't have.
+                {"name": FIGHTER_MODEL.replace("_PROC", "_PROC_LOD1"), "seed": "1111111111111111", "parts": ["_A"]},
+            ],
+            pools=[({"tools": [{"name": MULTITOOL_MODEL, "seed": "00000000000000AB", "parts": ["_X"]}]}, None)],
+            items=[({"model": {"name": ROYAL_TOOL_MODEL, "seed": "00000000000000CD", "parts": ["_Y"]}}, None)],
+        )
+        self.assertEqual(
+            report.recorded_parts(captures),
+            {
+                ("S-CLASS_PROC", 0x8000000000000001): ["_SCLASSSHIP_ROY", "_WINGS_A"],
+                ("MULTITOOL", 0xAB): ["_X"],
+                ("ROYALMULTITOOL", 0xCD): ["_Y"],
+            },
+        )
+        self.assertEqual(report.part_model_lines(report.Captures()), [])
 
 
 MULTITOOL_MODEL = "MODELS/COMMON/WEAPONS/MULTITOOL/MULTITOOL.SCENE.MBIN"
@@ -2248,6 +2267,472 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertIn("Abarof-Dulin, SpaceStation: MULTITOOL, 2 parts, handle 4660", text)
 
 
+GENERATION_TASK = "cGcResourceCustomisation.CreateGenerationTask"
+MY_SHIP_SEED = 0x5EED00000000C0DE  # made up
+MY_TOOL_SEED = 0x7001000000000ABC  # made up
+PAINT, UNDERCOAT, PRIMARY, ALT1 = 10, 20, 0, 1  # cTkPaletteTexture's Palette and ColourAlt values
+
+
+class ColorHelpers:
+    """Builds customisations and your ships in fake memory; mixed into CaptureTestCase subclasses."""
+
+    def keep(self, buffer):
+        self.game.memory.keep(buffer)
+        self.game._keep.append(buffer)
+        return ctypes.addressof(buffer)
+
+    def text_at(self, value: str) -> int:
+        return self.keep(ctypes.create_string_buffer(value.encode()))
+
+    def options_list(self, address: int, samplers) -> None:
+        """A cTkProceduralTextureChosenOptionList at ``address``: ``samplers``, each a list of options
+        (layer, group, option, palette, color alt, index, (r, g, b, a), override)."""
+        sampler_type, option_type = (
+            nmse.cTkProceduralTextureChosenOptionSampler,
+            nmse.cTkProceduralTextureChosenOption,
+        )
+        array = (sampler_type * max(len(samplers), 1))()
+        self.keep(array)
+        for sampler, rows in zip(array, samplers):
+            options = (option_type * max(len(rows), 1))()
+            self.keep(options)
+            for option, (layer, group, name, palette, alt, index, colour, override) in zip(options, rows):
+                option.Layer.value, option.Group.value, option.OptionName.value = layer, group, name
+                option.Palette.Palette, option.Palette.ColourAlt, option.Palette.Index = palette, alt, index
+                option.Colour.r, option.Colour.g, option.Colour.b, option.Colour.a = colour
+                option.OverrideColour = override
+            sampler.Options.ArrayPointer, sampler.Options.Size = ctypes.addressof(options), len(rows)
+        ctypes.memmove(
+            address, struct.pack("<QI", ctypes.addressof(array) if samplers else 0, len(samplers)), 12
+        )
+
+    def fill_customisation(self, address: int, seed: int, parts=(), samplers=(), colours=(), flags=(0, 0)):
+        """The cGcResourceCustomisation at ``address``, as NMS.py places it: ``colours`` as (offset, index)
+        pairs, each a set of colors with every palette's five places from ``index`` on."""
+        layout = mod.LAYOUT
+        ctypes.memmove(address + layout.custom_seed, struct.pack("<QB", seed, 1), 9)
+        ids = (basic.TkID0x20 * max(len(parts), 1))()
+        for item, part in zip(ids, parts):
+            item.value = part.encode()
+        pointer = self.keep(ids) if parts else 0
+        ctypes.memmove(
+            address + layout.custom_parts, struct.pack("<IIQ", len(parts), len(parts), pointer), 16
+        )
+        self.options_list(address + layout.custom_options, list(samplers))
+        ctypes.memmove(address + layout.custom_legacy, bytes(flags[:1]), 1)
+        ctypes.memmove(address + layout.custom_edited, bytes(flags[1:]), 1)
+        for offset, first in colours:
+            palettes = (nmse.cGcColourPaletteData * mod.PALETTE_COUNT).from_address(address + offset)
+            for p, palette in enumerate(palettes):
+                for k in range(5):
+                    palette.ColourIndices[k] = (first + p + k) % 64
+                    colour = palette.Colours[k]
+                    colour.r, colour.g, colour.b, colour.a = (first + k) / 64, 0.5, 0.25, 1.0
+
+    def standalone(self, seed: int, **kwargs) -> int:
+        """A customisation somewhere other than your player state, such as a copy the game made."""
+        address = self.keep((ctypes.c_ubyte * mod.CUSTOMISATION_READ)())
+        self.fill_customisation(address, seed, **kwargs)
+        return address
+
+    def slot(self, index: int) -> int:
+        """Where your player state's customisation ``index`` is, as NMS.py places them."""
+        base = ctypes.addressof(self.game.player_state) + mod.LAYOUT.customisations
+        return base + index * mod.LAYOUT.customisation_size
+
+    def my_ship(self, place: int, seed: int, name: str = "", samplers=()) -> None:
+        """One of your ships in your player state, as NMS.py places them."""
+        at = ctypes.addressof(self.game.player_state) + mod.LAYOUT.ship_resources
+        element = nmse.cGcResourceElement.from_address(at + place * mod.LAYOUT.ship_resource_size)
+        if name:
+            element.Filename.ArrayPointer, element.Filename.Size = self.text_at(name), len(name) + 1
+        element.Seed.Seed, element.Seed.UseSeedValue = seed, 1
+        self.options_list(ctypes.addressof(element.ProceduralTexture), list(samplers))
+
+    def task(self, address: int, name: str = FIGHTER_MODEL, copy: bool = True, handle: int = 0) -> None:
+        """Call the CreateGenerationTask detours the way pyMHF does, before and after the game runs it."""
+        this = ctypes.cast(address, ctypes.POINTER(nms.cGcResourceCustomisation))
+        result = self.game._alloc(nms.cTkSmartResHandle)
+        args = (this, ctypes.pointer(result), self.name_pointer(name), copy)
+        self.assertIsNone(self.capture.before_generation_task(*args), "detours must return None")
+        result.miInternalHandle = handle
+        self.assertIsNone(self.capture.after_generation_task(*args), "detours must return None")
+
+    def records(self, kind: str) -> list[dict]:
+        self.poll()
+        return [line for line in self.lines() if line["t"] == kind]
+
+
+OPTION = (b"BASE", b"PRIMARY", b"PANELS", PAINT, PRIMARY, 12, (0.25, 0.5, 0.75, 1.0), False)
+OPTION_ROW = [0, "BASE", "PRIMARY", "PANELS", PAINT, PRIMARY, 12, [0.25, 0.5, 0.75, 1.0], 0]
+
+
+class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
+    def setUp(self):
+        super().setUp()
+        self.now = 100.0  # the mod's clock (time.monotonic), which the tests move on
+        self._patch("time", types.SimpleNamespace(monotonic=lambda: self.now, time=mod.time.time))
+        self._patch("CHIME_ON_ARRIVAL", False)
+        self.game.player_state.mNameWithTitle.value = PLAYER
+        self.game.generate(self.capture)  # a system is loaded: your ships are due PLAYER_FIRST_SECONDS later
+
+    def test_hooks_watch_the_function_that_makes_your_ships_and_multi_tool(self):
+        for name, time in (
+            ("before_generation_task", DetourTime.BEFORE),
+            ("after_generation_task", DetourTime.AFTER),
+        ):
+            hook = getattr(mod.TradeDepotCapture, name)
+            self.assertEqual(hook._hook_func_name, GENERATION_TASK)
+            self.assertEqual(hook._hook_time, time)
+            self.assertEqual(hook._hook_pattern, nms.cGcResourceCustomisation.CreateGenerationTask._signature)
+            self.assertEqual(len(hook._hook_func_def.argtypes), 4)  # this, handle, file, copy options
+
+    def test_a_customisation_of_yours_is_recorded_with_its_seed_parts_texture_options_and_colors(self):
+        address = self.slot(3)
+        self.fill_customisation(
+            address, MY_SHIP_SEED, parts=["_COCKPIT_A", "_WINGS_B"], samplers=[[OPTION], []],
+            colours=[(0x1D70, 5)], flags=(0, 1),
+        )  # fmt: skip
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.task(address, handle=0x1234)
+        (record,) = self.records("custom")
+        self.assertEqual(
+            {k: v for k, v in record.items() if k not in ("at", "raw", "colors")},
+            {
+                "t": "custom",
+                "via": "call",
+                "file": FIGHTER_MODEL,
+                "copy": 1,
+                "handle": 0,
+                "region": f"{3 * mod.LAYOUT.customisation_size:X}",
+                "seed": f"{MY_SHIP_SEED:016X}",
+                "useSeed": 1,
+                "parts": ["_COCKPIT_A", "_WINGS_B"],
+                "options": [OPTION_ROW],
+                "flags": [0, 1],
+            },
+        )
+        self.assertEqual(list(record["colors"]), ["1D70"], "only where the bytes look like colors")
+        self.assertEqual(record["colors"]["1D70"][PAINT], [(5 + PAINT + k) % 64 for k in range(5)])
+        raw = zlib.decompress(base64.b64decode(record["raw"]))
+        self.assertEqual(len(raw), mod.CUSTOMISATION_READ)
+        self.assertEqual(raw[:8], MY_SHIP_SEED.to_bytes(8, "little"))
+        self.assertIn(
+            f"Recorded what the game makes FIGHTER_PROC from, one of yours (seed {MY_SHIP_SEED:016X}): "
+            "1 texture options, colors.",
+            "\n".join(logs.output),
+        )
+        self.assertEqual(self.sounds, ["colors"])
+        self.assertEqual(self.capture.colors, "1 customisations, 0 models of yours; your ships 0 times")
+
+    def test_a_customisation_is_read_again_later_and_recorded_when_it_changes(self):
+        address = self.slot(0)
+        self.fill_customisation(address, MY_TOOL_SEED, colours=[(0x1D70, 0)])
+        self.task(address, name=MULTITOOL_MODEL, handle=7)
+        self.assertEqual(len(self.records("custom")), 1, "the same before and after the call")
+        self.options_list(address + mod.LAYOUT.custom_options, [[OPTION]])  # the game fills it in
+        self.now += 1.5
+        later = self.records("custom")[1:]
+        self.assertEqual(
+            [(r["via"], r["after"], r["options"], r["handle"]) for r in later],
+            [("later", 1.5, [OPTION_ROW], 7)],
+        )
+        self.now += 60
+        self.records("custom")
+        self.assertEqual(self.capture._custom_watch, {}, "read again three times, then left")
+        self.assertEqual(len(self.records("custom")), 2, "unchanged since")
+        self.assertEqual(self.sounds, ["colors"], "one tone per seed")
+
+    def test_a_customisation_taken_over_by_something_else_isnt_read_again(self):
+        address = self.slot(1)
+        self.fill_customisation(address, MY_SHIP_SEED)
+        self.task(address)
+        self.fill_customisation(address, 0x1234567890ABCDEF, parts=["_OTHER"])
+        self.now += 30
+        self.assertEqual([r["via"] for r in self.records("custom")], ["call"])
+
+    def test_a_customisation_handed_over_again_at_once_is_read_once(self):
+        address = self.slot(1)
+        self.fill_customisation(address, MY_SHIP_SEED)
+        reads = []
+        original = mod.customisation
+        self._patch("customisation", lambda at: reads.append(at) or original(at))
+        self.task(address)
+        self.task(address)  # again at once: neither its call nor its return is read
+        self.now += 1
+        self.task(address)
+        self.assertEqual(reads, [address] * 4, "a call and its return, twice")
+        self.assertEqual(self.capture._custom_calls, set(), "each read call has returned")
+
+    def test_yours_only_where_one_of_your_customisations_starts(self):
+        size = mod.LAYOUT.customisation_size
+        self.assertEqual(self.capture._whose(self.slot(5), "0" * 16, self.now), {"region": f"{5 * size:X}"})
+        self.assertIsNone(self.capture._whose(self.slot(5) + 8, "0" * 16, self.now))
+        past = self.slot(0) + mod.CUSTOMISATION_SLOTS * max(mod.customisation_strides())
+        self.assertIsNone(self.capture._whose(past, "0" * 16, self.now), "past the last one")
+
+    def test_a_copy_with_the_seed_of_one_of_your_ships_is_yours(self):
+        self.my_ship(2, MY_SHIP_SEED, FIGHTER_MODEL)
+        self.task(self.standalone(MY_SHIP_SEED, parts=["_COCKPIT_A"]))
+        (record,) = self.records("custom")
+        self.assertEqual(record["own"], "ship 2")
+        self.assertNotIn("region", record)
+
+    def test_the_systems_ships_and_multi_tools_are_recorded_and_others_only_by_file(self):
+        self.capture._tools_heard.add("00000000ABCDEF01")
+        self.task(self.standalone(0x1111111111111111))  # the system's first ship
+        self.task(self.standalone(0xABCDEF01), name=MULTITOOL_MODEL)
+        stranger = "MODELS/COMMON/PLAYER/PLAYERCHARACTER/PLAYERCHARACTER.SCENE.MBIN"
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.task(self.standalone(0x9999999999999999), name=stranger)  # another player's, say
+            self.task(self.standalone(0x9999999999999998), name=stranger)
+        ship, tool, other = self.records("custom")
+        self.assertEqual((ship["system"], ship["slot"], ship["seed"]), (f"{UA:016X}", 0, "1111111111111111"))
+        self.assertEqual((tool["tool"], tool["seed"]), (1, "00000000ABCDEF01"))
+        self.assertEqual(
+            {k: v for k, v in other.items() if k != "at"},
+            {"t": "custom", "via": "call", "file": stranger, "other": 1},
+        )
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("only its file is recorded", logs.output[0])
+
+    def test_without_your_name_a_customisation_is_recorded_without_its_bytes(self):
+        address = self.slot(2)
+        self.fill_customisation(address, MY_SHIP_SEED)
+        ctypes.memmove(address + 0x3000, PLAYER, len(PLAYER))
+        self.task(address)
+        (record,) = self.records("custom")
+        self.assertNotIn(PLAYER, zlib.decompress(base64.b64decode(record["raw"])))
+        self.assertEqual(record["scrubbed"], 1)
+        self.game.player_state.mNameWithTitle.value = b""
+        self.fill_customisation(address, MY_SHIP_SEED, parts=["_COCKPIT_C"])
+        self.now += 1
+        self.task(address)
+        record = self.records("custom")[-1]
+        self.assertEqual(record["nameUnread"], "empty")
+        self.assertNotIn("raw", record)
+
+    def test_unreadable_lists_are_noted_and_the_rest_recorded(self):
+        address = self.standalone(MY_SHIP_SEED)
+        self.my_ship(0, MY_SHIP_SEED, FIGHTER_MODEL)
+        ctypes.memmove(address + mod.LAYOUT.custom_parts, struct.pack("<IIQ", 4, 4, 0xDEAD0000), 16)
+        ctypes.memmove(address + mod.LAYOUT.custom_options, struct.pack("<QI", 0xDEAD1000, 1000), 12)
+        self.task(address)
+        (record,) = self.records("custom")
+        self.assertEqual(
+            record["errors"],
+            [
+                "part list at 0xdead0000 couldn't be read",
+                "implausible texture samplers (count 1000, pointer 0xdead1000)",
+            ],
+        )
+        self.assertEqual((record["parts"], record["options"]), ([], []))
+
+    def test_colors_are_read_only_where_they_look_like_colors(self):
+        raw = bytearray(mod.CUSTOMISATION_READ)
+        self.assertEqual(mod.color_sets(bytes(raw)), {}, "all zero")
+        palettes = (nmse.cGcColourPaletteData * mod.PALETTE_COUNT).from_buffer(raw, 0x90)
+        palettes[0].Colours[0].r, palettes[0].ColourIndices[0] = 0.5, -1  # a color edited by hand
+        self.assertEqual(list(mod.color_sets(bytes(raw))), ["90"])
+        palettes[1].ColourIndices[2] = 64
+        self.assertEqual(mod.color_sets(bytes(raw)), {}, "a place no palette has")
+        palettes[1].ColourIndices[2] = 0
+        palettes[3].Colours[1].g = float("nan")
+        self.assertEqual(mod.color_sets(bytes(raw)), {})
+        self.assertEqual(mod.color_sets(bytes(raw[:0x1000])), {}, "too short to hold a set")
+
+    def test_your_ships_are_recorded_after_your_save_loads_and_when_you_click(self):
+        self.my_ship(0, 0x0BADC0DE00000001, FIGHTER_MODEL)
+        self.my_ship(
+            2, MY_SHIP_SEED, "MODELS/COMMON/SPACECRAFT/DROPSHIPS/DROPSHIP_PROC.SCENE.MBIN", [[OPTION]]
+        )
+        ctypes.c_int32.from_address(
+            ctypes.addressof(self.game.player_state) + mod.LAYOUT.primary_ship
+        ).value = 2
+        self.fill_customisation(self.slot(3), MY_TOOL_SEED)
+        self.assertEqual(self.records("player"), [], "not due yet")
+        self.now += mod.PLAYER_FIRST_SECONDS
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            (record,) = self.records("player")
+        self.assertEqual((record["why"], record["primaryShip"]), ("loaded", 2))
+        self.assertEqual(len(record["ships"]), mod.SHIP_RESOURCES)
+        self.assertEqual(record["ships"][0], [0, FIGHTER_MODEL, "0BADC0DE00000001", 1, "", []])
+        self.assertEqual(record["ships"][1], [1, "", "0000000000000000", 0, "", []])
+        self.assertEqual(record["ships"][2][2:], [f"{MY_SHIP_SEED:016X}", 1, "", [OPTION_ROW]])
+        region = zlib.decompress(base64.b64decode(record["raw"]))
+        self.assertEqual(len(region), record["rawSize"])
+        at = 3 * mod.LAYOUT.customisation_size
+        self.assertEqual(region[at : at + 8], MY_TOOL_SEED.to_bytes(8, "little"))
+        ships = zlib.decompress(base64.b64decode(record["shipsRaw"]))
+        self.assertEqual(len(ships), mod.SHIP_RESOURCES * mod.LAYOUT.ship_resource_size)
+        self.assertIn("Recorded your ships (2 of them)", "\n".join(logs.output))
+        self.assertEqual(self.capture._own_seeds[f"{MY_SHIP_SEED:016X}"], "ship 2")
+        self.assertEqual(
+            self.capture._own_seeds[f"{MY_TOOL_SEED:016X}"], f"slot 3 at {mod.LAYOUT.customisation_size:X}"
+        )
+        self.now += 10 * mod.PLAYER_EVERY_SECONDS
+        self.assertEqual(len(self.records("player")), 1, "not again unless the game made something since")
+        self.capture.record_colors()
+        self.assertEqual(len(self.records("player")), 1, "nothing has changed")
+        self.assertEqual(self.sounds, ["recorded"])
+        self.my_ship(1, 0x0BADC0DE00000002, FIGHTER_MODEL)
+        self.capture.record_colors()
+        self.assertEqual([r["why"] for r in self.records("player")], ["loaded", "button"])
+        self.assertEqual(self.sounds, ["recorded", "colors"])
+        self.assertEqual(self.capture.colors, "0 customisations, 0 models of yours; your ships 2 times")
+
+    def test_your_ships_are_recorded_as_often_as_the_mod_records_them_in_a_session(self):
+        self._patch("PLAYER_RECORDS", 1)
+        self.capture.record_colors()
+        self.assertEqual(len(self.records("player")), 1)
+        self.my_ship(1, MY_SHIP_SEED, FIGHTER_MODEL)
+        self.capture.record_colors()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.assertEqual(len(self.records("player")), 1)
+        self.assertIn("Recorded your ships 1 times this session; no more until the next.", logs.output[0])
+        self.assertEqual(self.sounds, ["colors", "problem"])
+
+    def test_without_a_save_your_ships_arent_recorded(self):
+        self.game.loaded = False
+        self.capture.record_colors()
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.poll()
+        self.assertIn("Couldn't record your ships: no save is loaded yet.", "\n".join(logs.output))
+        self.assertEqual(self.sounds, ["problem"])
+
+    def test_models_the_game_builds_with_the_seed_of_one_of_yours_are_recorded_as_yours(self):
+        self.my_ship(2, MY_SHIP_SEED, FIGHTER_MODEL)
+        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_COCKPIT_A"])  # before the mod knows the seed
+        self.capture.record_colors()
+        self.poll()
+        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_COCKPIT_A", "TEXTURE_TEMP"])
+        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_COCKPIT_A", "TEXTURE_TEMP"])  # built again
+        (own,) = self.records("own")
+        self.assertEqual(
+            {k: v for k, v in own.items() if k not in ("at", "raw")},
+            {
+                "t": "own",
+                "whose": "ship 2",
+                "name": FIGHTER_MODEL,
+                "type": 1,
+                "seed": f"{MY_SHIP_SEED:016X}",
+                "useSeed": 1,
+                "parts": ["_COCKPIT_A", "TEXTURE_TEMP"],
+            },
+        )
+        self.assertEqual(self.records("model"), [], "not as one of the system's")
+
+    def test_textures_of_ships_and_multi_tools_loaded_with_a_descriptor_are_recorded(self):
+        texture = "TEXTURES/COMMON/SPACECRAFT/FIGHTERS/SHARED/PRIMARY.DDS"
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.build(texture, 0x1111111111111111, [], resource_type=7)
+            self.build(texture, 0x1111111111111111, [], resource_type=7)  # again: the same
+            self.build(texture.replace("SPACECRAFT/FIGHTERS", "WEAPONS/MULTITOOL"), 0xAB, ["TEXTURE_TEMP"])
+            self.build("TEXTURES/PLANETS/BIOMES/GRASS.DDS", 0x1111111111111111, [])  # not a ship's
+        self.assertEqual(
+            [(t["name"].split("/")[2], t["type"], t["seed"], t["parts"]) for t in self.records("tex")],
+            [("SPACECRAFT", 7, "1111111111111111", []), ("WEAPONS", 1, "00000000000000AB", ["TEXTURE_TEMP"])],
+        )
+        self.assertIn(f"The game loads textures with a descriptor, as {texture}: they're recorded.", logs.output[0])
+        self.assertEqual(self.records("model"), [])
+        lines = report.color_lines(report.read_captures([mod.CAPTURE_FILE]))
+        self.assertIn(
+            "Textures of ships and multi-tools loaded with a descriptor: 2 (PRIMARY 2); with the seed of a "
+            "system's ship: 1, of a system's multi-tool: 0",
+            lines,
+        )
+
+    def test_turning_colors_off_leaves_the_function_alone(self):
+        source = harness.MOD_PATH.read_text(encoding="utf-8")
+        self.assertIn("\nRECORD_COLORS = True\n", source)
+        path = Path(self._tmp.name) / "system_capture_without_colors.py"
+        path.write_text(source.replace("\nRECORD_COLORS = True\n", "\nRECORD_COLORS = False\n"))
+        spec = importlib.util.spec_from_file_location("system_capture_without_colors", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        capture = module.TradeDepotCapture()
+        hooks = {hook.__name__ for hook in capture.hooks}
+        self.assertFalse(hooks & {"before_generation_task", "after_generation_task"})
+        self.assertEqual(capture.colors, "Off (RECORD_COLORS is False)")
+        self.assertIsNone(module.session_header()["colorLayout"])
+
+    def test_report_lists_customisations_your_ships_and_models_of_yours(self):
+        fighter = parts_model.parts("FIGHTER_PROC", MY_SHIP_SEED)
+        self.my_ship(2, MY_SHIP_SEED, FIGHTER_MODEL)
+        address = self.slot(3)
+        self.fill_customisation(address, MY_SHIP_SEED, samplers=[[OPTION]], colours=[(0x1D70, 0)], flags=(0, 1))
+        self.task(address)
+        self.task(self.standalone(0x9999999999999999), name=MULTITOOL_MODEL)  # someone else's
+        self.capture.record_colors()
+        self.poll()
+        self.build(FIGHTER_MODEL, MY_SHIP_SEED, [*fighter, "TEXTURE_TEMP"])
+        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_PICKED_BY_HAND"])  # built in the Starship Fabricator, say
+        self.poll()
+        captures = report.read_captures([mod.CAPTURE_FILE])
+        summary = report.summary_lines(captures)[0]
+        self.assertIn("2 customisation(s), 1 record(s) of your ships, 2 model(s) of yours", summary)
+        lines = report.color_lines(captures)
+        self.assertIn(
+            "Customisations recorded: 1 (call 1), 1 distinct file and seed(s); other files, without seeds: "
+            "MULTITOOL x1",
+            lines,
+        )
+        region = f"{3 * mod.LAYOUT.customisation_size:X}"
+        self.assertIn(
+            f"  FIGHTER_PROC {MY_SHIP_SEED:016X}, yours (at {region} among your customisations): 0 parts, "
+            "1 texture options in 1 samplers, colors at 1D70, flags: edited",
+            lines,
+        )
+        self.assertIn("    0:BASE=PANELS (Paint/Primary 12)", lines)
+        self.assertIn(
+            "Your ships, recorded 1 time(s); in the last record (button), 1 with a model file, the primary one "
+            "number 0:",
+            lines,
+        )
+        self.assertIn(f"  2: FIGHTER_PROC {MY_SHIP_SEED:016X}, 0 texture options", lines)
+        self.assertIn(
+            "Models of yours the game built: 2 (FIGHTER_PROC 2); parts as the tables pick them from the seed: 1 of 2",
+            lines,
+        )
+        self.assertIn(f"    FIGHTER_PROC {MY_SHIP_SEED:016X} (ship 2): _PICKED_BY_HAND", lines)
+
+    def test_session_header_says_where_the_mod_reads_your_ships(self):
+        header = self.lines()[0]
+        self.assertEqual(
+            header["colorLayout"]["customisations"], f"{nms.cGcPlayerState.mCustomisationData.offset:X}"
+        )
+        self.assertEqual(header["colorLayout"]["fields"]["mTextureOptions"], "20")
+        self.assertEqual(header["columns"]["textureOptions"], mod.TEXTURE_OPTION_COLUMNS)
+        self.assertEqual(header["enums"]["palette"][PAINT], "Paint")
+        self.assertEqual(header["enums"]["colorAlt"][ALT1], "Alternative1")
+
+
+class OtherStarsTests(CaptureTestCase):
+    def test_system_records_keep_what_nms_py_doesnt_name_of_the_solar_system(self):
+        layout = mod.LAYOUT
+        gap = layout.ua - layout.data_size
+        ctypes.memmove(self.game.address + layout.data_size, bytes(range(gap)), gap)
+        tail = self.game.address + layout.system_size - mod.SYSTEM_TAIL_BYTES
+        ctypes.memmove(tail + 8, PLAYER, len(PLAYER))
+        self.game.generate(self.capture)
+        self.poll()
+        self.poll()  # settled: recorded, without the tail, as your name can't be read yet
+        self.game.player_state.mNameWithTitle.value = PLAYER
+        self.game.display_name = "Shown-Again"  # so that the button makes a new record
+        self.capture.record_now()
+        self.capture.on_frame()
+        generated, polled, named = [line for line in self.lines() if line["t"] == "sys"]
+        self.assertEqual(generated["gap"], bytes(range(gap)).hex().upper())
+        self.assertNotIn("rawTail", generated)
+        self.assertEqual(polled["gap"], generated["gap"])
+        self.assertNotIn("rawTail", polled, "only once your name can be taken out")
+        shown = zlib.decompress(base64.b64decode(named["rawTail"]))
+        self.assertEqual(len(shown), mod.SYSTEM_TAIL_BYTES)
+        self.assertEqual(shown[8 : 8 + len(PLAYER)], b"*" * len(PLAYER))
+
+
 class DiagnosticsTests(CaptureTestCase):
     def test_steam_build_comes_from_the_app_manifest(self):
         library = Path(self._tmp.name) / "SteamLibrary" / "steamapps"
@@ -3005,8 +3490,8 @@ class SoundTests(unittest.TestCase):
         self.assertGreater(max(map(abs, samples[:800])), 32767 * 0.5 * 0.7)
 
     def test_every_sound_is_a_short_wav(self):
-        self.assertEqual(set(mod.SOUNDS), {"recorded", "exotic parts", "multi-tool", "problem"})
-        self.assertEqual(len({tuple(notes) for notes in mod.SOUNDS.values()}), 4, "each sound is different")
+        self.assertEqual(set(mod.SOUNDS), {"recorded", "exotic parts", "multi-tool", "colors", "problem"})
+        self.assertEqual(len({tuple(notes) for notes in mod.SOUNDS.values()}), 5, "each sound is different")
         for name, notes in mod.SOUNDS.items():
             with self.subTest(name=name):
                 data = mod.tone(notes)
@@ -3554,69 +4039,83 @@ class ShipModelTests(unittest.TestCase):
         assert high, "the game would make this high word 1; pick another low word"
         return ((high ^ game_rng.swap16(low) ^ low) << 32) | low
 
-    def test_squid_line_at_20_21_between_the_closest_exotics_recorded(self):
+    def test_an_exotic_is_a_squid_when_its_first_draw_is_at_least_20_21_of_the_range(self):
         line = 20 * 2**32 / 21
         self.assertEqual(ship_model.first_draw(0x0123456789ABCDEF), 4005469434)  # as in tests/ships.test.ts
-        self.assertLess(ship_model.NOT_SQUID_HIGHEST, line)
-        self.assertGreater(ship_model.SQUID_LOWEST, line)
-        expected = [  # first draw, (squid, close)
-            (0, (False, False)),
-            (ship_model.NOT_SQUID_HIGHEST, (False, False)),
-            (ship_model.NOT_SQUID_HIGHEST + 1, (False, True)),
-            (math.floor(line), (False, True)),
-            (math.ceil(line), (True, True)),
-            (ship_model.SQUID_LOWEST - 1, (True, True)),
-            (ship_model.SQUID_LOWEST, (True, False)),
-            (M32, (True, False)),
-        ]
-        for draw, call in expected:
+        for draw, squid in ((0, False), (math.floor(line), False), (math.ceil(line), True), (M32, True)):
             seed = self.seed_with_first_draw(draw)
             self.assertEqual(ship_model.first_draw(seed), draw)
-            self.assertEqual(tuple(ship_model.exotic_squid(seed)), call, draw)
+            self.assertEqual(ship_model.exotic_squid(seed), squid, draw)
+            body = parts_model.parts(ship_model.EXOTIC_MODEL, seed)[0]
+            self.assertEqual(body, ship_model.SQUID_PART if squid else ship_model.OTHER_EXOTIC_PART)
 
-    def test_report_checks_recorded_exotic_bodies_against_the_squid_line(self):
-        class Record(str):
-            def label(self) -> str:
-                return str(self)
 
-        def exotic(name: str, draw: int, body: str) -> tuple[Record, dict]:
-            seed = self.seed_with_first_draw(draw)
-            return Record(name), {"seed": f"{seed:016X}", "parts": [body, "TEXTURE_TEMP"]}
+class PartsModelTests(unittest.TestCase):
+    """tools/captures/parts_model.py, with made-up tables; the report checks it against real captures."""
 
-        squid, other = ship_model.SQUID_PART, ship_model.OTHER_EXOTIC_PART
-        narrower = report.squid_lines(
+    TABLES = {
+        "models": {"PLAIN": 0, "RARE": 1, "NEVER": 2, "NESTED": 3, "DECIDED": 5, "DETAIL": 6},
+        "trees": [
+            [["_A_", ["_A_1", "_A_2", "_A_3"]]],
+            [["_B_", ["_B_1", ["_B_XRARE", 1]]]],
+            [["_N_", [["_N_XNEVER", 2]]], ["_A_", ["_A_1", "_A_2"]]],
             [
-                exotic("A", ship_model.NOT_SQUID_HIGHEST + 5, other),
-                exotic("B", ship_model.SQUID_LOWEST - 5, squid),
-            ]
-        )
-        self.assertIn("2 of 2 exotic seeds agree", narrower[0])
-        self.assertIn("closer than ship_model.py's edges: update them", narrower[1])
-        overlap = report.squid_lines([exotic("A", 4_100_000_000, other), exotic("B", 4_095_000_000, squid)])
-        overlap = "\n".join(overlap)
-        self.assertIn("1 of 2 exotic seeds agree", overlap)
-        self.assertIn("disagrees: A:", overlap)
-        self.assertIn("they overlap, so no line fits them all", overlap)
-        odd = "\n".join(report.squid_lines([exotic("A", 0, "_SOMETHING_ELSE")]))
-        self.assertIn("0 of 0 exotic seeds agree", odd)
-        self.assertIn("first part neither _SCLASSSHIP_SQU nor _SCLASSSHIP_ROY: 1", odd)
+                ["_C_", [["_C_1", 0, [4, -1], [["_D_", ["_D_1", "_D_2"]]]]]],
+                ["_A_", ["_A_1", "_A_2", "_A_3"]],
+            ],
+            [["_E_", ["_E_1", "_E_2", "_E_3", "_E_4"]]],
+            # A list with an option already picked, then another list.
+            [["_A_", ["_A_1"]], ["_B_", ["_B_1", "_A_1"]], ["_C_", ["_C_1", "_C_2", "_C_3"]]],
+            # A part's level-of-detail copies, the second in a child list, then another child list.
+            [["_H_", ["_H_ALOD0"]], ["_I_", [["_I_1", 0, [], [["_H_", ["_H_ALOD1"]], ["_J_", ["_J_1", "_J_2"]]]]]]],
+        ],
+    }
 
-    def test_a_later_build_with_only_a_texture_leaves_an_exotics_body_known(self):
-        class Record(str):
-            def label(self) -> str:
-                return str(self)
+    def setUp(self):
+        patcher = mock.patch.object(parts_model, "tables", return_value=self.TABLES)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-        seed = f"{self.seed_with_first_draw(4_200_000_000):016X}"
-        builds = [
-            (Record("A"), {"seed": seed, "parts": [ship_model.SQUID_PART, "TEXTURE_TEMP"]}),
-            (Record("A"), {"seed": seed, "parts": ["TEXTURE_TEMP"]}),
-        ]
-        lines = "\n".join(report.squid_lines(builds))
-        self.assertIn("1 of 1 exotic seeds agree", lines)
-        self.assertNotIn("neither", lines)
-        lines = "\n".join(report.squid_lines(builds[::-1]))
-        self.assertIn("1 of 1 exotic seeds agree", lines)
-        self.assertNotIn("neither", lines)
+    seed_with_first_draw = staticmethod(ShipModelTests.seed_with_first_draw)
+
+    def test_each_option_takes_an_equal_stretch_of_the_draw(self):
+        for draw, part in ((0, "_A_1"), (2**32 // 3, "_A_1"), (2**32 // 3 + 1, "_A_2"), (M32, "_A_3")):
+            self.assertEqual(parts_model.parts("PLAIN", self.seed_with_first_draw(draw)), [part], draw)
+
+    def test_a_rare_option_weighs_0_05_against_1(self):
+        line = 20 * 2**32 / 21
+        self.assertEqual(parts_model.parts("RARE", self.seed_with_first_draw(math.floor(line))), ["_B_1"])
+        self.assertEqual(parts_model.parts("RARE", self.seed_with_first_draw(math.ceil(line))), ["_B_XRARE"])
+
+    def test_a_list_of_options_never_picked_is_skipped(self):
+        self.assertNotIn("_N_XNEVER", parts_model.parts("NEVER", 0x0123456789ABCDEF))
+        self.assertEqual(len(parts_model.parts("NEVER", 0x0123456789ABCDEF)), 1)
+
+    def test_a_list_with_an_option_already_picked_is_skipped_without_a_draw(self):
+        seed = 0x0123456789ABCDEF
+        stream = game_rng.Stream(seed)
+        stream.word()  # _A_1, the only option
+        self.assertEqual(parts_model.parts("DECIDED", seed), ["_A_1", f"_C_{1 + stream.below(3)}"])
+
+    def test_a_parts_level_of_detail_is_left_out_of_its_id_and_it_is_listed_once(self):
+        seed = 0x0123456789ABCDEF
+        stream = game_rng.Stream(seed)
+        stream.word(), stream.word()  # _H_ALOD0 and _I_1, the only options of their lists
+        child = game_rng.Stream(game_rng.mix(stream.word() | (stream.word() << 32)))
+        child.word()  # _H_ALOD1: not the ID picked before, so picked again, and listed as _H_A again
+        self.assertEqual(parts_model.parts("DETAIL", seed), ["_H_A", "_I_1", f"_J_{1 + child.below(2)}"])
+
+    def test_child_lists_and_scenes_brought_in_are_picked_with_seeds_from_the_next_draws(self):
+        seed = 0x0123456789ABCDEF
+        stream = game_rng.Stream(seed)
+        self.assertEqual(stream.below(1), 0)  # _C_1, the only option
+        child = game_rng.Stream(game_rng.mix(stream.word() | (stream.word() << 32)))
+        scene = game_rng.Stream(game_rng.mix(stream.word() | (stream.word() << 32)))
+        stream.word(), stream.word()  # the scene without parts still takes its two draws
+        expected = ["_C_1", f"_D_{1 + child.below(2)}", f"_E_{1 + scene.below(4)}", f"_A_{1 + stream.below(3)}"]
+        self.assertEqual(parts_model.parts("NESTED", seed), expected)
+        reachable = ["_C_1", "_D_1", "_D_2", "_E_1", "_E_2", "_E_3", "_E_4", "_A_1", "_A_2", "_A_3"]
+        self.assertEqual(parts_model.reachable("NESTED"), dict.fromkeys(reachable, 0))
 
 
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")

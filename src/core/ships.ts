@@ -19,9 +19,11 @@
 //      for Sentinel crash sites drawn between ships 41 and 42.
 //
 // Whether the exotic is a squid comes from the exotic's own seed: see
-// exoticSquid().
+// exoticSquid(). What each ship is built from, and so which parts it can
+// have, comes from its slot: see slotTypes() and parts.ts.
 
 import { universalAddress, withPlanet } from "./address";
+import { partsFor, type PartModel } from "./parts";
 import { seededPRNG } from "./prng";
 import { planetSeeds, systemAttributes, type Body } from "./system";
 import { mix64 } from "./u64";
@@ -59,6 +61,12 @@ export interface Ship {
   /** What the game puts in this slot, e.g. "Hauler" or "Combat frigate". */
   type: string;
   group: ShipGroup;
+  /**
+   * The models the ship in this slot is built from, whose parts parts.ts
+   * picks: one, two where the slot holds one or the other (a shuttle or a
+   * solar, say), none for ships without picked parts, such as frigates.
+   */
+  models: readonly PartModel[];
   /** What a player should know about this slot, if anything, e.g. that it never turns up in systems. */
   note: string | null;
 }
@@ -69,7 +77,7 @@ export interface ShipPool {
   /** The exotic's seed (always slot 20). */
   exotic: bigint;
   /** Whether the exotic is a squid. */
-  exoticSquid: SquidCall;
+  exoticSquid: boolean;
   /** The seed the game holds for the ship at this system's Sentinel crash sites. */
   crashSite: bigint;
   /** Draws the generator makes before the first ship's. */
@@ -88,20 +96,9 @@ export interface Alternative {
   swapped: number[];
   ships: bigint[];
   exotic: bigint;
-  exoticSquid: SquidCall;
+  exoticSquid: boolean;
   crashSite: bigint;
   drawsBeforeShips: number;
-}
-
-export interface SquidCall {
-  /** Whether the game makes the exotic with this seed a squid. */
-  squid: boolean;
-  /**
-   * The seed's first draw lies in the narrow stretch where the line between
-   * squids and other exotics could still be, so `squid` rests on where it
-   * most likely is rather than on exotics recorded on both sides.
-   */
-  close: boolean;
 }
 
 function distance(a: Vec3, b: Vec3): number {
@@ -203,12 +200,8 @@ export function shipSeeds(ua: bigint, start: number): { ships: bigint[]; crashSi
 
 // --- Whether the exotic is a squid ---
 
-/**
- * Among the exotics recorded in game so far, the highest first draw (see
- * firstDraw) of one that isn't a squid, and the lowest of a squid. Where
- * exactly the line lies between the two isn't known yet.
- */
-export const SQUID_EDGES = { notSquid: 4088215205, squid: 4093481076 } as const;
+/** The first part of an exotic's model when it's a squid: the squid's body. */
+export const SQUID_PART = "_SCLASSSHIP_SQU";
 
 /** The first draw the game makes from a ship's seed, which picks the first part of the ship's model. */
 export function firstDraw(seed: bigint): number {
@@ -216,19 +209,13 @@ export function firstDraw(seed: bigint): number {
 }
 
 /**
- * Whether the exotic with this seed is a squid. The game picks the first part
- * of a ship's model with the first draw from the ship's seed, each option
- * taking its own stretch of the draw's range: for an exotic, the squid's body
- * near the top of the range and the other exotics' body below it. The line is
- * drawn at 20/21 of the range, the squid weighted 0.05 against the other's 1,
- * the likeliest place for it between SQUID_EDGES.
+ * Whether the exotic with this seed is a squid: whether its first part, its
+ * body, is the squid's. The squid's body is a rare option, weighing 0.05
+ * against the other exotics' body's 1, so the first draw from the seed picks
+ * it in the top 1/21 of its range.
  */
-export function exoticSquid(seed: bigint): SquidCall {
-  const draw = firstDraw(seed);
-  return {
-    squid: 21 * draw >= 20 * 2 ** 32,
-    close: draw > SQUID_EDGES.notSquid && draw < SQUID_EDGES.squid,
-  };
+export function exoticSquid(seed: bigint): boolean {
+  return partsFor("S-CLASS_PROC", seed)[0] === SQUID_PART;
 }
 
 // --- What each slot holds, as seen in every system recorded so far ---
@@ -299,6 +286,31 @@ const FIXED_SLOTS: Record<number, readonly [string, ShipGroup]> = {
   49: ["Corvette", "corvette"],
 };
 
+/** The model of the ship at a system's Sentinel crash sites: a Sentinel ship's. */
+export const CRASH_SITE_MODEL: PartModel = "SENTINELSHIP_PROC";
+
+/** The models each type of ship is built from, as every capture shows. */
+const TYPE_MODELS: Record<string, PartModel> = {
+  Hauler: "DROPSHIP_PROC",
+  Fighter: "FIGHTER_PROC",
+  Explorer: "SCIENTIFIC_PROC",
+  Shuttle: "SHUTTLE_PROC",
+  Solar: "SAILSHIP_PROC",
+  Exotic: "S-CLASS_PROC",
+  Freighter: "FREIGHTER_PROC",
+  "Capital freighter": "CAPITALFREIGHTER_PROC",
+  "Sentinel ship": "SENTINELSHIP_PROC",
+  "Pirate fighter": "FIGHTER_PROC",
+};
+
+/** The models a ship of this type ("Fighter", "Shuttle or solar", ...) is built from, if it has picked parts. */
+export function typeModels(type: string): PartModel[] {
+  return type.split(" or ").flatMap((name) => {
+    const model = TYPE_MODELS[name.charAt(0).toUpperCase() + name.slice(1)];
+    return model ? [model] : [];
+  });
+}
+
 /**
  * The type the game puts in each of the 50 slots. Only the first 20, the
  * civilian ships, vary: with the dominant race (0 for an uncharted system),
@@ -349,6 +361,7 @@ export function shipPool(code: bigint, galaxy: number): ShipPool {
       seed,
       type: types[slot]![0],
       group: types[slot]![1],
+      models: typeModels(types[slot]![0]),
       note: SLOT_NOTES[slot] ?? null,
     })),
     exotic: first!.exotic,

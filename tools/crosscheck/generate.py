@@ -10,8 +10,10 @@ window, the ends of the range). Each case also carries the ship pool that
 tools/captures/ship_model.py predicts, which builds on nms_namegen, with
 whether its exotic is a squid, and the start, exotic and crash-site seed of
 every other arrangement of a two-moon planet's moons; how many stars
-tools/captures/star_model.py gives the system; and the guild and the first
-run of multi-tools that guild_model.py and multitool_model.py give it.
+tools/captures/star_model.py gives the system; the guild and the first run
+of multi-tools that guild_model.py and multitool_model.py give it; and the
+parts parts_model.py picks for one model with the system's first ship seed,
+each model in turn, case by case.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -42,6 +44,7 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "captures"))
     import guild_model  # noqa: E402
     import multitool_model  # noqa: E402
+    import parts_model  # noqa: E402
     import ship_model  # noqa: E402
     import star_model  # noqa: E402
     from nms_namegen.planet import planetName  # noqa: E402
@@ -86,14 +89,15 @@ def main() -> int:
             "uncertain": prediction.uncertain,
             "first": f"{prediction.ships[0]:016X}",
             "exotic": f"{prediction.ships[20]:016X}",
-            "squid": list(ship_model.exotic_squid(prediction.ships[20])),
+            "squid": ship_model.exotic_squid(prediction.ships[20]),
             "crash": f"{prediction.crash:016X}",
             "last": f"{prediction.ships[-1]:016X}",
             "others": [[o.start, f"{o.ships[20]:016X}", f"{o.crash:016X}"] for o in others],
         }
 
+    models = parts_model.models()
     out = sys.stdout
-    for _ in range(args.count):
+    for case in range(args.count):
         code, galaxy = random_case()
         seeds = guarded(planetSeeds, code, galaxy)
         ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)  # the system's
@@ -111,6 +115,10 @@ def main() -> int:
             "guild": guild_model.guild(ua),
             "multitools": [[name, f"{seed:016X}"] for name, seed in multitool_model.first_run(ua)],
         }
+        if isinstance(rec["ships"], dict):
+            # the parts of one model, in turn, with the system's first ship seed
+            model = models[case % len(models)]
+            rec["parts"] = [model, parts_model.parts(model, int(rec["ships"]["first"], 16))]
         if isinstance(seeds, dict):
             rec["seeds"] = [f"{s & 0xFFFFFFFFFFFFFFFF:016X}" for s in seeds["planet_seeds"]]
             rec["planet_count"] = seeds["planet_count"]

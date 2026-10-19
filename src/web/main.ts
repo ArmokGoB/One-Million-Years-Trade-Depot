@@ -14,9 +14,9 @@ import {
   formatPortalCode,
   parseAnyAddress,
   parseGalaxyNumber,
+  type PartsInfo,
   type ShipGroup,
   type ShipsInfo,
-  type SquidCall,
   type SystemDescription,
 } from "../core";
 
@@ -105,7 +105,20 @@ const SHIP_GROUPS: readonly (readonly [ShipGroup, string])[] = [
   ["corvette", "Corvette"],
 ];
 
-/** The full ship list: each group's ships, every one a type with its seed. */
+/** Parts as the game names them, less the leading underscore. */
+function partsText(parts: readonly string[]): string {
+  return parts.map((part) => part.replace(/^_/, "")).join(", ");
+}
+
+/** A ship's parts, one line per model it could be built from, each said which where there are two. */
+function partsLines(models: readonly PartsInfo[], className: string): HTMLElement[] {
+  return models.map(({ model, parts }) => {
+    const which = models.length > 1 ? `As a ${model.toLowerCase()}: ` : "";
+    return el("dd", className, which + partsText(parts));
+  });
+}
+
+/** The full ship list: each group's ships, every one a type with its seed and parts. */
 function shipList(ships: ShipsInfo): HTMLElement {
   const groups = el("div", "ships");
   for (const [group, heading] of SHIP_GROUPS) {
@@ -114,6 +127,7 @@ function shipList(ships: ShipsInfo): HTMLElement {
     const list = el("dl", "ships__list");
     for (const s of members) {
       const row = el("div", "ships__row", el("dt", "ships__type", s.type), el("dd", "ships__seed", s.seed));
+      row.append(...partsLines(s.parts, "ships__parts"));
       if (s.note) row.append(el("dd", "ships__note", s.note));
       list.append(row);
     }
@@ -122,27 +136,34 @@ function shipList(ships: ShipsInfo): HTMLElement {
   return groups;
 }
 
-/** A seed in the key, with the seeds it would be if the system's two-moon planets were arranged otherwise. */
-function keySeed(seed: string, others: string[]): HTMLElement {
-  const dd = el("dd", undefined, seed);
-  if (others.length) dd.append(el("span", "manifest__note", `or ${others.join(" or ")}, with the moons the other way round`));
-  return dd;
+/**
+ * A ship's seed and parts in the key, then the seed and parts it would have
+ * if the system's two-moon planets had their moons the other way round.
+ */
+function keyShip(seed: string, parts: readonly string[], others: { seed: string; parts: readonly string[] }[]): Node[] {
+  return [
+    el("span", "manifest__note", `Seed ${seed}`),
+    el("span", "manifest__note", partsText(parts)),
+    ...others.flatMap((other) => [
+      el("span", "manifest__note", `Or seed ${other.seed}, with the moons the other way round`),
+      el("span", "manifest__note", partsText(other.parts)),
+    ]),
+  ];
 }
 
-/** Whether an exotic is a squid, as running text reads it: "probably" where its seed is too close to call. */
-function squidPhrase(call: SquidCall): string {
-  const verdict = call.squid ? "a squid" : "not a squid";
-  return call.close ? `probably ${verdict}` : verdict;
+/** Whether an exotic is a squid, as running text reads it. */
+function squidPhrase(squid: boolean): string {
+  return squid ? "a squid" : "not a squid";
 }
 
 /**
- * The exotic in the key: whether it's a squid, then its seed, for each way
- * the system's two-moon planets can have their moons arranged.
+ * The exotic in the key: whether it's a squid, for each way the system's
+ * two-moon planets can have their moons arranged, then its seed and parts.
  */
 function exoticEntry(ships: ShipsInfo): HTMLElement {
   const calls = [ships.exoticSquid, ...ships.alternatives.map((a) => a.exoticSquid)];
   const [first, ...others] = calls.map(squidPhrase);
-  let verdict = first === "a squid" ? "Squid" : first!.charAt(0).toUpperCase() + first!.slice(1);
+  let verdict = first === "a squid" ? "Squid" : "Not a squid";
   if (others.length) {
     const different = [...new Set(others)].filter((phrase) => phrase !== first);
     verdict += different.length
@@ -150,13 +171,8 @@ function exoticEntry(ships: ShipsInfo): HTMLElement {
       : ", whichever way round the moons are";
   }
 
-  const seeds = el("span", "manifest__note", `Seed ${ships.exotic}`);
-  if (ships.alternatives.length) {
-    seeds.append(`, or ${ships.alternatives.map((a) => a.exotic).join(" or ")} with the moons the other way round`);
-  }
-  const dd = el("dd", undefined, verdict, seeds);
-
-  return dd;
+  const arranged = ships.alternatives.map((a) => ({ seed: a.exotic, parts: a.exoticParts }));
+  return el("dd", undefined, verdict, ...keyShip(ships.exotic, ships.exoticParts, arranged));
 }
 
 function shipsSection(d: SystemDescription): HTMLElement {
@@ -167,7 +183,7 @@ function shipsSection(d: SystemDescription): HTMLElement {
           "p",
           "result__warning",
           `Less certain here: this system has ${ships.uncertain}, and every seed depends on which. The exotic and ` +
-            `crash-site seeds for ${ships.alternatives.length > 1 ? "the other ways" : "the other way"} are given too.`,
+            `crash-site ship for ${ships.alternatives.length > 1 ? "the other ways" : "the other way"} are given too.`,
         ),
       ]
     : [];
@@ -177,9 +193,14 @@ function shipsSection(d: SystemDescription): HTMLElement {
     el("dt", undefined, "Exotic"),
     exoticEntry(ships),
     el("dt", undefined, "Sentinel crash-site ship"),
-    keySeed(
-      ships.crashSite,
-      ships.alternatives.map((a) => a.crashSite),
+    el(
+      "dd",
+      undefined,
+      ...keyShip(
+        ships.crashSite,
+        ships.crashSiteParts,
+        ships.alternatives.map((a) => ({ seed: a.crashSite, parts: a.crashSiteParts })),
+      ),
     ),
   );
   const all = el(
@@ -192,13 +213,14 @@ function shipsSection(d: SystemDescription): HTMLElement {
   return el("section", "result__section", el("h3", "result__heading", "Ships"), ...warning, key, all);
 }
 
-/** The system's own multi-tools: the first run of its set, each with its seed. */
+/** The system's own multi-tools: the first run of its set, each with its seed and parts. */
 function multitoolsSection(d: SystemDescription): HTMLElement {
   const key = el("dl", "manifest");
   let standard = 0;
   for (const tool of d.multitools) {
     const term = tool.kind === "Standard" ? `Standard ${++standard}` : tool.kind;
-    key.append(el("dt", undefined, term), el("dd", undefined, tool.seed));
+    const parts = el("span", "manifest__note", partsText(tool.parts));
+    key.append(el("dt", undefined, term), el("dd", undefined, tool.seed, parts));
   }
   const sale = d.uncharted || d.abandoned ? "" : "The space station sells one of the standard ones, most often the first. ";
   const intro = el("p", "result__aside", `${sale}Three more standard ones aren't worked out yet.`);
@@ -285,7 +307,7 @@ function render(d: SystemDescription): void {
     "section",
     "result__section result__next",
     el("h3", "result__heading", "Coming next"),
-    el("p", undefined, "What each ship and multi-tool looks like: its parts, then its colors. ", roadmap, "."),
+    el("p", undefined, "The colors of every ship and multi-tool. ", roadmap, "."),
   );
 
   const header = el("header", "result__header", name, region, ...(flags.length ? [flagList] : []), actions);

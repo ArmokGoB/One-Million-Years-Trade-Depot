@@ -420,6 +420,7 @@ a:hover {
 .manifest__note {
   display: block;
   color: var(--ink-muted);
+  overflow-wrap: anywhere;
 }
 .manifest__note + .manifest__note {
   margin-top: 0.25rem;
@@ -539,7 +540,7 @@ a:hover {
 }
 
 /* A ship's type and seed share a line where they fit; otherwise the seed
- * drops below, still against the right edge. A note takes a line of its own. */
+ * drops below, still against the right edge. Its parts and a note take lines of their own. */
 .ships__row {
   display: flex;
   flex-wrap: wrap;
@@ -563,6 +564,13 @@ a:hover {
   margin: 0.125rem 0 0;
   max-width: 60ch;
   color: var(--ink-muted);
+}
+/* A ship's parts, as the game names them, under its type and seed. */
+.ships__parts {
+  flex-basis: 100%;
+  margin: 0.125rem 0 0;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
 }
 
 .button-secondary {

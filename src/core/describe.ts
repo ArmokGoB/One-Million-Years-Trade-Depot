@@ -4,10 +4,11 @@
 
 import { formatPortalCode, portalParts, toGalacticCoordinates, universalAddress, withPlanet } from "./address";
 import { guildFor, type Guild } from "./guild";
-import { multitoolRun, type MultitoolKind } from "./multitools";
+import { MULTITOOL_MODELS, multitoolRun, type MultitoolKind } from "./multitools";
+import { distinguishingParts, type PartModel } from "./parts";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
-import { shipPool, type ShipGroup, type SquidCall } from "./ships";
+import { CRASH_SITE_MODEL, shipPool, type ShipGroup } from "./ships";
 import { starCount } from "./stars";
 import { planetSeeds, systemAttributesDetailed, systemName, type SystemAttributes } from "./system";
 import { hex64 } from "./u64";
@@ -26,12 +27,39 @@ export const ECONOMIES = [
 export const TIERS = ["", "Low", "Medium", "High"] as const;
 export const RACES = ["None", "Gek", "Korvax", "Vy'keen"] as const;
 
+/** What each model with parts is, as a type of ship or multi-tool. */
+export const MODEL_NAMES: Record<PartModel, string> = {
+  FIGHTER_PROC: "Fighter",
+  DROPSHIP_PROC: "Hauler",
+  SCIENTIFIC_PROC: "Explorer",
+  SHUTTLE_PROC: "Shuttle",
+  SAILSHIP_PROC: "Solar",
+  "S-CLASS_PROC": "Exotic",
+  SENTINELSHIP_PROC: "Sentinel ship",
+  FREIGHTER_PROC: "Freighter",
+  CAPITALFREIGHTER_PROC: "Capital freighter",
+  MULTITOOL: "Standard multi-tool",
+  ROYALMULTITOOL: "Royal multi-tool",
+  SENTINELMULTITOOL: "Sentinel multi-tool",
+  ATLASMULTITOOL: "Atlas multi-tool",
+};
+
+/** The parts that tell a ship or multi-tool apart from others built from the same model (see distinguishingParts). */
+export interface PartsInfo {
+  /** The model's name (see MODEL_NAMES), e.g. "Shuttle". */
+  model: string;
+  /** Part IDs as the game lists them, e.g. "_COCKPIT_E". */
+  parts: string[];
+}
+
 export interface ShipInfo {
   /** Position in the game's list, 0-49. */
   slot: number;
   type: string;
   group: ShipGroup;
   seed: string;
+  /** Its parts, for each model the ship could be built from (two where it's one or the other); none for frigates. */
+  parts: PartsInfo[];
   /** What a player should know about this slot, if anything. */
   note: string | null;
 }
@@ -39,14 +67,22 @@ export interface ShipInfo {
 export interface ShipsInfo {
   exotic: string;
   /** Whether the exotic is a squid. */
-  exoticSquid: SquidCall;
+  exoticSquid: boolean;
+  exoticParts: string[];
   crashSite: string;
+  crashSiteParts: string[];
   /** All 50, in the game's order. */
   ships: ShipInfo[];
   /** Why the prediction may be wrong for this system, if a known gap in the model applies. */
   uncertain: string | null;
-  /** The exotic and crash-site seeds for each other way a two-moon planet's moons can be arranged. */
-  alternatives: { exotic: string; exoticSquid: SquidCall; crashSite: string }[];
+  /** The exotic and crash-site ship for each other way a two-moon planet's moons can be arranged. */
+  alternatives: {
+    exotic: string;
+    exoticSquid: boolean;
+    exoticParts: string[];
+    crashSite: string;
+    crashSiteParts: string[];
+  }[];
 }
 
 export interface BodyInfo {
@@ -93,7 +129,7 @@ export interface SystemDescription {
    * standard ones, then the royal, the Sentinel and the Atlas one. Three more
    * standard ones follow, from a seed not worked out (see multitools.ts).
    */
-  multitools: { kind: MultitoolKind; seed: string }[];
+  multitools: { kind: MultitoolKind; seed: string; parts: string[] }[];
   raw: SystemAttributes;
 }
 
@@ -104,13 +140,24 @@ function describeShips(code: bigint, galaxy: number): ShipsInfo {
   return {
     exotic: seedText(pool.exotic),
     exoticSquid: pool.exoticSquid,
+    exoticParts: distinguishingParts("S-CLASS_PROC", pool.exotic),
     crashSite: seedText(pool.crashSite),
-    ships: pool.ships.map(({ slot, type, group, seed, note }) => ({ slot, type, group, seed: seedText(seed), note })),
+    crashSiteParts: distinguishingParts(CRASH_SITE_MODEL, pool.crashSite),
+    ships: pool.ships.map(({ slot, type, group, seed, models, note }) => ({
+      slot,
+      type,
+      group,
+      seed: seedText(seed),
+      parts: models.map((model) => ({ model: MODEL_NAMES[model], parts: distinguishingParts(model, seed) })),
+      note,
+    })),
     uncertain: pool.uncertain,
     alternatives: pool.alternatives.map((a) => ({
       exotic: seedText(a.exotic),
       exoticSquid: a.exoticSquid,
+      exoticParts: distinguishingParts("S-CLASS_PROC", a.exotic),
       crashSite: seedText(a.crashSite),
+      crashSiteParts: distinguishingParts(CRASH_SITE_MODEL, a.crashSite),
     })),
   };
 }
@@ -158,7 +205,11 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     bodies,
     ships: describeShips(systemCode, galaxy),
     guild: guildFor(ua),
-    multitools: multitoolRun(ua).map(({ kind, seed }) => ({ kind, seed: seedText(seed) })),
+    multitools: multitoolRun(ua).map(({ kind, seed }) => ({
+      kind,
+      seed: seedText(seed),
+      parts: distinguishingParts(MULTITOOL_MODELS[kind], seed),
+    })),
     raw: a,
   };
 }

@@ -103,9 +103,6 @@ def main() -> int:
         bodies = ship_model.bodies(ua) or []
         prediction, *others = ship_model.predictions(ua)
 
-        def squid(seed: int) -> dict[str, bool]:
-            return ship_model.exotic_squid(seed)._asdict()
-
         vectors.append(
             {
                 "what": kind,
@@ -115,14 +112,14 @@ def main() -> int:
                 "start": prediction.start,
                 "uncertain": prediction.uncertain,
                 "ships": [f"{s:016X}" for s in prediction.ships],
-                "exoticSquid": squid(prediction.ships[20]),
+                "exoticSquid": ship_model.exotic_squid(prediction.ships[20]),
                 "crash": f"{prediction.crash:016X}",
                 # the other ways a two-moon planet's moons can be arranged
                 "others": [
                     {
                         "start": o.start,
                         "exotic": f"{o.ships[20]:016X}",
-                        "exoticSquid": squid(o.ships[20]),
+                        "exoticSquid": ship_model.exotic_squid(o.ships[20]),
                         "crash": f"{o.crash:016X}",
                     }
                     for o in others
