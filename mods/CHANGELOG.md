@@ -6,7 +6,7 @@ What changed in each version of [`system_capture.py`](system_capture.py), newest
 
 - Records what the game makes your own ships, multi-tool and freighter from (`custom` lines), from `cGcResourceCustomisation::CreateGenerationTask`: the customisation's seed, its parts, the texture options picked for it and its two sets of colors, where they look like colors, with all the bytes the mod read; and again 1, 5 and 20 seconds later if it changed. Of anyone else's, only the model file. `RECORD_COLORS` turns this off.
 - Records your ships as your player state lists them, and the part of your player state that holds your customisations (`player` lines): half a minute after the first system, when you click **Record your ships' colors now**, and when they've changed. Records the models the game builds with the seed of one of yours (`own` lines), and the textures of ships and multi-tools it loads with a descriptor (`tex` lines).
-- System records keep what NMS.py doesn't name of the solar system, where the game may keep the colors of a system's other stars: the bytes between its data and its address (`gap`), and, once the system has settled, the last 41,504 bytes of the solar system object (`rawTail`).
+- System records keep what NMS.py doesn't name of the solar system, where the game may keep the colors of a system's other stars: the bytes between its data and its address (`gap`), and, once the system has settled, the last 41,504 bytes of the solar system object (`rawTail`) and the sky the game draws (`rawSky`).
 
 Not run in the game.
 
