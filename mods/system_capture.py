@@ -28,10 +28,13 @@ buttons on the mod's tab.
 When the game builds the model of a ship from the system's list, the mod also
 records the parts the game picked for it, with the ship's seed; and when the
 game offers an item, such as a multi-tool to buy or as a gift or reward, what
-the item holds: its inventories, and the seed and parts of its model. The One
-Million Years Trade Depot uses these lines as ground truth for working out how
-the game picks a system's ships and multi-tools, and what a seed makes them
-look like.
+the item holds: its inventories, and the seed and parts of its model. To work out
+how the game colors ships and multi-tools, it also records what the game makes
+your own ships, multi-tool and freighter from: each one's seed, the texture
+option picked for each layer of its paint and the colors picked from each
+palette. The One Million Years Trade Depot uses these lines as ground truth for
+working out how the game picks a system's ships and multi-tools, and what a
+seed makes them look like.
 
 The mod only reads. It changes nothing in the game or your save. Every read
 of game memory goes through ReadProcessMemory, so if NMS.py's struct layouts
@@ -78,10 +81,10 @@ from nmspy.decorators import main_loop
 from pymhf import Mod
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.11.1"
+MOD_VERSION = "0.12.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.11.0 only add or drop record types, fields and controls, or let a field hold more
+# (0.3.0 to 0.12.0 only add or drop record types, fields and controls, or let a field hold more
 # kinds of thing, as 0.8.2 does with an item's "tools", so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
@@ -107,6 +110,13 @@ RECORD_MULTITOOLS = True
 # (see StarCount). Set it to False if the game misbehaves with the mod, and the
 # mod won't look for the function.
 RECORD_STARS = True
+# Record what the game makes your own ships, multi-tool and freighter from, to work out how it colors
+# ships and multi-tools: the seed each one is made from, the texture option it picked for each layer of
+# its paint, and the colors it picked from each palette. The mod watches the function the game makes them
+# with, cGcResourceCustomisation::CreateGenerationTask, and reads your ships and what the game keeps of
+# their customisation (see CUSTOMISATION_READ). Set it to False if the game misbehaves with the mod, and the
+# mod won't watch that function or read them.
+RECORD_COLORS = True
 # Short tones tell you what happened while the log is hidden behind the game.
 PLAY_SOUNDS = True
 # Also play the "recorded" tone once per system, a few seconds after you
@@ -120,6 +130,8 @@ SOUNDS = {
     "exotic parts": [(1318.5, 0.06), (0.0, 0.05), (1318.5, 0.06), (0.0, 0.05), (1760.0, 0.12)],
     # two quick very high notes: a system's multi-tools, or one the game offers, are recorded
     "multi-tool": [(2093.0, 0.05), (0.0, 0.04), (2093.0, 0.05)],
+    # three quick rising notes: the colors of one of your ships or multi-tools are recorded
+    "colors": [(1046.5, 0.05), (1318.5, 0.05), (1568.0, 0.09)],
     "problem": [(220.0, 0.18), (0.0, 0.07), (220.0, 0.18)],  # two low notes
 }
 
@@ -283,6 +295,53 @@ NO_HANDLE = (0, 0xFFFFFFFF)  # resource handle values that mean no resource
 # that while the count changes.
 FIRST_RESOURCE_COUNT_SECONDS = 60.0
 RESOURCE_COUNT_SECONDS = 300.0
+# Colors (RECORD_COLORS). The game keeps how each of your ships, your multi-tool, your freighter and so on
+# is customised in a cGcResourceCustomisation, 26 of them in your player state, one for each kind of thing
+# (cGcCustomisationComponentData: Player, Vehicle, Weapon, Ship_01...), and hands one to CreateGenerationTask
+# to make the model. NMS.py places its seed, the IDs of the parts it's made of and the texture options
+# picked for it, and two sets of colors, five from each of the game's 66 palettes; an earlier version of
+# the game had 64, and NMS.py may not have caught up everywhere. So the mod reads more than NMS.py's size of one,
+# keeps all it read, compressed, and reads the colors where NMS.py puts them only if they look like colors
+# there (see color_sets).
+CUSTOMISATION_READ = 0x3C00
+CUSTOMISATION_SLOTS = 26
+# How far apart the customisations may be in your player state, besides NMS.py's size of one: its size as
+# declared, which an earlier version of the game had, and that with two more palettes in each color set.
+CUSTOMISATION_STRIDES = (0x3920, 0x3AE0)
+PALETTE_COUNT = 66
+MAX_TEXTURE_SAMPLERS = 64
+MAX_TEXTURE_OPTIONS = 64
+MAX_CUSTOM_RECORDS = 300
+# After the game makes something from a customisation, the mod reads the customisation again this many
+# seconds later, in case the game fills it in as it makes the model, and records it if it changed.
+CUSTOM_RECHECK_SECONDS = (1.0, 5.0, 20.0)
+CUSTOM_WATCHED = 64  # customisations being read again at once
+CUSTOM_MIN_SECONDS = 0.2  # a customisation the game hands over again sooner isn't read again
+# Of a customisation that isn't yours and doesn't make one of the system's ships or multi-tools, such as
+# another player's, only the file it makes is recorded, without its seed or anything else, the first few
+# times in a session.
+OTHER_CUSTOM_RECORDED = 20
+# Your player state: your ships (cGcPlayerState.mShipResources, as NMS.py places them: each one's model
+# file, seed and texture options) and the region NMS.py puts the customisations in, read whole. Recorded
+# PLAYER_FIRST_SECONDS after the mod first records a system, then whenever it has changed and the game has
+# made something from a customisation since, at most every PLAYER_EVERY_SECONDS, and when you click the
+# button; at most PLAYER_RECORDS times a session.
+SHIP_RESOURCES = 12
+PLAYER_FIRST_SECONDS = 30.0
+PLAYER_EVERY_SECONDS = 60.0
+PLAYER_RECORDS = 12
+# Models the game builds with the seed of one of your ships or multi-tools, recorded at most this many times
+# a session.
+OWN_MODELS_RECORDED = 300
+# The textures of ships and multi-tools the game loads with a descriptor, as it may when it paints them for
+# a seed: recorded (`tex` lines), the first this many of each file and seed a session.
+TEXTURE_FOLDERS = ("/SPACECRAFT/", "/WEAPONS/")
+TEXTURES_RECORDED = 200
+# What NMS.py doesn't name of a solar system, where the game may keep the colors of a system's other stars
+# (RECORD_STARS): the bytes between the system's generated data and its address (`gap`), in every system
+# record, and the last SYSTEM_TAIL_BYTES of it (`rawTail`), which hold the solar system map, its generator
+# and whatever follows, once the system has settled.
+SYSTEM_TAIL_BYTES = 0xA220
 NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
 MAX_LOCATORS = 4096
@@ -314,6 +373,11 @@ STORE_ENTRY_COLUMNS = [
     "id", "x", "y", "amount", "maxAmount", "type", "damage", "addedAutomatically", "installed",
 ]  # fmt: skip
 SPECIAL_SLOT_COLUMNS = ["x", "y", "type"]
+# The texture options picked for something, and your ships, in customisation and player records.
+TEXTURE_OPTION_COLUMNS = [
+    "sampler", "layer", "group", "option", "palette", "colorAlt", "index", "color", "override",
+]  # fmt: skip
+PLAYER_SHIP_COLUMNS = ["place", "file", "seed", "useSeed", "altId", "options"]
 LOCATION_COLUMNS = ["galaxy", "voxelX", "voxelY", "voxelZ", "system", "planet"]
 STAR_FLAGS = ["AbandonedSystem", "IsGasGiantSystem", "IsGiantSystem", "IsPirateSystem", "IsSystemSafe"]
 
@@ -340,6 +404,7 @@ ENUM_SOURCES = {
     "inventoryType": "cGcInventoryType",
     "slotType": "cGcInventorySpecialSlotType",
     "stackSizeGroup": "cGcInventoryStackSizeGroup",
+    "customisation": "cGcCustomisationComponentData",
 }
 
 # In-game names for the log, keyed by cGcSpaceshipClasses member name.
@@ -414,6 +479,42 @@ class Layout:
         self.resource_handle = resource.mHandle.offset
         self.resource_refs = resource.muRefCount.offset
         self.resource_descriptor = resource.mDescriptor.offset
+        # Your own ships and their customisations (RECORD_COLORS).
+        player = nms.cGcPlayerState
+        self.ship_resources = player.mShipResources.offset
+        self.ship_resource_size = ctypes.sizeof(nmse.cGcResourceElement)
+        self.primary_ship = player.miPrimaryShip.offset
+        self.customisations = player.mCustomisationData.offset
+        self.customisation_size = ctypes.sizeof(nms.cGcResourceCustomisation)
+        custom = nms.CustomisationData
+        self.custom_seed = custom.mResourceSeed.offset
+        self.custom_parts = custom.mDescriptors.offset
+        self.custom_options = custom.mTextureOptions.offset
+        self.custom_legacy = custom.mbUseLegacyColourPalettes.offset
+        self.custom_edited = custom.mbEditedColours.offset
+        self.color_sets = (custom.mEditColours.offset, custom.mFinalColours.offset)
+        # The customisations as one region: as many bytes as the biggest a customisation may be (see
+        # CUSTOMISATION_READ) times how many there are.
+        self.customisations_size = CUSTOMISATION_SLOTS * max(CUSTOMISATION_READ, self.customisation_size)
+
+    def color_layout(self) -> dict:
+        """Where the mod reads your ships and their customisations, as NMS.py places them, for the
+        session header: a capture can then be read again if the places turn out wrong."""
+        custom = nms.CustomisationData
+        return {
+            "shipResources": f"{self.ship_resources:X}",
+            "shipResourceSize": self.ship_resource_size,
+            "primaryShip": f"{self.primary_ship:X}",
+            "customisations": f"{self.customisations:X}",
+            "customisationSize": self.customisation_size,
+            "customisationsRead": self.customisations_size,
+            "fields": {
+                name: f"{getattr(custom, name).offset:X}"
+                for name in ("mResourceSeed", "mDescriptors", "mTextureOptions", "mbUseLegacyColourPalettes",
+                             "mbEditedColours", "mEditColours", "mFinalColours", "mfScale")
+            },
+            "colorSets": [f"{offset:X}" for offset in self.color_sets],
+        }  # fmt: skip
 
 
 LAYOUT = Layout()
@@ -528,6 +629,8 @@ def enum_tables() -> dict[str, list[str | None]]:
     sources = {key: getattr(enums, name, None) for key, name in ENUM_SOURCES.items()}
     sources["asteroids"] = getattr(nmse.cGcSolarSystemData, "eAsteroidLevelEnum", None)
     sources["where"] = getattr(getattr(enums, "EnvironmentLocation", None), "Enum", None)
+    sources["palette"] = getattr(nmse.cTkPaletteTexture, "ePaletteEnum", None)
+    sources["colorAlt"] = getattr(nmse.cTkPaletteTexture, "eColourAltEnum", None)
     tables: dict[str, list[str | None]] = {}
     for key, enum in sources.items():
         members = list(enum) if enum is not None else []
@@ -778,6 +881,20 @@ def raw_galaxy(address: int) -> str | None:
     return packed(read_memory(address + LAYOUT.attributes, LAYOUT.attributes_size))
 
 
+def system_gap(address: int) -> str | None:
+    """The bytes between the solar system's generated data and its address, which NMS.py doesn't name, as
+    hex: where the game may keep the colors of a system's other stars."""
+    raw = read_memory(address + LAYOUT.data + LAYOUT.data_size, LAYOUT.ua - LAYOUT.data - LAYOUT.data_size)
+    return None if raw is None else raw.hex().upper()
+
+
+def system_tail(address: int, pattern: re.Pattern[bytes]) -> str | None:
+    """The last SYSTEM_TAIL_BYTES of the solar system object, compressed, with your name and title taken
+    out (see SYSTEM_TAIL_BYTES)."""
+    raw = read_memory(address + LAYOUT.system_size - SYSTEM_TAIL_BYTES, SYSTEM_TAIL_BYTES)
+    return None if raw is None else packed(scrub(raw, pattern)[0])
+
+
 def read_text(address: int, size: int) -> str | None:
     raw = read_memory(address, size)
     return None if raw is None else raw.split(b"\0", 1)[0].decode("utf-8", errors="backslashreplace")
@@ -821,25 +938,34 @@ def resource_descriptor(address: int, keep_raw: bool = False) -> dict | None:
         found["seed2"] = hex64(seed2.Seed)
         found["useSeed2"] = as_int(seed2.UseSeedValue)
     problems: list[str] = []
-    found["parts"] = []
-    if count:
-        size = ctypes.sizeof(basic.TkID0x20)
-        if not pointer or not 0 < count <= MAX_MODEL_PARTS:
-            problems.append(f"implausible part list (count {count}, pointer {pointer:#x})")
-        elif (part_bytes := read_memory(pointer, count * size)) is None:
-            problems.append(f"part list at {pointer:#x} couldn't be read")
-        else:
-            found["parts"] = [
-                part_bytes[i : i + size].split(b"\0", 1)[0].decode("ascii", errors="backslashreplace")
-                for i in range(0, len(part_bytes), size)
-            ]
-            if not all(part.isprintable() for part in found["parts"]):
-                problems.append("part IDs that aren't text")
+    found["parts"] = part_ids(pointer, count, problems)
     if problems:
         found["errors"] = problems
     if problems or keep_raw:
         found["raw"] = raw.hex().upper()
     return found
+
+
+def part_ids(pointer: int, count: int, problems: list[str]) -> list[str]:
+    """The ``count`` IDs (TkID<0x20>) of the list at ``pointer``, such as the parts of a model, noting in
+    ``problems`` why they couldn't be read."""
+    if not count:
+        return []
+    size = ctypes.sizeof(basic.TkID0x20)
+    if not pointer or not 0 < count <= MAX_MODEL_PARTS:
+        problems.append(f"implausible part list (count {count}, pointer {pointer:#x})")
+        return []
+    part_bytes = read_memory(pointer, count * size)
+    if part_bytes is None:
+        problems.append(f"part list at {pointer:#x} couldn't be read")
+        return []
+    parts = [
+        part_bytes[i : i + size].split(b"\0", 1)[0].decode("ascii", errors="backslashreplace")
+        for i in range(0, len(part_bytes), size)
+    ]
+    if not all(part.isprintable() for part in parts):
+        problems.append("part IDs that aren't text")
+    return parts
 
 
 def is_ship_model(name: str) -> bool:
@@ -854,6 +980,12 @@ def is_multitool_model(name: str) -> bool:
         and not any(folder in path for folder in NOT_MULTITOOL_DIRS)
         and not is_ship_model(name)
     )
+
+
+def is_texture(name: str) -> bool:
+    """Whether ``name`` is one of the textures of a ship or a multi-tool."""
+    path = name.replace("\\", "/").upper()
+    return path.startswith("TEXTURES/") and any(folder in path for folder in TEXTURE_FOLDERS)
 
 
 def model_file(name: str) -> str:
@@ -938,6 +1070,207 @@ def seeds_in(raw: bytes, wanted) -> list[tuple[int, int]]:
                 offset = start + 8 * values.index(value)
                 first[value] = min(offset, first.get(value, offset))
     return sorted((offset, value) for value, offset in first.items())
+
+
+# --- Your ships' colors (RECORD_COLORS) ---
+
+
+def texture_options(address: int, problems: list[str]) -> list[list]:
+    """The texture options picked for something, from the cTkProceduralTextureChosenOptionList at
+    ``address``: one row per option, [sampler, layer, group, option, palette, color alt, index, [r, g, b,
+    a], override], the sampler counting from 0, the palette and color alt as values of the game's
+    cTkPaletteTexture enums. Why any couldn't be read goes in ``problems``."""
+    options_type = nmse.cTkProceduralTextureChosenOptionList
+    raw = read_memory(address, ctypes.sizeof(options_type))
+    if raw is None:
+        problems.append(f"texture options at {address:#x} couldn't be read")
+        return []
+    samplers = options_type.from_buffer_copy(raw).Samplers
+    count, pointer = as_int(samplers.Size), as_int(samplers.ArrayPointer)
+    if not count:
+        return []
+    sampler_type = nmse.cTkProceduralTextureChosenOptionSampler
+    option_type = nmse.cTkProceduralTextureChosenOption
+    if not pointer or count > MAX_TEXTURE_SAMPLERS:
+        problems.append(f"implausible texture samplers (count {count}, pointer {pointer:#x})")
+        return []
+    raw = read_memory(pointer, count * ctypes.sizeof(sampler_type))
+    if raw is None:
+        problems.append(f"texture samplers at {pointer:#x} couldn't be read")
+        return []
+    rows: list[list] = []
+    for index, sampler in enumerate((sampler_type * count).from_buffer_copy(raw)):
+        size, at = as_int(sampler.Options.Size), as_int(sampler.Options.ArrayPointer)
+        if not size:
+            continue
+        if not at or size > MAX_TEXTURE_OPTIONS:
+            problems.append(f"implausible texture options (sampler {index}, count {size}, pointer {at:#x})")
+            continue
+        options = read_memory(at, size * ctypes.sizeof(option_type))
+        if options is None:
+            problems.append(f"texture options at {at:#x} couldn't be read")
+            continue
+        for option in (option_type * size).from_buffer_copy(options):
+            colour, palette = option.Colour, option.Palette
+            rows.append(
+                [
+                    index,
+                    text(option.Layer),
+                    text(option.Group),
+                    text(option.OptionName),
+                    as_int(palette.Palette),
+                    as_int(palette.ColourAlt),
+                    as_int(palette.Index),
+                    [number(colour.r), number(colour.g), number(colour.b), number(colour.a)],
+                    int(bool(option.OverrideColour)),
+                ]
+            )
+    return rows
+
+
+def color_sets(raw: bytes) -> dict[str, list[list[int]]]:
+    """The sets of colors in a customisation's bytes, where NMS.py puts them (the colors you edited, then
+    those the game uses), if they look like colors there, by their offset in hex: for each of the 66
+    palettes, the five colors' places in the palette (Primary and Alternative1 to 4; -1 for a color that
+    isn't one of the palette's). A set looks like colors if all its places are -1 to 63, all its colors'
+    components are finite numbers from 0 to 16, and some are not 0."""
+    palette_type = nmse.cGcColourPaletteData
+    size = ctypes.sizeof(palette_type)
+    found: dict[str, list[list[int]]] = {}
+    for offset in LAYOUT.color_sets:
+        if offset + PALETTE_COUNT * size > len(raw):
+            continue
+        palettes = (palette_type * PALETTE_COUNT).from_buffer_copy(raw, offset)
+        places = [[int(i) for i in palette.ColourIndices] for palette in palettes]
+        components = [
+            value
+            for palette in palettes
+            for colour in palette.Colours
+            for value in (colour.r, colour.g, colour.b, colour.a)
+        ]
+        if (
+            all(-1 <= i < 64 for row in places for i in row)
+            and all(math.isfinite(v) and 0.0 <= v <= 16.0 for v in components)
+            and any(components)
+        ):
+            found[f"{offset:X}"] = places
+    return found
+
+
+def customisation(address: int) -> tuple[dict, bytes]:
+    """What the cGcResourceCustomisation at ``address`` holds, as NMS.py places it: its `seed`, the IDs of
+    the parts it's made of (`parts`), the texture options picked for it (`options`), whether it uses the
+    game's older palettes and whether you edited its colors (`flags`), and its sets of colors (`colors`,
+    see color_sets); and the bytes it was read from (see CUSTOMISATION_READ). Raises CaptureError if
+    nothing could be read."""
+    raw = None
+    for size in (CUSTOMISATION_READ, LAYOUT.customisation_size, LAYOUT.custom_options + 0x60):
+        if (raw := read_memory(address, size)) is not None:
+            break
+    if raw is None:
+        raise CaptureError(f"the customisation at {address:#x} couldn't be read")
+    seed = basic.GcSeed.from_buffer_copy(raw, LAYOUT.custom_seed)
+    allocated, count, pointer = struct.unpack_from("<IIQ", raw, LAYOUT.custom_parts)
+    problems: list[str] = []
+    found: dict = {
+        "seed": hex64(seed.Seed),
+        "useSeed": as_int(seed.UseSeedValue),
+        "parts": part_ids(pointer, count, problems) if count <= allocated else [],
+        "options": texture_options(address + LAYOUT.custom_options, problems),
+        "flags": [raw[LAYOUT.custom_legacy], raw[LAYOUT.custom_edited]],
+    }
+    if count > allocated:
+        problems.append(f"implausible part list (count {count} of {allocated})")
+    if colors := color_sets(raw):
+        found["colors"] = colors
+    if problems:
+        found["errors"] = problems
+    return found, raw
+
+
+def variable_string(raw: bytes, offset: int, limit: int = MODEL_NAME_LENGTH) -> str | None:
+    """The text of the VariableSizeString at ``offset`` in ``raw``: "" if it's empty, None if it can't be
+    read or isn't text."""
+    pointer, count = struct.unpack_from("<QI", raw, offset)
+    if not count:
+        return ""
+    if not pointer or count > limit:
+        return None
+    value = read_memory(pointer, count)
+    if value is None:
+        return None
+    value = value.split(b"\0", 1)[0].decode("utf-8", errors="backslashreplace")
+    return value if value.isprintable() else None
+
+
+def player_ships(state: int) -> tuple[list[list], bytes | None]:
+    """Your ships, as NMS.py places them in your player state (cGcPlayerState.mShipResources): one row per
+    place, [place, model file, seed, use-seed flag, alternative ID, texture options], the file and ID None
+    where they can't be read; and the bytes they were read from."""
+    element = nmse.cGcResourceElement
+    size = LAYOUT.ship_resource_size
+    raw = read_memory(state + LAYOUT.ship_resources, SHIP_RESOURCES * size)
+    if raw is None:
+        return [], None
+    rows = []
+    for place in range(SHIP_RESOURCES):
+        at = place * size
+        seed = basic.GcSeed.from_buffer_copy(raw, at + element.Seed.offset)
+        problems: list[str] = []
+        options = texture_options(
+            state + LAYOUT.ship_resources + at + element.ProceduralTexture.offset, problems
+        )
+        row = [
+            place,
+            variable_string(raw, at + element.Filename.offset),
+            hex64(seed.Seed),
+            as_int(seed.UseSeedValue),
+            variable_string(raw, at + element.AltId.offset),
+            options,
+        ]
+        if problems:
+            row.append(problems)
+        rows.append(row)
+    return rows, raw
+
+
+def customisation_region(state: int) -> bytes | None:
+    """The region of your player state that holds your customisations (see CUSTOMISATION_READ), or, if
+    that can't be read, as much of it as NMS.py places them in; None if neither can."""
+    at = state + LAYOUT.customisations
+    region = read_memory(at, LAYOUT.customisations_size)
+    if region is None:  # the player state may end sooner than the most the mod reads
+        region = read_memory(at, CUSTOMISATION_SLOTS * LAYOUT.customisation_size)
+    return region
+
+
+def customisation_strides() -> list[int]:
+    """How far apart the customisations in your player state may be (see CUSTOMISATION_STRIDES)."""
+    return sorted({*CUSTOMISATION_STRIDES, LAYOUT.customisation_size})
+
+
+def own_seeds(ships_raw: bytes | None, region: bytes | None) -> dict[str, str]:
+    """The seeds of your ships and of your customisations, with what each is ("ship 3", your fourth ship;
+    "slot 2 at 3A78", the third customisation if they're 0x3A78 bytes apart), from the bytes of your ships
+    (see player_ships) and of the region your customisations are in. A seed below 2^32 is left out: a
+    customisation's place read at the wrong distance is likelier to hold a small number than a seed."""
+    seeds: dict[str, str] = {}
+    if ships_raw is not None:
+        at_seed = nmse.cGcResourceElement.Seed.offset
+        for place in range(len(ships_raw) // LAYOUT.ship_resource_size):
+            at = place * LAYOUT.ship_resource_size + at_seed
+            if (value := int.from_bytes(ships_raw[at : at + 8], "little")) >= 1 << 32:
+                seeds.setdefault(hex64(value), f"ship {place}")
+    if region is not None:
+        for stride in customisation_strides():
+            for slot in range(CUSTOMISATION_SLOTS):
+                at = slot * stride + LAYOUT.custom_seed
+                if (
+                    at + 8 <= len(region)
+                    and (value := int.from_bytes(region[at : at + 8], "little")) >= 1 << 32
+                ):
+                    seeds.setdefault(hex64(value), f"slot {slot} at {stride:X}")
+    return seeds
 
 
 def _entries(vector, kind, row, problems: list[str], label: str) -> list:
@@ -1420,6 +1753,15 @@ def active_system() -> tuple[int, int | None] | None:
     return address, read_u64(base + LAYOUT.simulation_ua)
 
 
+def player_state_address() -> int | None:
+    """Where your player state is, or None while there's none."""
+    try:
+        state = gameData.player_state
+    except (ValueError, AttributeError):
+        return None
+    return ctypes.addressof(state) if state is not None else None
+
+
 def player_location() -> list[int] | None:
     try:
         state = gameData.player_state
@@ -1491,6 +1833,8 @@ def session_header(mod: Mod | None = None) -> dict:
         "hooks": _guarded(hook_status, mod) if mod is not None else None,
         # The game's star count function, or why it wasn't found (see StarCount).
         "starCount": _guarded(star_info, getattr(mod, "_stars", None)),
+        # Where the mod reads your ships and their customisations, if it does (RECORD_COLORS).
+        "colorLayout": _guarded(LAYOUT.color_layout) if RECORD_COLORS else None,
         "nmspy": package_version("nmspy"),
         "pymhf": package_version("pymhf"),
         "python": platform.python_version(),
@@ -1503,6 +1847,8 @@ def session_header(mod: Mod | None = None) -> dict:
             "loc": LOCATION_COLUMNS,
             "storeEntries": STORE_ENTRY_COLUMNS,
             "specialSlots": SPECIAL_SLOT_COLUMNS,
+            "textureOptions": TEXTURE_OPTION_COLUMNS,
+            "playerShips": PLAYER_SHIP_COLUMNS,
         },
         "enums": ENUM_TABLES,
     }
@@ -1624,7 +1970,8 @@ class TradeDepotCapture(Mod):
     __author__ = "One Million Years Trade Depot contributors"
     __description__ = (
         "Records each star system you visit, the ships the game prepares for it "
-        "and the parts it picks for them, and the items the game offers, such as multi-tools."
+        "and the parts it picks for them, the items the game offers, such as multi-tools, "
+        "and the colors of your own ships and multi-tool."
     )
     __version__ = MOD_VERSION
     __pymhf_required_version__ = "0.2.4"
@@ -1643,6 +1990,9 @@ class TradeDepotCapture(Mod):
     _pool_count = 0
     _offer_count = 0
     _item_count = 0
+    _custom_count = 0
+    _own_count = 0
+    _player_count = 0
 
     def __init__(self):
         super().__init__()
@@ -1713,6 +2063,28 @@ class TradeDepotCapture(Mod):
         self._item_types_logged: set[int] = set()
         self._tools_heard: set[str] = set()
         self._offers_heard: set[tuple] = set()
+        # Colors (RECORD_COLORS). Customisations written, by (address, what they held); customisations to
+        # read again, by address; when each address was last read; the files of other customisations
+        # written; the seeds of your ships and customisations, with what each is; seeds whose tone has
+        # played; your player state: what it held when last written, how often it was, when it's next due,
+        # whether you clicked the button, whether a customisation was written since; models written with
+        # one of your seeds.
+        self._custom_keys: set[tuple] = set()
+        self._custom_watch: dict[int, dict] = {}
+        self._custom_read: dict[int, float] = {}
+        self._custom_calls: set[tuple[int, int]] = set()  # (thread, address) of calls read, till they return
+        self._other_customs: set[str] = set()
+        self._own_seeds: dict[str, str] = {}
+        self._own_refreshed = -math.inf  # when the mod last looked at your ships' and customisations' seeds
+        self._colors_heard: set[str] = set()
+        self._player_signature: str | None = None
+        self._player_count = 0
+        self._player_due: float | None = None
+        self._player_armed = False  # whether the first record of your ships has been made due
+        self._player_requested = False
+        self._custom_since_player = False
+        self._own_model_keys: set[tuple] = set()
+        self._texture_keys: set[tuple] = set()  # textures written, by (file, seed, parts)
         # Resources the game has loaded, and how many came with a descriptor, for the log.
         self._resources = 0
         self._described = 0
@@ -1792,6 +2164,16 @@ class TradeDepotCapture(Mod):
         )
 
     @property
+    @STRING("Colors recorded")
+    def colors(self):
+        if not RECORD_COLORS:
+            return "Off (RECORD_COLORS is False)"
+        return (
+            f"{self._custom_count} customisations, {self._own_count} models of yours; your ships "
+            f"{self._player_count} times"
+        )
+
+    @property
     @STRING("Last system")
     def last_system(self):
         return self._last
@@ -1825,6 +2207,12 @@ class TradeDepotCapture(Mod):
     @gui_button("Guild envoy here: Mercenaries")
     def guild_mercenaries(self):
         self._request_guild("Mercenaries")
+
+    @gui_button("Record your ships' colors now")
+    def record_colors(self):
+        # The game thread does the reading, on its next frame.
+        self._player_requested = True
+        self._status = "Recording your ships' colors..."
 
     @gui_button("Open the captures folder")
     def open_folder(self):
@@ -1956,11 +2344,29 @@ class TradeDepotCapture(Mod):
             except Exception:
                 self._report_once("item", "Couldn't record an item the game offers.")
 
+    if RECORD_COLORS:  # otherwise the mod leaves this function alone
+        # cGcResourceCustomisation::CreateGenerationTask(handle, file, copy options) starts making a model,
+        # such as one of your ships or your multi-tool, from how it's customised: read before and after.
+        @nms.cGcResourceCustomisation.CreateGenerationTask.before
+        def before_generation_task(self, this, lpResourceHandle, lpResourceFilename, lbCopyOptions):
+            try:
+                self._customisation_used(this, lpResourceHandle, lpResourceFilename, lbCopyOptions, "call")
+            except Exception:
+                self._report_once("colors", "Couldn't record what the game made one of yours from.")
+
+        @nms.cGcResourceCustomisation.CreateGenerationTask.after
+        def after_generation_task(self, this, lpResourceHandle, lpResourceFilename, lbCopyOptions):
+            try:
+                self._customisation_used(this, lpResourceHandle, lpResourceFilename, lbCopyOptions, "return")
+            except Exception:
+                self._report_once("colors", "Couldn't record what the game made one of yours from.")
+
     @main_loop.after
     def on_frame(self):
         try:
             self._watch_for_game(time.monotonic())
             self._record_guild()
+            self._colors(time.monotonic())
             self._flush_pending()
             self._poll()
             self._count_resources(time.monotonic())
@@ -2079,6 +2485,12 @@ class TradeDepotCapture(Mod):
         if not name:
             return
         resource_type = as_int(type_value)
+        if RECORD_COLORS and is_texture(name):
+            self._texture_requested(name, resource_type, descriptor)
+            return
+        # One of yours? Asked without the lock, which _own_model takes: a miss now and then is harmless.
+        if RECORD_COLORS and descriptor["seed"] in self._own_seeds:
+            self._own_model(name, resource_type, descriptor)
         if RECORD_MULTITOOLS:
             entry = self._model_built(name, resource_type, descriptor, address_of(result_pointer))
             if is_multitool_model(name):
@@ -2738,6 +3150,8 @@ class TradeDepotCapture(Mod):
             context["raw"] = raw
         if (raw := raw_galaxy(address)) is not None:
             context["rawGalaxy"] = raw
+        if RECORD_STARS and (gap := system_gap(address)) is not None:
+            context["gap"] = gap
         try:
             if (locators := locator_data(address)) is not None:
                 context["locators"] = locators
@@ -2824,6 +3238,334 @@ class TradeDepotCapture(Mod):
         self._status = f"Recorded the {guild} Guild here."
         play_sound("recorded")
 
+    # --- Colors (RECORD_COLORS) ---
+
+    def _colors(self, now: float) -> None:
+        """On the game's main thread: read again the customisations that are due, and record your ships
+        if they're due or you clicked the button."""
+        if not RECORD_COLORS:
+            return
+        try:
+            self._recheck_customisations(now)
+        except Exception:
+            self._report_once("colors-later", "Couldn't read a customisation again.")
+        requested = self._player_requested
+        try:
+            self._record_player(now)
+        except Exception:
+            self._report_once("colors-player", "Couldn't record your ships.")
+            if requested:
+                self._status = "Couldn't record your ships. See the log."
+                play_sound("problem")
+
+    def _whose(self, address: int, seed: str, now: float) -> dict | None:
+        """Whose the customisation at ``address`` is, if the mod may record it: {"region": offset} if it's
+        one of your customisations in your player state (the offset from the first, in hex); {"own": what}
+        if its seed is one of your ships' or customisations' (see own_seeds); {"system": address, "slot":
+        n} for a ship of a recorded system's list, or {"tool": 1} for a multi-tool of a system's set or one
+        on offer; None for anything else, such as another player's."""
+        state = player_state_address()
+        if state:
+            offset = address - state - LAYOUT.customisations
+            for stride in customisation_strides():  # where one of them may start
+                if 0 <= offset < CUSTOMISATION_SLOTS * stride and offset % stride == 0:
+                    return {"region": f"{offset:X}"}
+        if seed == ZERO_SEED:
+            return None
+        if state and seed not in self._own_seeds and now - self._own_refreshed >= 1.0:
+            # Perhaps one of yours the mod hasn't seen yet: look at your ships' and customisations' seeds.
+            self._own_refreshed = now
+            ships_raw = read_memory(state + LAYOUT.ship_resources, SHIP_RESOURCES * LAYOUT.ship_resource_size)
+            self._remember_own(own_seeds(ships_raw, customisation_region(state)))
+        with self._lock:
+            if (what := self._own_seeds.get(seed)) is not None:
+                return {"own": what}
+            if (place := self._ship_place(seed)) is not None:
+                return {"system": hex64(place[0]), "slot": place[1]}
+            if seed in self._tools_heard:
+                return {"tool": 1}
+        return None
+
+    def _remember_own(self, seeds: dict[str, str]) -> None:
+        """Note the seeds of your ships and customisations (see own_seeds), so the models the game builds
+        with them, and customisations it hands over with them, are recorded as yours; a ship's place says
+        best what a seed is."""
+        with self._lock:
+            for seed, what in seeds.items():
+                if what.startswith("ship ") or seed not in self._own_seeds:
+                    self._own_seeds[seed] = what
+            while len(self._own_seeds) > 4 * CUSTOMISATION_SLOTS * len(customisation_strides()):
+                del self._own_seeds[next(iter(self._own_seeds))]
+
+    def _customisation_used(self, this, handle_pointer, name_pointer, copy_options, via: str) -> None:
+        """The game is about to make (``via`` "call") or has started making ("return") a model from the
+        customisation at ``this``: record what the customisation holds if it's yours or makes one of the
+        system's ships or multi-tools (see _whose), and read it again a few times after it returns."""
+        address = address_of(this)
+        if not address:
+            return
+        now = time.monotonic()
+        pair = (threading.get_ident(), address)  # a call and its return come on the same thread
+        with self._lock:
+            if via == "return":
+                if pair not in self._custom_calls:
+                    return  # its call wasn't read either
+                self._custom_calls.discard(pair)
+            else:
+                last = self._custom_read.pop(address, None)
+                if last is not None and now - last < CUSTOM_MIN_SECONDS:
+                    self._custom_read[address] = last
+                    return  # handed over again at once: as it was a moment ago
+                self._custom_read[address] = now
+                while len(self._custom_read) > 4 * CUSTOM_WATCHED:
+                    del self._custom_read[next(iter(self._custom_read))]
+                if len(self._custom_calls) < 4 * CUSTOM_WATCHED:
+                    self._custom_calls.add(pair)
+        name = read_c_string(address_of(name_pointer), MODEL_NAME_LENGTH) or ""
+        raw_handle = read_memory(address_of(handle_pointer), 4)
+        handle = int.from_bytes(raw_handle, "little") if raw_handle is not None else None
+        found, raw = customisation(address)
+        whose = self._whose(address, found["seed"], now)
+        if whose is None:
+            self._other_customisation(name, via)
+            return
+        entry = {
+            "t": "custom",
+            "at": int(time.time()),
+            "via": via,
+            "file": name,
+            "copy": int(bool(copy_options)),
+            "handle": handle,
+            **whose,
+            **found,
+        }
+        self._write_customisation(address, entry, raw)
+        if via == "return":
+            with self._lock:
+                self._custom_watch.pop(address, None)
+                self._custom_watch[address] = {
+                    "entry": {k: entry[k] for k in ("file", "copy", "handle", *whose)},
+                    "seed": found["seed"],
+                    "since": now,
+                    "due": [now + delay for delay in CUSTOM_RECHECK_SECONDS],
+                }
+                while len(self._custom_watch) > CUSTOM_WATCHED:
+                    del self._custom_watch[next(iter(self._custom_watch))]
+
+    def _write_customisation(self, address: int, entry: dict, raw: bytes) -> bool:
+        """Queue a customisation for the capture file, with its bytes (as ``entry["raw"]``) once your name
+        and title are taken out of them, or without them if your name can't be read; unless it holds the
+        same as when last written from the same place this session. Returns whether it's queued."""
+        pattern, problem = player_name_pattern()
+        shown = None
+        if pattern is None:
+            entry["nameUnread"] = problem
+        else:
+            shown, scrubbed = scrub(raw, pattern)
+            if scrubbed:
+                entry["scrubbed"] = scrubbed
+        # What it holds: not when or how it was read, nor the bytes NMS.py doesn't place, which hold
+        # addresses that change as the game moves the lists around, and memory past the customisation.
+        held = {k: v for k, v in entry.items() if k not in ("at", "via", "after", "handle")}
+        tail = (shown or b"")[LAYOUT.custom_legacy : LAYOUT.customisation_size]
+        signature = hashlib.sha1(dumps(held).encode() + tail).hexdigest()
+        seed = entry["seed"]
+        with self._lock:
+            key = (address, signature)
+            if key in self._custom_keys:
+                return False
+            full = len(self._custom_keys) >= MAX_CUSTOM_RECORDS
+            if not full:
+                self._custom_keys.add(key)  # claimed, so no other thread writes it meanwhile
+        if full:
+            self._report_once(
+                "custom-full", "Recorded %d customisations this session; no more until the next.",
+                MAX_CUSTOM_RECORDS, with_traceback=False,
+            )  # fmt: skip
+            return False
+        if shown is not None:
+            entry["raw"] = packed(shown)  # only once it's to be written: compressing takes a moment
+        with self._lock:
+            self._pending.append(entry)
+            self._custom_count += 1
+            self._custom_since_player = True
+            if ("region" in entry or "own" in entry) and seed != ZERO_SEED:
+                self._own_seeds.setdefault(seed, entry.get("own") or f"customisation at {entry['region']}")
+            first = seed not in self._colors_heard
+            self._colors_heard.add(seed)
+        if first:
+            kind = "one of yours" if ("region" in entry or "own" in entry) else "one of the system's"
+            logger.info(
+                "Recorded what the game makes %s from, %s (seed %s): %d texture options, %s.",
+                model_file(entry["file"]) or "something",
+                kind,
+                seed,
+                len(entry["options"]),
+                "colors" if "colors" in entry else "no colors where the mod looks",
+            )
+            self._status = "Recorded the colors of a ship or multi-tool."
+            play_sound("colors")
+        return True
+
+    def _recheck_customisations(self, now: float) -> None:
+        """Read again the customisations whose time has come (see CUSTOM_RECHECK_SECONDS), and record any
+        that changed; at the last time, with what the game's resource manager holds for the handle the game
+        made the model with. One that holds another seed now has been reused for something else."""
+        if not self._custom_watch:
+            return
+        with self._lock:
+            due = [
+                (address, watch) for address, watch in self._custom_watch.items() if watch["due"][0] <= now
+            ]
+            for address, watch in due:
+                while watch["due"] and watch["due"][0] <= now:  # one read for all the times passed
+                    watch["due"].pop(0)
+                if not watch["due"]:
+                    del self._custom_watch[address]
+        for address, watch in due:
+            try:
+                found, raw = customisation(address)
+            except CaptureError:
+                continue
+            if found["seed"] != watch["seed"]:
+                continue
+            entry = {
+                "t": "custom",
+                "at": int(time.time()),
+                "via": "later",
+                "after": round(now - watch["since"], 1),
+                **watch["entry"],
+                **found,
+            }
+            if not watch["due"]:  # the last time: with what the resource manager holds for the handle
+                if (resource := self._resource_of(watch["entry"]["handle"] or 0)) is not None:
+                    entry["resource"] = resource
+            self._write_customisation(address, entry, raw)
+
+    def _other_customisation(self, name: str, via: str) -> None:
+        """A customisation that isn't yours and doesn't make one of the system's ships or multi-tools, such
+        as another player's: record only the file the game makes from it, the first few times."""
+        with self._lock:
+            if name in self._other_customs or len(self._other_customs) >= OTHER_CUSTOM_RECORDED:
+                return
+            self._other_customs.add(name)
+            self._pending.append(
+                {"t": "custom", "at": int(time.time()), "via": via, "file": name, "other": 1}
+            )
+        logger.info(
+            "The game makes %s from a customisation that isn't yours nor one of the system's ships or "
+            "multi-tools: only its file is recorded.",
+            model_file(name) or "something",
+        )
+
+    def _texture_requested(self, name: str, resource_type: int, descriptor: dict) -> None:
+        """Queue a texture of a ship or multi-tool that the game loads with a descriptor, and the seed and
+        parts in it, once a session per file and seed (see TEXTURES_RECORDED)."""
+        key = (name, descriptor["seed"], tuple(descriptor["parts"]))
+        with self._lock:
+            if key in self._texture_keys or len(self._texture_keys) >= TEXTURES_RECORDED:
+                return
+            self._texture_keys.add(key)
+            entry = {"t": "tex", "at": int(time.time()), "name": name, "type": resource_type}
+            entry.update(descriptor)
+            self._pending.append(entry)
+        if len(self._texture_keys) == 1:
+            logger.info("The game loads textures with a descriptor, as %s: they're recorded.", name)
+
+    def _own_model(self, name: str, resource_type: int, descriptor: dict) -> None:
+        """Queue a model the game builds with the seed of one of your ships or customisations, once a
+        session (see OWN_MODELS_RECORDED)."""
+        key = (name, descriptor["seed"], descriptor.get("seed2"), tuple(descriptor["parts"]))
+        with self._lock:
+            what = self._own_seeds.get(descriptor["seed"])
+            full = len(self._own_model_keys) >= OWN_MODELS_RECORDED
+            if what is None or key in self._own_model_keys or full:
+                return
+            self._own_model_keys.add(key)
+            self._own_count += 1
+            entry = {"t": "own", "at": int(time.time()), "whose": what, "name": name, "type": resource_type}
+            entry.update(descriptor)
+            self._pending.append(entry)
+
+    def _record_player(self, now: float) -> None:
+        """Record your ships and the region of your player state that holds your customisations, when
+        they're due (see PLAYER_FIRST_SECONDS) or you clicked the button, unless they hold the same as when
+        last recorded."""
+        requested, self._player_requested = self._player_requested, False
+        if not requested:
+            if self._player_due is None or now < self._player_due:
+                return
+            if self._player_count and not self._custom_since_player:
+                self._player_due = now + PLAYER_EVERY_SECONDS
+                return
+        if self._player_count >= PLAYER_RECORDS:
+            self._player_due = None
+            if requested:
+                logger.info(
+                    "Recorded your ships %d times this session; no more until the next.", PLAYER_RECORDS
+                )
+                self._status = "Your ships were recorded as often as the mod does in a session."
+                play_sound("problem")
+            return
+        state = player_state_address()
+        if not state:
+            if requested:
+                logger.info("Couldn't record your ships: no save is loaded yet.")
+                self._status = "No save is loaded yet."
+                play_sound("problem")
+            return
+        ships, ships_raw = player_ships(state)
+        region = customisation_region(state)
+        raw_primary = read_memory(state + LAYOUT.primary_ship, 4)
+        self._remember_own(own_seeds(ships_raw, region))
+        self._player_due = now + PLAYER_EVERY_SECONDS
+        self._custom_since_player = False
+        signature = hashlib.sha1(
+            dumps({"ships": ships}).encode() + (ships_raw or b"") + (region or b"")
+        ).hexdigest()
+        if signature == self._player_signature:
+            if requested:
+                logger.info("Your ships hold the same as when last recorded.")
+                self._status = "Your ships are recorded already; nothing has changed."
+                play_sound("recorded")
+            return
+        primary = int.from_bytes(raw_primary, "little", signed=True) if raw_primary is not None else None
+        record: dict = {
+            "t": "player",
+            "at": int(time.time()),
+            "why": "button" if requested else "changed" if self._player_count else "loaded",
+            "primaryShip": primary,
+            "ships": ships,
+        }
+        if region is None:
+            record["errors"] = ["your customisations couldn't be read"]
+        pattern, problem = player_name_pattern()
+        if pattern is None:
+            record["nameUnread"] = problem
+        else:
+            scrubbed = 0
+            if ships_raw is not None:
+                shown, count = scrub(ships_raw, pattern)
+                record["shipsRaw"] = packed(shown)
+                scrubbed += count
+            if region is not None:
+                shown, count = scrub(region, pattern)
+                record["raw"], record["rawSize"] = packed(shown), len(region)
+                scrubbed += count
+            if scrubbed:
+                record["scrubbed"] = scrubbed
+        with self._lock:
+            self._pending.append(record)
+            self._player_count += 1
+            self._player_signature = signature
+        logger.info(
+            "Recorded your ships (%d of them) and what the game keeps of how your things are customised.",
+            sum(1 for row in ships if row[1]),
+        )
+        if requested:
+            self._status = "Recorded your ships' colors."
+            play_sound("colors")
+
     def _arrived(self, seen: tuple | None, chime: bool = True) -> None:
         """The system has settled and is in the capture file: tone once per system per session."""
         if seen is None:
@@ -2850,6 +3592,23 @@ class TradeDepotCapture(Mod):
             except Exception:
                 self._report_once("name", "Couldn't get the system's name from the game.")
             context.update(self._star_context(named_system))
+            if RECORD_STARS:
+                context.update(self._other_stars_context(named_system))
+        return context
+
+    def _other_stars_context(self, system: int) -> dict:
+        """What NMS.py doesn't name of the solar system at ``system``, where the game may keep the colors of
+        its other stars (see SYSTEM_TAIL_BYTES): ``gap`` and ``rawTail``, the latter only if your name can
+        be read, to take it out."""
+        context: dict = {}
+        try:
+            if (gap := system_gap(system)) is not None:
+                context["gap"] = gap
+            pattern, _ = player_name_pattern()
+            if pattern is not None and (tail := system_tail(system, pattern)) is not None:
+                context["rawTail"] = tail
+        except Exception:
+            self._report_once("system-rest", "Couldn't read the rest of a solar system.")
         return context
 
     def _star_context(self, system: int) -> dict:
@@ -2897,6 +3656,9 @@ class TradeDepotCapture(Mod):
             raise
         with self._lock:
             self._count += 1
+            if RECORD_COLORS and not self._player_armed:  # your ships, once your save has loaded
+                self._player_armed = True
+                self._player_due = time.monotonic() + PLAYER_FIRST_SECONDS
         logger.info("Recorded %s", summary)
         self._last = summary
         self._stars_here = stars_label(entry)
