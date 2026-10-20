@@ -11,8 +11,8 @@ draw, in single precision. tools/captures/report.py checks both against
 every capture, and src/core/stars.ts is the site's port of this file.
 
 In two game modes, Seasonal (expeditions) and Unspecified, with a setting
-on, the game also gives three stars to one system whose address it holds
-(see the mod's StarCount); this covers the normal game.
+on, the game also gives three stars to one system whose address it holds,
+as capture mods 0.11.0 to 0.14.0 found in its code; this covers the normal game.
 """
 
 from __future__ import annotations
@@ -41,8 +41,9 @@ def star_count(
     nebula: float, binary: float = BINARY_STAR_CHANCE, ternary: float = TERNARY_STAR_CHANCE, one: float = 1.0
 ) -> int:
     """How many stars the game counts for a system with this NebulaSeed, as its star count function does
-    in the normal game (no debug options; see the mod's STAR_COUNT_CODE). The game subtracts in single
-    precision and counts a star only when NebulaSeed is strictly above the difference."""
+    in the normal game, without debug options, as capture mods 0.11.0 to 0.14.0 found it in the game's code.
+    The game subtracts in single precision and counts a star only when NebulaSeed is strictly above the
+    difference."""
     return 1 + (nebula > float32(one - ternary)) + (nebula > float32(one - binary))
 
 

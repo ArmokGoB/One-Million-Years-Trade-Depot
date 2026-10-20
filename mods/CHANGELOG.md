@@ -2,12 +2,26 @@
 
 What changed in each version of [`system_capture.py`](system_capture.py), newest first, and how it did when it ran in the game. Dates are when the version was written.
 
+## 0.15.0 (2026-10-20)
+
+- No longer records what earlier versions' records have settled:
+  - Each system's stars (`stars` in system lines, and the game's star count function, `starCount`, in the session header). Worked out from the address, the count matched the one 0.11.0 to 0.14.0 worked out in the game for all 66 systems they counted, and the `NebulaSeed` it follows from, which system lines still hold in their raw data, was the 9th draw of the address in all 139 systems recorded with it. `RECORD_STARS` and the **Stars in the last system** line on the tab are gone.
+  - The game's color variants for suns (`suns` lines, and `poiLayout` in the session header): a binary and a trinary system's suns had in the game the colors that the variants and the system's star type give them.
+  - The guild of a region's space stations, and the three buttons that recorded it (`guild` lines). Worked out from the address, the guild matched all 43 recorded, in 31 regions of three galaxies.
+  - The parts of the ships of a system's list as the game built them (`model` lines), with the tone that played for the exotic's, and of the models the game built with the seed of one of yours (`own` lines). The `paint` line of each holds its parts too: all 3,698 that 0.13.0 and 0.14.0 wrote for the systems' ships hold the same parts as their `model` lines, and the parts worked out from the seed matched those recorded for every one of the systems' ships and multi-tools, 3,350 in all. `RECORD_SHIP_PARTS` is gone: `RECORD_MULTITOOLS` now turns off watching the function the game loads everything through, as the mod watches it only for multi-tools.
+  - The palettes of the systems' multi-tools (`palettes` in their `paint` lines). The game makes a multi-tool's the older way, with its older palettes, from the multi-tool's own seed, as it did for all 114 that 0.14.0 recorded, and the colors of all 213 of the systems' multi-tools that 0.13.0 and 0.14.0 recorded are those of the palettes made that way. The paint of a multi-tool of yours, or of one the game isn't told to make with its older palettes, still holds them.
+  - The textures of ships and multi-tools the game loads with a descriptor (`tex` lines), which it didn't in 0.13.0's and 0.14.0's sessions.
+- Nothing made without a seed is taken for yours. An empty place among your ships holds FFFFFFFFFFFFFFFF, which the game also gives many models it makes without a seed, NPCs' and player characters' among them; 0.12.0 to 0.14.0 took it for the seed of one of your ships, and recorded the models made with it as yours, with their paint. The paint of anything made without a seed is no longer recorded, and no item is paired with a model by such a seed.
+- The script's header has `shown = true` under `[tool.pymhf.gui]`. Set to `false`, the mod runs without the pyMHF panel, which Steam's screenshots and recordings may capture instead of the game (see [Screenshots](README.md#screenshots)).
+
+Not run in the game.
+
 ## 0.14.0 (2026-10-20)
 
 - Each session's lines go to a file of their own in `captures\`, named for your Steam ID and when the file was made, in UTC, as the project keeps captures: `<Steam ID>_<YYYY_MM_DD_HH_MM>.jsonl`. The Steam ID is the SteamID64 of the account Steam says is logged in, or else of the game's newest save folder; failing both, a random identifier kept in `captures\identifier.txt`. Earlier versions wrote every session to `captures\systems.jsonl`. The log names the folder, not the file.
 - `paint` lines for multi-tools hold the palettes the game picked their colors from (`palettes`, the places of each palette's five colors), since 0.13.0's showed they aren't made from the multi-tool's seed, as a ship's are. Every `paint` line says if the game was told to use its older palettes (`legacy`) or to paint the model with one color (`useColour`).
 
-Not run in the game.
+In the game: ran on Steam build 25732212 with NMS.py 181442.0. All of its hooks attached, and it wrote the session to a file of its own, named for the Steam ID and when the file was made. It recorded 14 systems with their ship lists and stars, the multi-tools of each but the one the save loaded into, and the paint of 2,038 models: 1,918 for the systems' ship lists, 114 multi-tools and 6 of yours. The game was told to make every multi-tool with its older palettes, and the palettes it painted each with were those it makes the older way from the multi-tool's own seed.
 
 ## 0.13.0 (2026-10-19)
 
