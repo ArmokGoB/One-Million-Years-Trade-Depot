@@ -95,9 +95,30 @@ function starColor(color: StarColor): HTMLElement {
   return el("span", "star-color", swatch, color);
 }
 
-/** Items as running text: "a", "a and b", "a, b and c". */
-function inWords(items: readonly Node[]): (Node | string)[] {
-  return items.flatMap((item, i) => (i === 0 ? [item] : [i === items.length - 1 ? " and " : ", ", item]));
+/**
+ * The system's star colors: the main star's, and under it, smaller, the other
+ * stars' in a binary or trinary system.
+ */
+function starColorsEntry(colors: readonly StarColor[]): Node[] {
+  const [main, ...others] = colors;
+  if (!others.length) return [starColor(main!)];
+  const said = el("span", "visually-hidden", others.length > 1 ? "Its other stars: " : "Its other star: ");
+  return [starColor(main!), el("span", "star-colors__others", said, ...others.map(starColor))];
+}
+
+/**
+ * Light the page with the system's stars: the main star's color is the
+ * page's, and each other star adds a glow of its own to the background (see
+ * styles.css).
+ */
+function lightPage(colors: readonly StarColor[]): void {
+  const root = document.documentElement;
+  root.dataset.star = colors[0];
+  for (const k of [2, 3]) {
+    const color = colors[k - 1];
+    if (color) root.style.setProperty(`--star-${k}`, `var(--star-${color.toLowerCase()})`);
+    else root.style.removeProperty(`--star-${k}`);
+  }
 }
 
 /** The order and headings of the full ship list. */
@@ -235,7 +256,7 @@ function multitoolsSection(d: SystemDescription): HTMLElement {
 }
 
 function render(d: SystemDescription): void {
-  document.documentElement.dataset.star = d.starColor;
+  lightPage(d.starColors);
 
   const name = el("h2", "result__name result__name--fresh", d.name);
   const region = el("p", "result__region", `${d.region}, ${galaxyLabel(d.galaxy)}`);
@@ -249,15 +270,14 @@ function render(d: SystemDescription): void {
   for (const f of flags) flagList.append(el("li", "result__flag", f));
 
   const manifest = el("dl", "manifest");
-  const row = (term: string, value: Node | string, note?: string) => {
-    const dd = el("dd", undefined, value);
+  const row = (term: string, value: Node | string | Node[], note?: string) => {
+    const dd = el("dd", undefined, ...(Array.isArray(value) ? value : [value]));
     if (note) dd.append(el("span", "manifest__note", note));
     manifest.append(el("dt", undefined, term), dd);
   };
 
-  row("Star color", starColor(d.starColor));
-  const others = d.stars > 1 ? [": ", ...inWords(d.starColors.map(starColor))] : [];
-  row("Stars", el("span", undefined, String(d.stars), ...others));
+  row(d.stars > 1 ? "Star colors" : "Star color", starColorsEntry(d.starColors));
+  row("Stars", String(d.stars));
   row("Faction", d.faction);
   if (!d.uncharted) {
     row("Economy", d.economy);
