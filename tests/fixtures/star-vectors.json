@@ -73,5 +73,127 @@
    "nebulaSeed": "3F74A6A4",
    "stars": 3
   }
+ ],
+ "colors": [
+  {
+   "starType": 0,
+   "stars": 1,
+   "colors": [
+    "Yellow"
+   ]
+  },
+  {
+   "starType": 0,
+   "stars": 2,
+   "colors": [
+    "Yellow",
+    "Green"
+   ]
+  },
+  {
+   "starType": 0,
+   "stars": 3,
+   "colors": [
+    "Yellow",
+    "Green",
+    "Blue"
+   ]
+  },
+  {
+   "starType": 1,
+   "stars": 1,
+   "colors": [
+    "Green"
+   ]
+  },
+  {
+   "starType": 1,
+   "stars": 2,
+   "colors": [
+    "Green",
+    "Blue"
+   ]
+  },
+  {
+   "starType": 1,
+   "stars": 3,
+   "colors": [
+    "Green",
+    "Blue",
+    "Red"
+   ]
+  },
+  {
+   "starType": 2,
+   "stars": 1,
+   "colors": [
+    "Blue"
+   ]
+  },
+  {
+   "starType": 2,
+   "stars": 2,
+   "colors": [
+    "Blue",
+    "Red"
+   ]
+  },
+  {
+   "starType": 2,
+   "stars": 3,
+   "colors": [
+    "Blue",
+    "Red",
+    "Purple"
+   ]
+  },
+  {
+   "starType": 3,
+   "stars": 1,
+   "colors": [
+    "Red"
+   ]
+  },
+  {
+   "starType": 3,
+   "stars": 2,
+   "colors": [
+    "Red",
+    "Purple"
+   ]
+  },
+  {
+   "starType": 3,
+   "stars": 3,
+   "colors": [
+    "Red",
+    "Purple",
+    "Yellow"
+   ]
+  },
+  {
+   "starType": 4,
+   "stars": 1,
+   "colors": [
+    "Purple"
+   ]
+  },
+  {
+   "starType": 4,
+   "stars": 2,
+   "colors": [
+    "Purple",
+    "Yellow"
+   ]
+  },
+  {
+   "starType": 4,
+   "stars": 3,
+   "colors": [
+    "Purple",
+    "Yellow",
+    "Green"
+   ]
+  }
  ]
 }

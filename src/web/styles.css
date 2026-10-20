@@ -60,6 +60,9 @@
   --star-red: #ff6e4f;
   --star-purple: #bb93ff;
   --star: var(--star-yellow);
+  /* A binary or trinary system's other stars, each lighting the background too; none by default. */
+  --star-2: transparent;
+  --star-3: transparent;
 
   --font-text: "Matrixtype", system-ui, sans-serif;
   --font-stencil: "Facade-Ouest", sans-serif-condensed, sans-serif;
@@ -74,6 +77,9 @@
   --radius-control: 10px;
 }
 
+[data-star="Yellow"] {
+  --star: var(--star-yellow);
+}
 [data-star="Green"] {
   --star: var(--star-green);
 }
@@ -102,11 +108,26 @@ body {
   margin: 0;
   min-height: 100vh;
   background-color: var(--night);
-  background-image: radial-gradient(
-    56rem 34rem at 0% -8%,
-    color-mix(in srgb, var(--star) 20%, transparent),
-    transparent 72%
-  );
+  /*
+   * The system's stars. The main one shines from above the top left corner,
+   * the same height above it however long the page is, and each other one,
+   * smaller, from the edge of the first screen in a direction from that
+   * corner: the second 20 degrees below the top edge, at the right edge
+   * (tan 20deg = 0.364), the third 80 degrees below it, at the bottom edge
+   * (1 / tan 80deg = 0.176).
+   */
+  background-image:
+    radial-gradient(56rem 34rem at 0% -17rem, color-mix(in srgb, var(--star) 20%, transparent), transparent 72%),
+    radial-gradient(
+      circle 22rem at 100% min(36.4vw, 100vh),
+      color-mix(in srgb, var(--star-2) 10%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      circle 18rem at min(17.6vh, 100vw) 100vh,
+      color-mix(in srgb, var(--star-3) 9%, transparent),
+      transparent 72%
+    );
   background-repeat: no-repeat;
   color: var(--ink);
   font-family: var(--font-text);
@@ -424,6 +445,38 @@ a:hover {
 }
 .manifest__note + .manifest__note {
   margin-top: 0.25rem;
+}
+
+.star-color {
+  white-space: nowrap;
+}
+
+/* A binary or trinary system's other stars, under the main one's color and smaller. */
+.star-colors__others {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  margin-top: 0.25rem;
+  color: var(--ink-muted);
+}
+.star-colors__others .swatch {
+  width: 0.625em;
+  height: 0.625em;
+  margin-right: 0.375em;
+  vertical-align: 0.04em;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--star) 25%, transparent);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .swatch {

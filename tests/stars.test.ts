@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The star count against tools/captures/star_model.py, the Python model it
-// ports, over the made-up addresses in tests/fixtures/star-vectors.json
-// (written by tools/crosscheck/star_vectors.py). tests/crosscheck.test.ts
-// compares the two over thousands more when CROSSCHECK_FILE is set.
+// The star count and the stars' colors against tools/captures/star_model.py,
+// the Python model they port, over the made-up addresses and the star types in
+// tests/fixtures/star-vectors.json (written by tools/crosscheck/star_vectors.py).
+// tests/crosscheck.test.ts compares the two over thousands more when
+// CROSSCHECK_FILE is set.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -12,6 +13,8 @@ import {
   nebulaSeed,
   parsePortalCode,
   STAR_CHANCES,
+  STAR_COLORS,
+  starColors,
   starCount,
   starsFromNebula,
   universalAddress,
@@ -26,8 +29,16 @@ interface StarVector {
   stars: number;
 }
 
+interface ColorVector {
+  starType: number;
+  stars: number;
+  /** Each star's color, the main one's first. */
+  colors: string[];
+}
+
 const file = JSON.parse(readFileSync(new URL("./fixtures/star-vectors.json", import.meta.url), "utf8")) as {
   vectors: StarVector[];
+  colors: ColorVector[];
 };
 
 /** The bits of a number held in single precision. */
@@ -84,6 +95,29 @@ describe("star count", () => {
     const code = parsePortalCode(v.code);
     for (const planet of [0, 1, 6, 15]) {
       expect(describeSystem(withPlanet(code, planet), v.galaxy).stars).toBe(3);
+    }
+  });
+});
+
+describe("star colors", () => {
+  it("has every star type with one, two and three stars", () => {
+    expect(file.colors.map((v) => [v.starType, v.stars])).toEqual(
+      STAR_COLORS.flatMap((_, starType) => [1, 2, 3].map((stars) => [starType, stars])),
+    );
+  });
+
+  for (const v of file.colors) {
+    it(`${STAR_COLORS[v.starType]} with ${v.stars}: ${v.colors.join(", ")}`, () => {
+      expect(starColors(v.starType, v.stars)).toEqual(v.colors);
+    });
+  }
+
+  it("are the system's star color and the next ones, in the order of the game's star types", () => {
+    expect(STAR_COLORS).toEqual(["Yellow", "Green", "Blue", "Red", "Purple"]);
+    for (const v of file.vectors) {
+      const d = describeSystem(parsePortalCode(v.code), v.galaxy);
+      expect(d.starColors).toEqual(starColors(STAR_COLORS.indexOf(d.starColor), v.stars));
+      expect(d.starColors[0]).toBe(d.starColor);
     }
   });
 });

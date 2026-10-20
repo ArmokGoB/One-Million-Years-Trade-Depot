@@ -3714,15 +3714,18 @@ class ReportTests(CaptureTestCase):
 
     def test_color_variants_for_suns_as_0_13_0_and_0_14_0_recorded_them(self):
         self.game.generate(self.capture)
-        variants = ["SUN_A", "SUN_B", "SUN_C", "SUN_D", "SUN_E"]  # made up
+        variants = ["YellowStar", "GreenStar", "BlueStar", "RedStar", "PurpleStar"]  # as the game names them
         self.append(
             {"t": "suns", "at": 0, "stars": [{"index": 1, "id": "SUN", "variants": variants},
                                              {"index": 2, "id": "ODD_SUN", "behaviour": "0BADF00D"}]},
+            {"t": "suns", "at": 0, "stars": [{"index": 1, "id": "SUN",
+                                             "variants": variants[1:] + variants[:1]}]},  # another order
         )  # fmt: skip
         lines = report.star_guild_lines(report.read_captures([self.capture_file]))
-        self.assertIn("Color variants for suns, from the game's space POI table, recorded 1 time(s):", lines)
-        self.assertIn("  SUN (entry 1): SUN_A, SUN_B, SUN_C, SUN_D, SUN_E (x1)", lines)
+        self.assertIn("Color variants for suns, from the game's space POI table, recorded 2 time(s):", lines)
+        self.assertIn("  SUN (entry 1): YellowStar, GreenStar, BlueStar, RedStar, PurpleStar (x1)", lines)
         self.assertIn("  ODD_SUN (entry 2): behaviour 0BADF00D (x1)", lines)
+        self.assertIn("  named for star_model.py's star colors, in order: 1/2", lines)
 
     def test_giant_planets_by_kind(self):
         enums = {

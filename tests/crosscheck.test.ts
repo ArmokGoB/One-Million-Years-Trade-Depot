@@ -22,6 +22,7 @@ import {
   planetSeeds,
   regionName,
   shipPool,
+  starColors,
   starCount,
   systemAttributes,
   systemName,
@@ -51,6 +52,8 @@ interface Case {
   ships?: Maybe<ShipCase>;
   /** tools/captures/star_model.py's count. */
   stars?: number;
+  /** tools/captures/star_model.py's color of each star, from nms_namegen's star type. */
+  suns?: string[];
   /** tools/captures/guild_model.py's guild. */
   guild?: string;
   /** tools/captures/multitool_model.py's first run: [model file, seed]. */
@@ -109,6 +112,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     let shipPools = 0;
     let squids = 0;
     const starCounts = [0, 0, 0, 0];
+    const sunsSeen = new Set<string>();
     const guilds = new Map<string, number>();
     const standardCounts = new Map<number, number>();
     const partModels = new Set<string>();
@@ -140,6 +144,12 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
         same(c.stars, () => starCount(universalAddress(code, c.galaxy)), `${tag} stars`, mismatches);
         starCounts[c.stars] = (starCounts[c.stars] ?? 0) + 1;
       }
+      if (c.suns !== undefined) {
+        const ua = universalAddress(code, c.galaxy);
+        const sunColors = () => starColors(systemAttributes(code, c.galaxy).star_type, starCount(ua));
+        same(c.suns, sunColors, `${tag} suns`, mismatches);
+        for (const sun of c.suns) sunsSeen.add(sun);
+      }
       if (c.guild !== undefined) {
         same(c.guild, () => guildFor(universalAddress(code, c.galaxy)), `${tag} guild`, mismatches);
         guilds.set(c.guild, (guilds.get(c.guild) ?? 0) + 1);
@@ -162,6 +172,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
     expect(squids, "cases whose exotic is a squid").toBeGreaterThan(0);
     expect(starCounts.slice(1), "cases with one, two and three stars").not.toContain(0);
+    expect([...sunsSeen].sort(), "star colors seen").toEqual(["Blue", "Green", "Purple", "Red", "Yellow"]);
     expect([...guilds.keys()].sort(), "cases with each guild").toEqual(["Explorers", "Mercenaries", "Merchants"]);
     expect([...standardCounts.keys()].sort(), "cases with 2, 3 and 4 standard multi-tools").toEqual([2, 3, 4]);
     expect([...partModels].sort(), "models whose parts were compared").toEqual([...PART_MODELS].sort());

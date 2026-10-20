@@ -9,11 +9,10 @@ import { distinguishingParts, type PartModel } from "./parts";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
 import { CRASH_SITE_MODEL, shipPool, type ShipGroup } from "./ships";
-import { starCount } from "./stars";
+import { STAR_COLORS, starColors, starCount, type StarColor } from "./stars";
 import { planetSeeds, systemAttributesDetailed, systemName, type SystemAttributes } from "./system";
 import { hex64 } from "./u64";
 
-export const STAR_COLORS = ["Yellow", "Green", "Blue", "Red", "Purple"] as const;
 export const ECONOMIES = [
   "",
   "Trading",
@@ -100,9 +99,11 @@ export interface SystemDescription {
   systemIndex: number;
   name: string;
   region: string;
-  starColor: (typeof STAR_COLORS)[number];
+  starColor: StarColor;
   /** How many stars the system has: 1, or 2 in a binary system and 3 in a trinary one. */
   stars: 1 | 2 | 3;
+  /** The color of each of its stars, the main one's first (see starColors). */
+  starColors: StarColor[];
   faction: string;
   economy: string;
   wealth: string;
@@ -174,6 +175,7 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
   else faction = race;
 
   const ua = universalAddress(systemCode, galaxy);
+  const stars = starCount(ua);
   const bodies: BodyInfo[] = seeds.planet_seeds.map((seed, i) => ({
     index: i + 1,
     seed: seedText(seed),
@@ -189,7 +191,8 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     name: systemName(systemCode, galaxy),
     region: regionName(systemCode, galaxy),
     starColor: STAR_COLORS[a.star_type] ?? "Yellow",
-    stars: starCount(ua),
+    stars,
+    starColors: starColors(a.star_type, stars),
     faction,
     economy: a.uncharted ? "None" : ECONOMIES[a.economy_type] ?? "Unknown",
     wealth: a.uncharted ? "None" : TIERS[a.wealth] ?? "Unknown",
