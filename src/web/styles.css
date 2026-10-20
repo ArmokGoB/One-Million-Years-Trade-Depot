@@ -51,8 +51,9 @@
   --ink: #e0b0b2;
   --ink-muted: lightcoral;
   --error: magenta;
-  /* The edge of a text field: at least 3:1 against the page, so the fields can be found. */
-  --field-edge: color-mix(in srgb, var(--ink-muted) 60%, var(--night));
+  /* The edge of a text field: at least 3:1 against the page, its stars' light
+   * included, so the fields can be found. */
+  --field-edge: color-mix(in srgb, var(--ink-muted) 65%, var(--night));
 
   --star-yellow: #f4c542;
   --star-green: #63d690;
@@ -109,15 +110,23 @@ body {
   min-height: 100vh;
   background-color: var(--night);
   /*
-   * The system's stars. The main one shines from above the top left corner,
-   * the same height above it however long the page is, and each other one,
-   * smaller, from the edge of the first screen in a direction from that
-   * corner: the second 20 degrees below the top edge, at the right edge
-   * (tan 20deg = 0.364), the third 80 degrees below it, at the bottom edge
-   * (1 / tan 80deg = 0.176).
+   * The system's stars. The main one, the largest and brightest, shines from
+   * the top left corner, its light falling off as (1 - d)^2, d the fraction of
+   * the way to its edge; on phones it narrows with the screen, so the second
+   * star's light still shows. Each other one, smaller and dimmer, shines from
+   * the edge of the first screen in a direction from that corner: the second
+   * 20 degrees below the top edge, at the right edge (tan 20deg = 0.364), the
+   * third 80 degrees below it, at the bottom edge (1 / tan 80deg = 0.176).
    */
   background-image:
-    radial-gradient(56rem 34rem at 0% -17rem, color-mix(in srgb, var(--star) 20%, transparent), transparent 72%),
+    radial-gradient(
+      min(72rem, 160vw) min(44rem, 98vw) at 0 0,
+      color-mix(in srgb, var(--star) 34%, transparent),
+      color-mix(in srgb, var(--star) 19%, transparent) 25%,
+      color-mix(in srgb, var(--star) 8.5%, transparent) 50%,
+      color-mix(in srgb, var(--star) 2%, transparent) 75%,
+      transparent
+    ),
     radial-gradient(
       circle 22rem at 100% min(36.4vw, 100vh),
       color-mix(in srgb, var(--star-2) 10%, transparent),
