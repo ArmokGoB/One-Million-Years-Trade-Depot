@@ -10,10 +10,11 @@ window, the ends of the range). Each case also carries the ship pool that
 tools/captures/ship_model.py predicts, which builds on nms_namegen, with
 whether its exotic is a squid, and the start, exotic and crash-site seed of
 every other arrangement of a two-moon planet's moons; how many stars
-tools/captures/star_model.py gives the system; the guild and the first run
-of multi-tools that guild_model.py and multitool_model.py give it; and the
-parts parts_model.py picks for one model with the system's first ship seed,
-each model in turn, case by case.
+tools/captures/star_model.py gives the system, and the color of each, from
+nms_namegen's star type; the guild and the first run of multi-tools that
+guild_model.py and multitool_model.py give it; and the parts parts_model.py
+picks for one model with the system's first ship seed, each model in turn,
+case by case.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -115,6 +116,9 @@ def main() -> int:
             "guild": guild_model.guild(ua),
             "multitools": [[name, f"{seed:016X}"] for name, seed in multitool_model.first_run(ua)],
         }
+        if isinstance(rec["sysattr"], dict):
+            # the color of each star, from nms_namegen's star type
+            rec["suns"] = star_model.star_colors(rec["sysattr"]["star_type"], rec["stars"])
         if isinstance(rec["ships"], dict):
             # the parts of one model, in turn, with the system's first ship seed
             model = models[case % len(models)]

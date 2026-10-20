@@ -41,7 +41,7 @@ import multitool_model  # noqa: E402
 import parts_model  # noqa: E402
 import ship_model  # noqa: E402  (nms_namegen is only needed for its bodies(), which --namegen uses)
 from star_model import float32, nebula_seed, star_count  # noqa: E402, F401
-from star_model import BINARY_STAR_CHANCE, TERNARY_STAR_CHANCE  # noqa: E402
+from star_model import BINARY_STAR_CHANCE, STAR_COLORS, TERNARY_STAR_CHANCE  # noqa: E402
 
 SUPPORTED_FORMATS = {1, 2}
 ZERO_SEED = "0" * 16
@@ -895,6 +895,11 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
         times = len(captures.suns)
         lines += ["", f"Color variants for suns, from the game's space POI table, recorded {times} time(s):"]
         lines += [f"  {said} (x{n})" for said, n in variants.items()] or ["  no Star entries in it"]
+        # star_model.py gives each sun its color in this order, from the system's star type.
+        order = [f"{color}Star" for color in STAR_COLORS]
+        named = [star.get("variants") for suns in captures.suns for star in suns.get("stars") or []]
+        named = [names for names in named if names]
+        lines.append(f"  named for star_model.py's star colors, in order: {named.count(order)}/{len(named)}")
     if captures.guilds:
         by_region: dict[tuple[int, int], list[dict]] = {}
         for entry, _ in captures.guilds:

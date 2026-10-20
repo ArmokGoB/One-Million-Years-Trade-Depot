@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Writes tests/fixtures/star-vectors.json: star counts for a few addresses.
+"""Writes tests/fixtures/star-vectors.json: star counts for a few addresses, and star colors.
 
 tools/captures/star_model.py works out how many stars a system has from its
-address; tests/stars.test.ts replays these vectors through the TypeScript
-port. The addresses are made up, picked by a fixed search: four systems
+address, and the color of each from the system's star type; tests/stars.test.ts
+replays these vectors through the TypeScript port. The addresses are made up, picked by a fixed search: four systems
 with each count, from several galaxies, purple systems and planet digits
 among them. Each vector holds the system's NebulaSeed as the bits of its
-single-precision value, so the port has to match it exactly. CI regenerates
-the file and fails if it changed.
+single-precision value, so the port has to match it exactly. The colors are
+those of each star type's systems with one, two and three stars. CI
+regenerates the file and fails if it changed.
 
 Usage:
     python3 tools/crosscheck/star_vectors.py
@@ -62,15 +63,22 @@ def main() -> int:
                 }
             )
 
+    colors = [
+        {"starType": star_type, "stars": count, "colors": star_model.star_colors(star_type, count)}
+        for star_type in range(len(star_model.STAR_COLORS))
+        for count in (1, 2, 3)
+    ]
+
     payload = {
         "_source": "tools/captures/star_model.py over made-up addresses, written by tools/crosscheck/star_vectors.py.",
         "vectors": vectors,
+        "colors": colors,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1)
         fh.write("\n")
-    print(f"wrote {args.out} ({len(vectors)} vectors)")
+    print(f"wrote {args.out} ({len(vectors)} vectors, {len(colors)} star colors)")
     return 0
 
 

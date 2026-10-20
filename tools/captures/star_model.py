@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""How many stars a system has, from its address alone.
+"""How many stars a system has, and what color each is, from its address alone.
 
 The game counts a system's stars from its NebulaSeed, a number between 0
 and 1: a second star when it's above 1 minus the binary star chance, and a
@@ -13,6 +13,16 @@ every capture, and src/core/stars.ts is the site's port of this file.
 In two game modes, Seasonal (expeditions) and Unspecified, with a setting
 on, the game also gives three stars to one system whose address it holds,
 as capture mods 0.11.0 to 0.14.0 found in its code; this covers the normal game.
+
+Each star has a color of its own. In the game's code each sun is a copy of
+the system's one space point of interest of type Star, numbered from 0, the
+main sun; that point's entry in the game's space POI table names five color
+variants for suns, in the order of the game's star types, which capture
+mods 0.13.0 and 0.14.0 recorded: YellowStar, GreenStar, BlueStar, RedStar
+and PurpleStar. Sun number k is drawn with the variant k places after the
+system's star type, going round, so the main sun has the system's star
+color. A binary and a trinary system's suns had in the game the colors this
+gives them.
 """
 
 from __future__ import annotations
@@ -50,3 +60,14 @@ def star_count(
 def stars(ua: int) -> int:
     """How many stars the system at universal address ``ua`` has, with the game's chances."""
     return star_count(nebula_seed(ua))
+
+
+# The game's star colors, in the order of its star types (cGcGalaxyStarTypes) and of its color variants for
+# suns, each of which is named for one of them: YellowStar and so on.
+STAR_COLORS = ("Yellow", "Green", "Blue", "Red", "Purple")
+
+
+def star_colors(star_type: int, count: int) -> list[str]:
+    """The color of each of the ``count`` stars of a system whose star type is ``star_type`` (its place in
+    STAR_COLORS), the main star first: each the color after the one before, going round."""
+    return [STAR_COLORS[(star_type + k) % len(STAR_COLORS)] for k in range(count)]

@@ -74,6 +74,9 @@
   --radius-control: 10px;
 }
 
+[data-star="Yellow"] {
+  --star: var(--star-yellow);
+}
 [data-star="Green"] {
   --star: var(--star-green);
 }
@@ -424,6 +427,10 @@ a:hover {
 }
 .manifest__note + .manifest__note {
   margin-top: 0.25rem;
+}
+
+.star-color {
+  white-space: nowrap;
 }
 
 .swatch {

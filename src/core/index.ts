@@ -38,7 +38,15 @@ export {
   type ShipGroup,
   type ShipPool,
 } from "./ships";
-export { nebulaSeed, STAR_CHANCES, starCount, starsFromNebula } from "./stars";
+export {
+  nebulaSeed,
+  STAR_CHANCES,
+  STAR_COLORS,
+  starColors,
+  starCount,
+  starsFromNebula,
+  type StarColor,
+} from "./stars";
 export {
   planetSeeds,
   systemAttributes,

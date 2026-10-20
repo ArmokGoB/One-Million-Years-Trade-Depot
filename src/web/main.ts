@@ -17,6 +17,7 @@ import {
   type PartsInfo,
   type ShipGroup,
   type ShipsInfo,
+  type StarColor,
   type SystemDescription,
 } from "../core";
 
@@ -87,11 +88,17 @@ function clearError(): void {
 /** What a system with more than one star is called, by how many. */
 const MULTIPLE_STARS: Record<number, string> = { 2: "Binary", 3: "Trinary" };
 
-/** Only the system's star color is known, so a system with more than one star says so of the others. */
-const OTHER_STARS: Record<number, string> = {
-  2: "The other star's color isn't worked out yet.",
-  3: "The other two stars' colors aren't worked out yet.",
-};
+/** A star's color, in words after a swatch of it. */
+function starColor(color: StarColor): HTMLElement {
+  const swatch = el("span", "swatch");
+  swatch.dataset.star = color;
+  return el("span", "star-color", swatch, color);
+}
+
+/** Items as running text: "a", "a and b", "a, b and c". */
+function inWords(items: readonly Node[]): (Node | string)[] {
+  return items.flatMap((item, i) => (i === 0 ? [item] : [i === items.length - 1 ? " and " : ", ", item]));
+}
 
 /** The order and headings of the full ship list. */
 const SHIP_GROUPS: readonly (readonly [ShipGroup, string])[] = [
@@ -248,8 +255,9 @@ function render(d: SystemDescription): void {
     manifest.append(el("dt", undefined, term), dd);
   };
 
-  row("Star color", el("span", undefined, el("span", "swatch"), d.starColor));
-  row("Stars", String(d.stars), OTHER_STARS[d.stars]);
+  row("Star color", starColor(d.starColor));
+  const others = d.stars > 1 ? [": ", ...inWords(d.starColors.map(starColor))] : [];
+  row("Stars", el("span", undefined, String(d.stars), ...others));
   row("Faction", d.faction);
   if (!d.uncharted) {
     row("Economy", d.economy);
