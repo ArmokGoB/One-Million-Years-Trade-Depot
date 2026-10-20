@@ -12,8 +12,8 @@ random-number stream seeded by the system seed. Given a path to nms_namegen,
 it also measures how often the generator behind the site agrees with the game.
 
 Usage:
-    python3 tools/captures/report.py mods/captures/systems.jsonl
-    python3 tools/captures/report.py --namegen ../nms_namegen mods/captures/systems.jsonl
+    python3 tools/captures/report.py mods/captures/*.jsonl
+    python3 tools/captures/report.py --namegen ../nms_namegen mods/captures/*.jsonl
 
 Only the standard library is needed, plus numpy for --namegen.
 """
@@ -1654,7 +1654,7 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "captures", nargs="+", type=Path, help="systems.jsonl files written by the capture mod"
+        "captures", nargs="+", type=Path, help="capture files written by the capture mod"
     )
     parser.add_argument("--namegen", type=Path, help="path to a clone of nms_namegen, to score the generator")
     parser.add_argument("--examples", type=int, default=5, help="mismatches to list per field (default 5)")

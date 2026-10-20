@@ -2,6 +2,13 @@
 
 What changed in each version of [`system_capture.py`](system_capture.py), newest first, and how it did when it ran in the game. Dates are when the version was written.
 
+## 0.14.0 (2026-10-20)
+
+- Each session's lines go to a file of their own in `captures\`, named for your Steam ID and when the file was made, in UTC, as the project keeps captures: `<Steam ID>_<YYYY_MM_DD_HH_MM>.jsonl`. The Steam ID is the SteamID64 of the account Steam says is logged in, or else of the game's newest save folder; failing both, a random identifier kept in `captures\identifier.txt`. Earlier versions wrote every session to `captures\systems.jsonl`. The log names the folder, not the file.
+- `paint` lines for multi-tools hold the palettes the game picked their colors from (`palettes`, the places of each palette's five colors), since 0.13.0's showed they aren't made from the multi-tool's seed, as a ship's are. Every `paint` line says if the game was told to use its older palettes (`legacy`) or to paint the model with one color (`useColour`).
+
+Not run in the game.
+
 ## 0.13.0 (2026-10-19)
 
 - Records the paint the game picks for the ships and multi-tools it makes (`paint` lines), the NPCs' as well as yours: the texture option and color for each layer, the seed it painted with and the model's parts. NMS.py doesn't name the function that picks it, so the mod finds it by the pattern of its first bytes. Only the paint of the ships of a recorded system's list, of the multi-tools of a system's set or on offer, and of yours is written; the rest, such as other players', waits in memory up to two minutes for a line that names its seed, and is then dropped. `RECORD_PAINT` turns this off.
@@ -9,7 +16,7 @@ What changed in each version of [`system_capture.py`](system_capture.py), newest
 - System records no longer hold the bytes of the solar system that NMS.py doesn't name, nor of the sky the game draws (`gap`, `rawTail`, `rawSky`), which 0.12.0 recorded in case the colors of a system's other stars were kept there.
 - The session header says where the mod reads the paint (`paintLayout`) and the space POI table (`poiLayout`).
 
-Not run in the game.
+In the game: ran on Steam build 25732212 with NMS.py 181442.0. All of its hooks attached, the one on the function it finds by pattern included. It recorded 13 systems with their ship lists and stars, the multi-tools of each but the one the save loaded into, and the paint of 1,917 models: 1,780 for the systems' ship lists, 108 multi-tools and 29 of yours. Every one of the 364 starships took its colors from the palettes the game makes from the ship's seed, as it makes a system's colors from the system's; 1,000 lines of freighters, frigates and other large models, such as their turrets, took theirs from their system's palettes; the multi-tools from neither. The color variants for suns are YellowStar, GreenStar, BlueStar, RedStar and PurpleStar, in the order of the game's star types.
 
 ## 0.12.0 (2026-10-18)
 

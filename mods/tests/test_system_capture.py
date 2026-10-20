@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import array
 import base64
+import calendar
 import contextlib
 import ctypes
 import importlib.util
@@ -34,6 +35,7 @@ import harness
 
 mod = harness.load_mod()
 nms, nmse, basic = mod.nms, mod.nmse, mod.basic
+NEW_CAPTURE_FILE = mod.new_capture_file  # CaptureTestCase replaces it; CaptureFileTests use it
 
 from pymhf.core._types import DetourTime  # noqa: E402  (importable only after harness.load_mod)
 from pymhf.extensions.ctypes import c_char_p64  # noqa: E402
@@ -296,7 +298,9 @@ class CaptureTestCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.game = Game()
         self._patch("CAPTURE_DIR", Path(self._tmp.name) / "captures")
-        self._patch("CAPTURE_FILE", Path(self._tmp.name) / "captures" / "systems.jsonl")
+        # Where the session's lines go: the tests name the file, as new_capture_file does from your Steam ID.
+        self.capture_file = Path(self._tmp.name) / "captures" / "systems.jsonl"
+        self._patch("new_capture_file", lambda now=None: (self.capture_file, "steam"))
         self._patch("read_memory", self.game.memory.read)
         self._patch("gameData", FakeGameData(self.game))
         self._patch("system_display_name", lambda address: self.game.display_name)
@@ -310,9 +314,9 @@ class CaptureTestCase(unittest.TestCase):
         self.addCleanup(setattr, mod, name, old)
 
     def lines(self) -> list[dict]:
-        if not mod.CAPTURE_FILE.exists():
+        if not self.capture_file.exists():
             return []
-        return [json.loads(line) for line in mod.CAPTURE_FILE.read_text(encoding="utf-8").splitlines()]
+        return [json.loads(line) for line in self.capture_file.read_text(encoding="utf-8").splitlines()]
 
     def poll(self):
         self.capture._next_poll = 0.0
@@ -602,7 +606,7 @@ class GenerateTests(CaptureTestCase):
         blocker = Path(self._tmp.name) / "blocked"
         blocker.write_text("not a folder")
         self._patch("CAPTURE_DIR", blocker)
-        self._patch("CAPTURE_FILE", blocker / "systems.jsonl")
+        self.capture_file = blocker / "systems.jsonl"
         with self.assertLogs("TradeDepotCapture", "WARNING"):
             self.game.generate(self.capture)
         self.assertEqual(self.capture.status, "Couldn't write the capture file. See the log.")
@@ -664,7 +668,7 @@ class TraceTests(CaptureTestCase):
         picks = [report.seeded_state(0x1234), report.seeded_state(UA), states[211], states[211], states[700]]
         picks += [states[700], states[880], states[880], states[1000], states[1500]]
         self.game.generate_traced(self.capture, picks)
-        lines = report.trace_lines(report.read_captures([mod.CAPTURE_FILE]))
+        lines = report.trace_lines(report.read_captures([self.capture_file]))
         self.assertIn(
             "generate>- basics>0 basics<212 positions>212 positions<701 biomes>701 biomes<881 "
             "query>881 query<1001 generate<1501",
@@ -1004,7 +1008,7 @@ class ModelTests(ModelHelpers, CaptureTestCase):
         self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"])
         self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])
         self.models()
-        text = "\n".join(report.model_lines(report.read_captures([mod.CAPTURE_FILE])))
+        text = "\n".join(report.model_lines(report.read_captures([self.capture_file])))
         self.assertIn("Ship models recorded with their parts: 3 (FIGHTER_PROC 2, S-CLASS_PROC 1)", text)
         self.assertIn("by ship type: Fighter 1, Exotic 1, Sentinel crash-site ship 1", text)
         self.assertIn("exotics: 1", text)
@@ -1024,7 +1028,7 @@ class ModelTests(ModelHelpers, CaptureTestCase):
         self.build(EXOTIC_MODEL, 0x8000000000000001, [exotic[0], "_FROM_ITS_SCENE_A", *exotic[1:]])
         self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])  # not what the tables pick
         self.models()
-        lines = report.part_model_lines(report.read_captures([mod.CAPTURE_FILE]))
+        lines = report.part_model_lines(report.read_captures([self.capture_file]))
         self.assertIn("  FIGHTER_PROC: 1 of 2 agree", lines)
         self.assertIn(
             "  S-CLASS_PROC: 1 of 1 agree, 1 of them with more parts, of scenes the tables have no descriptor for",
@@ -1506,7 +1510,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertEqual(len(raw), mod.LAYOUT.item_size)
         for word in (b"zed", b"quorra"):
             self.assertNotIn(word, raw.lower())
-        self.assertNotIn("quorra", mod.CAPTURE_FILE.read_text(encoding="utf-8").lower())
+        self.assertNotIn("quorra", self.capture_file.read_text(encoding="utf-8").lower())
 
     def test_the_name_pattern_covers_the_name_with_title_and_its_words(self):
         pattern = mod.name_pattern(PLAYER)
@@ -1563,7 +1567,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             "Couldn't read your player name (empty); until the mod can, items are recorded", logs.output[0]
         )
         self.assertIn("Couldn't read your player name (not text)", logs.output[1])
-        self.assertNotIn("someone", mod.CAPTURE_FILE.read_text(encoding="utf-8").lower())
+        self.assertNotIn("someone", self.capture_file.read_text(encoding="utf-8").lower())
         self.assertNotIn("garbage", "\n".join(logs.output), "the log never says what it read")
 
     def test_an_offer_is_paired_with_its_model_however_long_ago_the_game_built_it(self):
@@ -1590,7 +1594,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.look(self.item(handle=0x500))
         (record,) = self.items()
         self.assertNotIn("model", record)
-        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        recorded = self.capture_file.read_text(encoding="utf-8")
         self.assertNotIn(f"{OWN_TOOL_SEED:016X}", recorded)
         self.assertNotIn("_GUN_C", recorded)
         self.assertEqual(self.sounds, [])
@@ -1623,7 +1627,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         listed, own = self.items()
         self.assertEqual((listed["model"]["seed"], listed["tools"]), ("1111111111111111", []))
         self.assertEqual((own.get("model"), own["tools"]), (None, []))
-        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        recorded = self.capture_file.read_text(encoding="utf-8")
         self.assertNotIn(f"{OWN_SHIP_SEED:016X}", recorded)
         self.assertNotIn("_COCKPIT_B", recorded)
 
@@ -1649,7 +1653,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             self.build(MULTITOOL_MODEL, TOOL_SEED, ["_GUN_A"], handle=TOOL_HANDLE)
             self.look(self.item(handle=TOOL_HANDLE))
         self.items()
-        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        recorded = self.capture_file.read_text(encoding="utf-8")
         self.assertIn("7A11C0DE5EED0001", recorded)
         for where in (recorded, "\n".join(logs.output)):
             self.assertNotIn(f"{OWN_TOOL_SEED:016X}", where)
@@ -1694,7 +1698,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertEqual(
             sorted(line["handle"] for line in self.built()), [50, OWN_TOOL_HANDLE, OWN_TOOL_HANDLE + 1]
         )
-        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        recorded = self.capture_file.read_text(encoding="utf-8")
         for secret in (f"{OWN_TOOL_SEED:016X}", f"{OWN_TOOL_SEED + 1:016X}", "_GUN_C", "_GUN_D", "_HEAD_A"):
             self.assertNotIn(secret, recorded)
         self.assertEqual(self.capture._generating, {}, "nothing left open")
@@ -1725,12 +1729,12 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.assertEqual(
             [line["handle"] for line in self.built()], [OWN_TOOL_HANDLE] + [handle for *_, handle in RUN]
         )
-        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", self.capture_file.read_text(encoding="utf-8"))
         self.assertEqual({line["thread"] for line in self.lines() if line.get("via") == "gen"}, {1})
         self.assertIn(
             "  sets started by the run of multi-tools built just before the generation: 1 (5 multi-tools, "
             "0.5 to 0.5 s before it)",
-            report.pool_lines(report.read_captures([mod.CAPTURE_FILE])),
+            report.pool_lines(report.read_captures([self.capture_file])),
         )
 
     def test_a_model_built_twice_in_the_run_is_listed_once(self):
@@ -1749,7 +1753,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             pass
         self.assertEqual(self.pools(), [])
         self.assertEqual(self.capture._prelude, [], "nothing kept for the next generation")
-        self.assertNotIn(f"{RUN[0][1]:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        self.assertNotIn(f"{RUN[0][1]:016X}", self.capture_file.read_text(encoding="utf-8"))
 
     def test_a_run_without_the_royal_sentinel_and_atlas_files_starts_no_set(self):
         self.warp()
@@ -1757,7 +1761,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         with self.generation():
             pass
         self.assertEqual(self.pools(), [])
-        self.assertNotIn(f"{RUN[0][1]:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        self.assertNotIn(f"{RUN[0][1]:016X}", self.capture_file.read_text(encoding="utf-8"))
 
     def test_a_pause_ends_the_run(self):
         self.warp()
@@ -1768,7 +1772,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             pass
         (pool,) = self.pools()
         self.assertEqual([tool["handle"] for tool in pool["tools"]], [handle for *_, handle in RUN])
-        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", self.capture_file.read_text(encoding="utf-8"))
         # A run that ends too long before the generation starts none.
         self.game.set_address(OTHER_UA)
         self.build_run()
@@ -1814,7 +1818,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             pool["elsewhere"], 1, "counted, so a capture shows if the game builds them elsewhere"
         )
         self.assertEqual([line["handle"] for line in self.built()], [OWN_TOOL_HANDLE])
-        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", mod.CAPTURE_FILE.read_text(encoding="utf-8"))
+        self.assertNotIn(f"{OWN_TOOL_SEED:016X}", self.capture_file.read_text(encoding="utf-8"))
         # Built only on another thread: noted for the system, with nothing taken for its own.
         self.game.set_address(OTHER_UA)
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
@@ -1834,7 +1838,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         )
         self.assertEqual(self.sounds.count("multi-tool"), 1, "no tone for the second")
         self.assertEqual(self.capture.multitools, "1 in 1 systems' sets; 0 on offer (items recorded: 0)")
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         self.assertIn("1 system multi-tool set(s)", report.summary_lines(captures)[0])
         self.assertIn(
             "  generations during which other threads built multi-tools: 2 (2 multi-tools; 1 of them with none "
@@ -1959,7 +1963,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.look(self.item(handle=32))
         (record,) = self.items()
         self.assertEqual(record["resource"], {"slot": 31, "name": FIGHTER_MODEL, "type": 1, "refs": 1})
-        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        recorded = self.capture_file.read_text(encoding="utf-8")
         self.assertNotIn(f"{OWN_SHIP_SEED:016X}", recorded)
         self.assertNotIn("_COCKPIT_B", recorded)
 
@@ -2007,7 +2011,7 @@ class ToolTests(ModelHelpers, CaptureTestCase):
                 {"t": "built", "name": creature, "type": 1, "parts": 1, "handle": 50, **place},
             ],
         )
-        recorded = mod.CAPTURE_FILE.read_text(encoding="utf-8")
+        recorded = self.capture_file.read_text(encoding="utf-8")
         for secret in ("_GUN_C", "_HEAD_A", f"{OWN_TOOL_SEED + 40:016X}", "5555555555555555", "_COCKPIT_B"):
             self.assertNotIn(secret, recorded)
 
@@ -2214,9 +2218,9 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         )  # the game hands the royal's handle to something else, as far as the mod can tell
         self.look(self.item(item_type=2, handle=SET[2][3]))
         self.items()
-        with mod.CAPTURE_FILE.open("a", encoding="utf-8") as stream:  # the same set, recorded another time
+        with self.capture_file.open("a", encoding="utf-8") as stream:  # the same set, recorded another time
             stream.write(json.dumps(self.pools()[0]) + "\n")
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         self.assertIn("2 system multi-tool set(s), 2 offered item(s)", report.summary_lines(captures)[0])
         text = "\n".join(report.pool_lines(captures))
         self.assertIn(
@@ -2252,11 +2256,11 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         self.look(item)
         self.look(self.item(item_type=5, handle=9))
         self.items()
-        with mod.CAPTURE_FILE.open("a", encoding="utf-8") as stream:  # as 0.8.1 wrote them
+        with self.capture_file.open("a", encoding="utf-8") as stream:  # as 0.8.1 wrote them
             old = {"t": "item", "at": 1, "system": f"{UA:016X}", "where": 2, "planet": 1, "itemType": 1}
             old.update(state=0, free=0, gift=0, reward=0, tools=[], raw="eJwDAAAAAAE=")
             stream.write(json.dumps(old) + "\n")
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         self.assertIn("3 offered item(s), 1 model build note(s)", report.summary_lines(captures)[0])
         text = "\n".join(report.item_lines(captures))
         offered = "Items the game offered: 3 record(s), 1 with a multi-tool's model"
@@ -2646,7 +2650,7 @@ class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         )
         self.assertIn(f"The game loads textures with a descriptor, as {texture}: they're recorded.", logs.output[0])
         self.assertEqual(self.records("model"), [])
-        lines = report.color_lines(report.read_captures([mod.CAPTURE_FILE]))
+        lines = report.color_lines(report.read_captures([self.capture_file]))
         self.assertIn(
             "Textures of ships and multi-tools loaded with a descriptor: 2 (PRIMARY 2); with the seed of a "
             "system's ship: 1, of a system's multi-tool: 0",
@@ -2681,7 +2685,7 @@ class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.build(FIGHTER_MODEL, MY_SHIP_SEED, [*fighter, "TEXTURE_TEMP"])
         self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_PICKED_BY_HAND"])  # built in the Starship Fabricator, say
         self.poll()
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         summary = report.summary_lines(captures)[0]
         self.assertIn("2 customisation(s), 1 record(s) of your ships, 2 model(s) of yours", summary)
         lines = report.color_lines(captures)
@@ -2729,16 +2733,20 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.game.generate(self.capture)  # the mod reads the system's ship list
 
     def paint(
-        self, name, seed, samplers=(), parts=(), model_seed=None, keep=False, options=None, **descriptor
-    ):
+        self, name, seed, samplers=(), parts=(), model_seed=None, keep=False, options=None, places=None,
+        legacy=False, colour=None, **descriptor,
+    ):  # fmt: skip
         """Call the PickPaint detour the way pyMHF does once the game has picked the paint of a model it's
         making: with the part of the model's task that keeps what's picked, in a task laid out as the game's
         code lays it out (see PAINT_TASK_PART), and the seed it picked with. The task's descriptor holds
-        ``model_seed`` if given, else ``seed``."""
+        ``model_seed`` if given, else ``seed``. The palettes it was handed hold, for each palette, the places
+        ``places`` gives (by default, palette p's colors at p to p + 4, wrapping at 64); ``colour``, if
+        given, is the color it was told to paint with."""
         task = self.keep((ctypes.c_ubyte * (mod.PAINT_TASK_PART + 0x40))())
         ctypes.memmove(task + mod.PAINT_TASK_FILE, name.encode(), len(name))
         made = self.descriptor(seed if model_seed is None else model_seed, list(parts), **descriptor).contents
         ctypes.memmove(task + mod.PAINT_TASK_DESCRIPTOR, ctypes.addressof(made), ctypes.sizeof(made))
+        ctypes.c_ubyte.from_address(task + mod.PAINT_TASK_LEGACY).value = int(legacy)
         if options is None:
             options = self.keep((ctypes.c_ubyte * ctypes.sizeof(nmse.cTkProceduralTextureChosenOptionList))())
             self.options_list(options, list(samplers))
@@ -2746,7 +2754,14 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         ctypes.c_uint64.from_address(part + mod.PAINT_PART_OPTIONS).value = options
         picked = self.game._alloc(basic.GcSeed)
         picked.Seed, picked.UseSeedValue = seed, 1
-        args = (part, 0, ctypes.addressof(picked), 0, 0, 0, False, keep)
+        palettes = self.keep((ctypes.c_ubyte * (mod.PALETTE_COUNT * mod.PALETTE_ENTRY))())
+        for p in range(mod.PALETTE_COUNT):
+            row = places[p] if places is not None else [(p + k) % 64 for k in range(5)]
+            ctypes.memmove(
+                palettes + p * mod.PALETTE_ENTRY + mod.PALETTE_PLACES, struct.pack("<5i", *row), 20
+            )
+        colour_at = self.keep((ctypes.c_float * 4)(*(colour or (0.0, 0.0, 0.0, 0.0))))
+        args = (part, 0, ctypes.addressof(picked), palettes, 0, colour_at, colour is not None, keep)
         self.assertIsNone(self.capture.after_pick_paint(*args), "detours must return None")
 
     def test_the_paint_of_a_systems_ship_is_recorded_once(self):
@@ -2852,6 +2867,27 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.assertEqual(capture.paint, "Off (RECORD_PAINT is False)")
         self.assertIsNone(module.session_header()["paintLayout"])
 
+    def test_a_multi_tools_paint_holds_the_palettes_it_was_picked_from(self):
+        self.capture._tools_heard.add("00000000ABCDEF01")
+        places = [[(3 * p + k) % 64 for k in range(5)] for p in range(mod.PALETTE_COUNT)]
+        self.paint(MULTITOOL_MODEL, 0xABCDEF01, [[OPTION]], places=places, legacy=True)
+        self.paint(FIGHTER_MODEL, 0x1111111111111111, [[OPTION]], colour=(0.25, 0.5, 0.75, 1.0))
+        tool, ship = self.records("paint")
+        self.assertEqual((tool["palettes"], tool["legacy"]), (places, 1))
+        self.assertNotIn("useColour", tool)
+        self.assertNotIn("palettes", ship, "a ship's colors come from the palettes made from its seed")
+        self.assertNotIn("legacy", ship)
+        self.assertEqual(ship["useColour"], [0.25, 0.5, 0.75, 1.0])
+
+    def test_palettes_that_dont_hold_places_in_palettes_are_noted(self):
+        self.capture._tools_heard.add("00000000ABCDEF01")
+        self.paint(MULTITOOL_MODEL, 0xABCDEF01, places=[[99] * 5] * mod.PALETTE_COUNT)
+        (tool,) = self.records("paint")
+        self.assertNotIn("palettes", tool)
+        self.assertEqual(
+            tool["errors"], ["the palettes the paint was picked from don't hold places in palettes"]
+        )
+
     def test_session_header_says_where_the_mod_reads_paint_and_the_poi_table(self):
         header = self.lines()[0]
         self.assertEqual(
@@ -2878,7 +2914,7 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         stripes = (b"BASE", b"PRIMARY", b"STRIPES", PAINT, ALT1, 3, (0.5, 0.5, 0.5, 1.0), False)
         self.paint(FIGHTER_MODEL, 0x1111111111111111, [[stripes]], parts=["_COCKPIT_A"])
         self.poll()
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         self.assertIn("3 paint record(s)", report.summary_lines(captures)[0])
         lines = report.color_lines(captures)
         self.assertIn(
@@ -2900,6 +2936,76 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
             f"  FIGHTER_PROC {MY_SHIP_SEED:016X}, yours (ship 2): 1 texture options in 1 samplers, kept",
             lines,
         )
+
+
+class CaptureFileTests(CaptureTestCase):
+    """Each session's lines go to a file of its own, named for whose captures they are and when it was
+    made."""
+
+    def setUp(self):
+        super().setUp()
+        self.appdata = Path(self._tmp.name) / "AppData" / "Roaming"
+        find_saves = mod.save_folder_steam_id
+        self._patch("steam_account", lambda: None)
+        self._patch("save_folder_steam_id", lambda appdata=None: find_saves(str(self.appdata)))
+
+    def saves(self, *folders: tuple[str, int]) -> None:
+        """The game's save folders, each (name, when it last changed)."""
+        for name, changed in folders:
+            folder = self.appdata / mod.SAVE_FOLDERS / name
+            folder.mkdir(parents=True)
+            os.utime(folder, (changed, changed))
+
+    def test_the_file_is_named_for_the_steam_user_logged_in_and_the_time_in_utc(self):
+        self._patch("steam_account", lambda: 42)
+        self.saves(("st_11111111111111111", 1_800_000_000))
+        when = calendar.timegm((2026, 10, 20, 0, 55, 30))
+        self.assertEqual(
+            NEW_CAPTURE_FILE(now=when),
+            (mod.CAPTURE_DIR / f"{mod.STEAM_ID_BASE + 42}_2026_10_20_00_55.jsonl", "steam"),
+        )
+
+    def test_without_steam_the_newest_save_folder_names_the_file(self):
+        self.saves(
+            ("st_11111111111111111", 1_800_000_000),
+            ("st_22222222222222222", 1_800_000_500),
+            ("DefaultUser", 1_800_000_900),  # not a Steam account's
+        )
+        self.assertEqual(mod.capture_identifier(), ("22222222222222222", "save"))
+
+    def test_without_a_steam_id_a_random_identifier_is_kept_for_the_computer(self):
+        identifier, source = mod.capture_identifier()
+        self.assertEqual(source, "local")
+        self.assertRegex(identifier, "^[0-9a-f]{32}$")
+        self.assertEqual(mod.capture_identifier(), (identifier, "local"), "the same each time")
+        self.assertEqual(
+            (mod.CAPTURE_DIR / mod.IDENTIFIER_FILE).read_text(encoding="ascii"), identifier + "\n"
+        )
+
+    def test_each_session_writes_a_file_of_its_own(self):
+        clock = [calendar.timegm((2026, 10, 20, 0, 55, 0))]
+        self._patch("capture_identifier", lambda: ("SOMEONE", "steam"))
+        self._patch("new_capture_file", lambda now=None: NEW_CAPTURE_FILE(now=clock[0]))
+        self.assertEqual(self.capture.capture_file, f"None yet: this session's goes in {mod.CAPTURE_DIR}")
+        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
+            self.game.generate(self.capture)
+        first = mod.CAPTURE_DIR / "SOMEONE_2026_10_20_00_55.jsonl"
+        self.assertEqual(self.capture.capture_file, str(first))
+        log = "\n".join(logs.output)
+        self.assertIn(
+            f"Recording this session to a new file in {mod.CAPTURE_DIR}, named for your Steam ID.", log
+        )
+        self.assertNotIn("SOMEONE", log, "the log, which you may share, doesn't name you")
+        clock[0] += 3 * 3600
+        self.game.generate(self.capture)  # the same session: the same file
+        later = mod.TradeDepotCapture()
+        self.game.generate(later)
+        second = mod.CAPTURE_DIR / "SOMEONE_2026_10_20_03_55.jsonl"
+        self.assertEqual(sorted(mod.CAPTURE_DIR.glob("*.jsonl")), [first, second])
+        for path in (first, second):
+            kinds = [json.loads(line)["t"] for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(kinds[0], "session")
+            self.assertEqual(kinds.count("session"), 1)
 
 
 class SunTests(CaptureTestCase):
@@ -2996,7 +3102,7 @@ class SunTests(CaptureTestCase):
     def test_report_lists_the_color_variants_for_suns(self):
         self.table([(mod.enums.cGcSpacePoiType.Star, b"SUN", mod.STAR_POI_DATA, self.VARIANTS)])
         self.poll()
-        lines = report.star_guild_lines(report.read_captures([mod.CAPTURE_FILE]))
+        lines = report.star_guild_lines(report.read_captures([self.capture_file]))
         self.assertIn("Color variants for suns, from the game's space POI table, recorded 1 time(s):", lines)
         self.assertIn("  SUN (entry 0): SUN_A, SUN_B, SUN_C, SUN_D, SUN_E (x1)", lines)
 
@@ -3099,7 +3205,7 @@ class LookupTests(CaptureTestCase):
         self.assertEqual([row[0] for row in query["ships"]], [f"{s[0]:016X}" for s in SHIPS])
         self.assertEqual([label for label, _ in query["trace"]], ["query>", "query<"])
         self.assertEqual(self.capture.lookups, "1")
-        lines = report.trace_lines(report.read_captures([mod.CAPTURE_FILE]))
+        lines = report.trace_lines(report.read_captures([self.capture_file]))
         self.assertIn("lookup 0000ABC012345678: query>0 query<40", "\n".join(lines))
 
     def test_steps_inside_a_lookup_join_its_trace_with_its_key_attributes(self):
@@ -3110,7 +3216,7 @@ class LookupTests(CaptureTestCase):
         labels = ["query>", "basics>", "basics<", "positions>", "positions<", "biomes>", "biomes<", "query<"]
         self.assertEqual([label for label, _ in query["trace"]], labels)
         self.assertEqual(query["keyAttributes"]["anomaly"], "01020304")
-        lines = report.trace_lines(report.read_captures([mod.CAPTURE_FILE]))
+        lines = report.trace_lines(report.read_captures([self.capture_file]))
         self.assertIn(
             "lookup 0000ABC012345678: query>0 basics>0 basics<0 positions>0 positions<6 biomes>6 biomes<10 "
             "query<40",
@@ -3189,7 +3295,7 @@ class PollingTests(CaptureTestCase):
         blocker = Path(self._tmp.name) / "blocked"
         blocker.write_text("not a folder")
         self._patch("CAPTURE_DIR", blocker)
-        self._patch("CAPTURE_FILE", blocker / "systems.jsonl")
+        self.capture_file = blocker / "systems.jsonl"
         with self.assertLogs("TradeDepotCapture", "WARNING"):
             self.poll()
             self.poll()
@@ -3282,7 +3388,7 @@ class PollingTests(CaptureTestCase):
         blocker = Path(self._tmp.name) / "blocked"
         blocker.write_text("not a folder")
         self._patch("CAPTURE_DIR", blocker)
-        self._patch("CAPTURE_FILE", blocker / "systems.jsonl")
+        self.capture_file = blocker / "systems.jsonl"
         self.capture.record_now()
         with self.assertLogs("TradeDepotCapture", "WARNING"):
             self.capture.on_frame()
@@ -3913,7 +4019,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         self.game.fill(other, "Abarof-Dulin")
         self.game.set_ships(SHIPS[:1])
         self.game.generate(self.capture)
-        return report.read_captures([mod.CAPTURE_FILE])
+        return report.read_captures([self.capture_file])
 
     def test_summary(self):
         captures = self.capture_systems()
@@ -3930,7 +4036,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         self.game.system.mUA = UA
         self.poll()
         self.poll()
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         self.assertEqual(list(captures.by_system()), [UA])
         (chosen,) = captures.representative_by_system().values()
         self.assertEqual(chosen.data["via"], "gen", "the generated record is closest to the generator")
@@ -3943,7 +4049,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         self.game.generate(self.capture)
         self.game.set_ships(SHIPS[:1])
         self.game.generate(self.capture)
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         (chosen,) = captures.representative_by_system().values()
         self.assertEqual(len(chosen.data["ships"]), 3)
         text = "\n".join(report.summary_lines(captures))
@@ -3959,7 +4065,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
     def test_inconsistency_is_listed(self):
         self.game.system.mGalaxyAttributes.mStar.Type = 3
         self.game.generate(self.capture)
-        lines = report.consistency_lines(report.read_captures([mod.CAPTURE_FILE]), examples=5)
+        lines = report.consistency_lines(report.read_captures([self.capture_file]), examples=5)
         self.assertIn(
             "star type = galaxy attributes: 03E9F3545C3E galaxy 1 Abarof-Dulin: 1 vs 3", "\n".join(lines)
         )
@@ -3969,7 +4075,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         self.game.set_ships([(seed, FIGHTER, 0, 1, 0, "") for seed in ship_seeds])
         self.game.system.mSolarSystemData.SentinelCrashSiteShipSeed.Seed = crash
         self.game.generate(self.capture)
-        lines = report.ship_stream_lines(report.read_captures([mod.CAPTURE_FILE]), limit=2000)
+        lines = report.ship_stream_lines(report.read_captures([self.capture_file]), limit=2000)
         self.assertIn(
             "03E9F3545C3E galaxy 1 Abarof-Dulin: after 881 draws; 50/50 in sequence: "
             "ships 0-41, crash ship, ships 42-49",
@@ -3987,7 +4093,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         self.game.generate_traced(self.capture, picks)
         self.poll()
         self.poll()  # the named record joins the generated one
-        text = "\n".join(report.trace_lines(report.read_captures([mod.CAPTURE_FILE]), limit=2000))
+        text = "\n".join(report.trace_lines(report.read_captures([self.capture_file]), limit=2000))
         self.assertIn(
             "03E9F3545C3E galaxy 1 Shown-Name: biomes done after 10 draws, ships start after 429, "
             "Generate done after 533; 419 draws between biomes and ships, 95 locators (4.41 draws each)",
@@ -4019,7 +4125,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
             for guild in guilds:
                 getattr(self.capture, f"guild_{guild}")()
                 self.poll()
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         self.assertIn("4 guild(s)", "\n".join(report.summary_lines(captures)))
         self.assertEqual(
             report.star_guild_lines(captures),
@@ -4057,7 +4163,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
 
     def test_star_counts_wait_for_the_games_chances(self):
         self.game.generate(self.capture)
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         captures.sessions[0].header["starCount"] = {"offset": "10", "callable": 0, "why": "instruction E8"}
         lines = report.star_guild_lines(captures)  # as 0.10.0 recorded it, without the chances
         self.assertIn(  # the fake system's NebulaSeed is 0, not what the game would draw
@@ -4193,7 +4299,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
         with tempfile.TemporaryFile("w+") as out:
             stdout, sys.stdout = sys.stdout, out
             try:
-                self.assertEqual(report.main([str(mod.CAPTURE_FILE)]), 0)
+                self.assertEqual(report.main([str(self.capture_file)]), 0)
             finally:
                 sys.stdout = stdout
             out.seek(0)
@@ -4440,7 +4546,7 @@ class NamegenComparisonTests(CaptureTestCase):
             keys.mbIsPirateSystem = attrs["pirate"]
             self.game.generate_traced(self.capture, list(range(10)))
 
-        captures = report.read_captures([mod.CAPTURE_FILE])
+        captures = report.read_captures([self.capture_file])
         self.assertEqual(len(captures.representative_by_system()), len(self.ADDRESSES))
         lines = report.namegen_lines(captures, Path(os.environ["NMS_NAMEGEN"]), examples=5)
         scored = [line for line in lines[2:] if "/" in line]
@@ -4470,7 +4576,7 @@ class NamegenComparisonTests(CaptureTestCase):
         self.game.loaded = False
         self.poll()
         lines = report.moon_layout_lines(
-            report.read_captures([mod.CAPTURE_FILE]), Path(os.environ["NMS_NAMEGEN"]), 5
+            report.read_captures([self.capture_file]), Path(os.environ["NMS_NAMEGEN"]), 5
         )
         self.assertEqual(
             lines[1:],
@@ -4500,7 +4606,7 @@ class NamegenComparisonTests(CaptureTestCase):
         self.poll()
 
         lines = report.name_lines(
-            report.read_captures([mod.CAPTURE_FILE]), Path(os.environ["NMS_NAMEGEN"]), 5
+            report.read_captures([self.capture_file]), Path(os.environ["NMS_NAMEGEN"]), 5
         )
         text = "\n".join(lines)
         self.assertIn("planet name = generator's name for the same seed", text)
@@ -4533,7 +4639,9 @@ class NamegenComparisonTests(CaptureTestCase):
         self.game.fill(other, "Elsewhere")  # keeps the 50 ships, which aren't this system's
         self.game.generate(mod.TradeDepotCapture())
         text = "\n".join(
-            report.ship_model_lines(report.read_captures([mod.CAPTURE_FILE]), Path(os.environ["NMS_NAMEGEN"]))
+            report.ship_model_lines(
+                report.read_captures([self.capture_file]), Path(os.environ["NMS_NAMEGEN"])
+            )
         )
         self.assertIn("03E9F3545C3E galaxy 1 Abarof-Dulin: all 50 ships and the crashed ship match", text)
         self.assertIn("079F3545C3E galaxy 0 Elsewhere: 0/50 ships match", text)
