@@ -17,7 +17,8 @@
 """Trade Depot capture: records the star systems you visit in No Man's Sky.
 
 Each time the game generates a star system, this NMS.py mod appends one line
-to ``captures/systems.jsonl`` next to this file. The line holds the system's
+to the session's file in ``captures`` next to this file, named for your Steam
+ID and when the file was made (see new_capture_file). The line holds the system's
 universal address, its seed, the game's own description of it (name, star,
 race, economy, planets) and ``SystemShips``, the list of ships the game
 prepares for the system, and how many stars it has, worked out as the game's
@@ -67,6 +68,7 @@ import struct
 import sys
 import threading
 import time
+import uuid
 import wave
 import zlib
 from collections import Counter
@@ -85,16 +87,26 @@ from pymhf import Mod
 from pymhf.core.hooking import Structure, static_function_hook
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.13.0"
+MOD_VERSION = "0.14.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.13.0 only add or drop record types, fields and controls, or let a field hold more
+# (0.3.0 to 0.14.0 only add or drop record types, fields and controls, or let a field hold more
 # kinds of thing, as 0.8.2 does with an item's "tools", so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
 
 CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
-CAPTURE_FILE = CAPTURE_DIR / "systems.jsonl"
+# Each session's lines go to a file of its own in CAPTURE_DIR, named as the project keeps captures:
+# <your Steam ID>_<when the file was made, in UTC>.jsonl, the time as CAPTURE_TIME_FORMAT. The Steam ID
+# is the SteamID64 that steamcommunity.com/profiles/ knows your account by: that of the account Steam says is
+# logged in (STEAM_USER_KEY), or else the one in the name of the game's newest save folder (SAVE_FOLDERS). If
+# neither can be found, a random identifier made once and kept in CAPTURE_DIR (IDENTIFIER_FILE) stands in.
+CAPTURE_TIME_FORMAT = "%Y_%m_%d_%H_%M"
+# Under HKEY_CURRENT_USER: Steam keeps the account number of the user logged in there as ActiveUser.
+STEAM_USER_KEY = r"Software\Valve\Steam\ActiveProcess"
+STEAM_ID_BASE = 76561197960265728  # an individual Steam account's SteamID64, less its account number
+SAVE_FOLDERS = Path("HelloGames") / "NMS"  # in %APPDATA%: a folder st_<SteamID64> for each Steam account
+IDENTIFIER_FILE = "identifier.txt"
 
 # Record the parts the game picks for each ship of the system's own ship list
 # when it builds the ship's model. This watches a function the game calls for
@@ -374,6 +386,15 @@ PAINT_TASK_PART = 0x1D8
 PAINT_TASK_FILE = 0x28
 PAINT_TASK_DESCRIPTOR = 0x128
 PAINT_PART_OPTIONS = 0x10
+# 0.13.0's captures showed that a ship's paint takes its colors from the palettes the game makes from the
+# ship's seed, and a freighter's or a frigate's from those of its system's seed; a multi-tool's from neither.
+# So for multi-tools the mod also records the palettes the function was handed: PALETTE_COUNT of PALETTE_ENTRY
+# bytes, each five colors and then their places in the palette (at PALETTE_PLACES); and for every model,
+# whether the task was told to use the game's older palettes (a flag at PAINT_TASK_LEGACY), and the color it
+# was told to paint with, if it was.
+PAINT_TASK_LEGACY = 0x1C9
+PALETTE_ENTRY = 0x70
+PALETTE_PLACES = 0x50
 # A system's suns (RECORD_STARS). In the game's code (NMS.exe, October 2026) each sun is a copy of the
 # system's one space POI of type Star, numbered from 0, the main sun, by how many stars the system has. The
 # behaviour of that POI's entry in the game's space POI table is a cGcSpacePoiStarData, whose ColourVariants
@@ -1605,6 +1626,76 @@ def steam_build(binary_path: str | None) -> str | None:
     return None
 
 
+def steam_account() -> int | None:
+    """The account number of the Steam user logged in now, which Steam keeps as ActiveUser under
+    STEAM_USER_KEY while it runs, or None (off Windows, or with no one logged in)."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STEAM_USER_KEY) as key:
+            value, kind = winreg.QueryValueEx(key, "ActiveUser")
+    except OSError:
+        return None
+    return value if kind == winreg.REG_DWORD and value else None
+
+
+def save_folder_steam_id(appdata: str | None = None) -> str | None:
+    """The SteamID64 in the name of the game's most recently changed save folder (st_<SteamID64> in
+    SAVE_FOLDERS, in your roaming application data, ``appdata``), or None."""
+    root = os.environ.get("APPDATA") if appdata is None else appdata
+    if not root:
+        return None
+    try:
+        folders = [
+            (folder.stat().st_mtime, folder.name[3:])
+            for folder in (Path(root) / SAVE_FOLDERS).glob("st_*")
+            if folder.is_dir() and folder.name[3:].isdigit()
+        ]
+    except OSError:
+        return None
+    return max(folders)[1] if folders else None
+
+
+def local_identifier() -> str:
+    """A random identifier for this computer's captures, made the first time it's needed and kept in
+    CAPTURE_DIR (IDENTIFIER_FILE), for when no Steam ID can be found."""
+    path = CAPTURE_DIR / IDENTIFIER_FILE
+    try:
+        kept = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        kept = ""
+    if re.fullmatch(r"[0-9a-f]{32}", kept):
+        return kept
+    made = uuid.uuid4().hex
+    try:
+        CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(made + "\n", encoding="ascii")
+    except OSError:
+        logger.warning("Couldn't keep the identifier for this computer's captures in %s", path, exc_info=True)
+    return made
+
+
+def capture_identifier() -> tuple[str, str]:
+    """Whose captures these are, for the files' names (see CAPTURE_DIR), and how the mod knows: the SteamID64
+    of the Steam user logged in ("steam") or of the newest save folder ("save"), or the random identifier
+    kept for this computer ("local")."""
+    if account := steam_account():
+        return str(STEAM_ID_BASE + account), "steam"
+    if (found := save_folder_steam_id()) is not None:
+        return found, "save"
+    return local_identifier(), "local"
+
+
+def new_capture_file(now: float | None = None) -> tuple[Path, str]:
+    """Where a session's lines go (see CAPTURE_DIR): a file named for whose captures they are and for the
+    time, ``now`` or else the present, in UTC; and how the mod knows whose they are (capture_identifier)."""
+    identifier, source = capture_identifier()
+    stamp = time.strftime(CAPTURE_TIME_FORMAT, time.gmtime(time.time() if now is None else now))
+    return CAPTURE_DIR / f"{identifier}_{stamp}.jsonl", source
+
+
 def hook_status(mod: Mod) -> dict[str, str]:
     """Whether each of the mod's detours is attached to the game ("enabled") or not."""
     from pymhf.core.hooking import hook_manager
@@ -1833,6 +1924,21 @@ def paint_layout() -> dict:
         "taskDescriptor": f"{PAINT_TASK_DESCRIPTOR:X}",
         "partOptions": f"{PAINT_PART_OPTIONS:X}",
     }
+
+
+def palette_places(address: int) -> list[list[int]]:
+    """For each palette in the palettes at ``address`` (see PALETTE_ENTRY), the places in the palette of its
+    five colors. Raises CaptureError if they can't be read or don't look like places in palettes."""
+    raw = read_memory(address, PALETTE_COUNT * PALETTE_ENTRY) if address else None
+    if raw is None:
+        raise CaptureError("the palettes the paint was picked from couldn't be read")
+    places = [
+        list(struct.unpack_from("<5i", raw, palette * PALETTE_ENTRY + PALETTE_PLACES))
+        for palette in range(PALETTE_COUNT)
+    ]
+    if not all(-1 <= place < 64 for row in places for place in row):
+        raise CaptureError("the palettes the paint was picked from don't hold places in palettes")
+    return places
 
 
 def painted_task(part: int) -> str | None:
@@ -2159,6 +2265,7 @@ class TradeDepotCapture(Mod):
         self._write_lock = threading.Lock()
         self._recorded_keys: set[str] = set()
         self._session_started = False
+        self._capture_file: Path | None = None  # this session's, once its first line is written
         self._reported: set[str] = set()
         self._record_requested = False
         self._next_poll = 0.0
@@ -2263,7 +2370,7 @@ class TradeDepotCapture(Mod):
             prepare_sounds()
         except Exception:
             logger.warning("Couldn't prepare the sounds.", exc_info=True)
-        logger.info("Trade Depot capture %s is recording to %s", MOD_VERSION, CAPTURE_FILE)
+        logger.info("Trade Depot capture %s is recording to a new file in %s", MOD_VERSION, CAPTURE_DIR)
         if RECORD_MULTITOOLS and RECORD_SHIP_PARTS:
             logger.info(
                 "A system's multi-tools are recorded as you arrive. To record the one on offer, with its "
@@ -2362,7 +2469,9 @@ class TradeDepotCapture(Mod):
     @property
     @STRING("Capture file")
     def capture_file(self):
-        return str(CAPTURE_FILE)
+        if self._capture_file is None:
+            return f"None yet: this session's goes in {CAPTURE_DIR}"
+        return str(self._capture_file)
 
     @gui_button("Record the current system now")
     def record_now(self):
@@ -2552,7 +2661,7 @@ class TradeDepotCapture(Mod):
             lbKeepOptions,
         ):
             try:
-                self._paint_picked(lpTaskPart, lpSeed, lbKeepOptions)
+                self._paint_picked(lpTaskPart, lpSeed, lpPalettes, lpColour, lbUseColour, lbKeepOptions)
             except Exception:
                 self._report_once("paint", "Couldn't record the paint the game picked for a model.")
 
@@ -3653,7 +3762,9 @@ class TradeDepotCapture(Mod):
             model_file(name) or "something",
         )
 
-    def _paint_picked(self, part_pointer, seed_pointer, keep) -> None:
+    def _paint_picked(
+        self, part_pointer, seed_pointer, palettes_pointer, colour_pointer, use_colour, keep
+    ) -> None:
         """Note the paint the game picked for a ship or multi-tool it's making (see PAINT_PATTERN): write it
         if it's one the mod records, else keep it waiting for a line that names its seed."""
         part = address_of(part_pointer)
@@ -3676,6 +3787,17 @@ class TradeDepotCapture(Mod):
         }
         if keep:
             entry["kept"] = 1  # the options the task was handed, as a customisation has, not picked now
+        if use_colour:
+            colour = read_memory(address_of(colour_pointer), 16)
+            entry["useColour"] = [number(c) for c in struct.unpack("<4f", colour)] if colour else 1
+        legacy = read_memory(part - PAINT_TASK_PART + PAINT_TASK_LEGACY, 1)
+        if legacy is not None and legacy[0]:
+            entry["legacy"] = 1
+        if is_multitool_model(name):
+            try:
+                entry["palettes"] = palette_places(address_of(palettes_pointer))
+            except CaptureError as exc:
+                problems.append(str(exc))
         try:
             model = resource_descriptor(part - PAINT_TASK_PART + PAINT_TASK_DESCRIPTOR)
         except CaptureError as exc:
@@ -3993,12 +4115,20 @@ class TradeDepotCapture(Mod):
         return True
 
     def _append(self, *entries: dict) -> None:
-        """Write lines to the capture file, after the session's header the first time. The caller
-        holds self._write_lock."""
+        """Write lines to the session's capture file, after the session's header the first time, which makes
+        the file (see new_capture_file). The caller holds self._write_lock."""
         lines = [] if self._session_started else [dumps(session_header(self))]
         lines.extend(dumps(entry) for entry in entries)
-        CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
-        with CAPTURE_FILE.open("a", encoding="utf-8", newline="\n") as stream:
+        if self._capture_file is None:
+            self._capture_file, source = new_capture_file()
+            whose = {
+                "steam": "your Steam ID",
+                "save": "the Steam ID of the game's newest save folder, as Steam didn't say who's logged in",
+                "local": f"this computer's identifier in {IDENTIFIER_FILE}, as no Steam ID could be found",
+            }[source]
+            logger.info("Recording this session to a new file in %s, named for %s.", CAPTURE_DIR, whose)
+        self._capture_file.parent.mkdir(parents=True, exist_ok=True)
+        with self._capture_file.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write("\n".join(lines) + "\n")
         self._session_started = True
 
