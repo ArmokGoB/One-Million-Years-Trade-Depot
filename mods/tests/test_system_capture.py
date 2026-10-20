@@ -318,6 +318,11 @@ class CaptureTestCase(unittest.TestCase):
             return []
         return [json.loads(line) for line in self.capture_file.read_text(encoding="utf-8").splitlines()]
 
+    def append(self, *entries: dict) -> None:
+        """Lines such as earlier versions of the mod wrote, after this session's."""
+        with self.capture_file.open("a", encoding="utf-8") as stream:
+            stream.writelines(json.dumps(entry) + "\n" for entry in entries)
+
     def poll(self):
         self.capture._next_poll = 0.0
         self.capture._next_flush = 0.0
@@ -366,7 +371,7 @@ class WiringTests(CaptureTestCase):
         expected |= {"before_generation_task", "after_generation_task", "after_pick_paint"}
         self.assertEqual({h.__name__ for h in self.capture.hooks}, expected)
         self.assertEqual({c.__name__ for c in self.capture._custom_callbacks}, {"on_frame"})
-        self.assertEqual(len(self.capture._gui_widgets), 17)
+        self.assertEqual(len(self.capture._gui_widgets), 12)
 
     def test_paint_hook_watches_the_function_its_pattern_finds_once_it_returns(self):
         hook = mod.TradeDepotCapture.after_pick_paint
@@ -379,7 +384,7 @@ class WiringTests(CaptureTestCase):
         # addresses; whether to paint with that color, and whether to keep the options, as single bytes.
         self.assertEqual(definition.argtypes, [ctypes.c_uint64] * 6 + [ctypes.c_bool] * 2)
 
-    def test_ship_parts_hook_reads_the_engines_resource_loader_before_it_runs(self):
+    def test_model_hook_reads_the_engines_resource_loader_before_it_runs(self):
         hook = mod.TradeDepotCapture.before_add_resource
         self.assertEqual(hook._hook_func_name, "Engine.AddResource")
         self.assertEqual(hook._hook_time, DetourTime.BEFORE)
@@ -413,15 +418,9 @@ class WiringTests(CaptureTestCase):
             for w in self.capture._gui_widgets
             if type(getattr(w, "_widget_data", None)).__name__ == "ButtonWidgetData"
         ]
-        guilds = [f"Guild envoy here: {guild}" for guild in ("Merchants", "Explorers", "Mercenaries")]
         self.assertEqual(
             buttons,
-            [
-                "Record the current system now",
-                *guilds,
-                "Record your ships' colors now",
-                "Open the captures folder",
-            ],
+            ["Record the current system now", "Record your ships' colors now", "Open the captures folder"],
         )
 
     def test_layout_reads_inside_the_structs(self):
@@ -759,6 +758,14 @@ EXOTIC_MODEL = "MODELS/COMMON/SPACECRAFT/S-CLASS/S-CLASS_PROC.SCENE.MBIN"
 CRASH_SEED = 0x0102030405060708  # the system's SentinelCrashSiteShipSeed in Game.fill
 
 
+def model_line(slot: int | str, name: str, seed: int, parts: list[str]) -> dict:
+    """A ship of the system's list that the game built, as versions 0.7.0 to 0.14.0 recorded it."""
+    return {
+        "t": "model", "at": 0, "system": f"{UA:016X}", "slot": slot, "name": name, "type": 1,
+        "seed": f"{seed:016X}", "useSeed": 1, "parts": parts,
+    }  # fmt: skip
+
+
 class ModelHelpers:
     """Builds models through the AddResource detour; mixed into CaptureTestCase subclasses."""
 
@@ -800,108 +807,33 @@ class ModelHelpers:
         args = (ctypes.pointer(result), type_value, name_pointer, 0, descriptor, 0)
         self.assertIsNone(self.capture.before_add_resource(*args), "detours must return None")
         result.miInternalHandle = handle
-        if hasattr(self.capture, "after_add_resource"):
-            self.assertIsNone(self.capture.after_add_resource(*args), "detours must return None")
-
-    def models(self) -> list[dict]:
-        self.poll()
-        return [line for line in self.lines() if line["t"] == "model"]
+        self.assertIsNone(self.capture.after_add_resource(*args), "detours must return None")
 
 
 class ModelTests(ModelHelpers, CaptureTestCase):
-    def test_parts_of_the_systems_ships_are_recorded_once(self):
-        self.game.generate(self.capture)  # the mod reads the system's ship list
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B"])
-            self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B"])  # built again
-            self.build(EXOTIC_MODEL, 0x8000000000000001, ["_BODY_SQUID"], seed2=0x42)
-        models = self.models()
-        self.assertEqual(
-            [{k: v for k, v in m.items() if k not in ("at", "raw")} for m in models],
-            [
-                {
-                    "t": "model",
-                    "system": f"{UA:016X}",
-                    "slot": 0,
-                    "name": FIGHTER_MODEL,
-                    "type": 1,
-                    "seed": "1111111111111111",
-                    "useSeed": 1,
-                    "parts": ["_COCKPIT_A", "_WINGS_B"],
-                },
-                {
-                    "t": "model",
-                    "system": f"{UA:016X}",
-                    "slot": 2,
-                    "name": EXOTIC_MODEL,
-                    "type": 1,
-                    "seed": "8000000000000001",
-                    "useSeed": 1,
-                    "seed2": "0000000000000042",
-                    "useSeed2": 0,
-                    "parts": ["_BODY_SQUID"],
-                },
-            ],
-        )
-        raw = bytes.fromhex(models[0]["raw"])
-        self.assertEqual(len(raw), ctypes.sizeof(nms.cTkResourceDescriptor), "the first records keep it")
-        self.assertEqual(int.from_bytes(raw[0x10:0x18], "little"), 0x1111111111111111)
-        text = "\n".join(logs.output)
-        self.assertIn(
-            f"Recording ship parts. The first: {FIGHTER_MODEL}, seed 1111111111111111: _COCKPIT_A, _WINGS_B",
-            text,
-        )
-        self.assertIn("Recorded the parts of the exotic (seed 8000000000000001): _BODY_SQUID", text)
-        self.assertEqual(self.capture.ship_parts, "2 of 2 ship models seen")
-        self.assertEqual(self.sounds, ["exotic parts"])
-        self.build(EXOTIC_MODEL.replace("_PROC", "_LOD"), 0x8000000000000001, ["_BODY_SQUID"])
-        self.models()
-        self.assertEqual(self.sounds.count("exotic parts"), 1, "one tone per exotic")
-
-    def test_ships_not_in_the_systems_list_are_not_recorded(self):
+    def test_ships_models_are_kept_for_items_but_not_written(self):
+        # A ship's parts go with its paint (see PaintTests): its model is kept only for items to pair with.
         self.game.generate(self.capture)
-        self.build(FIGHTER_MODEL, 0x9999999999999999, ["_COCKPIT_A"])  # your own ship, say
-        self.assertEqual(self.models(), [])
-        self.assertEqual(self.capture.ship_parts, "0 of 1 ship models seen")
+        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A", "_WINGS_B"], handle=0x51)
+        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_BODY_SQUID"], seed2=0x42)
+        self.poll()
+        self.assertEqual([line["t"] for line in self.lines()], ["session", "sys"])
+        self.assertEqual(self.capture._handle_models[0x51]["parts"], ["_COCKPIT_A", "_WINGS_B"])
+        (exotic,) = self.capture._recent_models[0x8000000000000001]
+        self.assertEqual((exotic["seed2"], exotic["parts"]), ("0000000000000042", ["_BODY_SQUID"]))
+        self.assertEqual(self.sounds, [])
 
-    def test_ships_built_before_their_system_is_read_wait_for_its_list(self):
-        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_B"])
-        self.assertEqual(self.models(), [])
-        self.game.generate(self.capture)
-        (model,) = self.models()
-        self.assertEqual((model["slot"], model["parts"]), (1, ["_COCKPIT_B"]))
+    def test_only_models_are_kept(self):
+        # The game may load a texture with a descriptor too, as 0.12.0 to 0.14.0 watched for: it's no model.
+        texture = "TEXTURES/COMMON/WEAPONS/MULTITOOL/SHARED/PRIMARY.DDS"
+        self.build(texture, 0x5EED000000000009, ["TEXTURE_TEMP"], handle=0x61)
+        self.assertEqual((self.capture._recent_models, self.capture._handle_models), ({}, {}))
 
-    def test_waiting_ships_are_limited(self):
-        self._patch("WAITING_MODELS", 1)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
-        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_B"])  # pushes the first out
-        self.game.generate(self.capture)
-        self.assertEqual([m["seed"] for m in self.models()], ["2222222222222222"])
-
-    def test_the_crash_site_ship_is_recorded(self):
-        self.game.generate(self.capture)
-        self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])
-        (model,) = self.models()
-        self.assertEqual(model["slot"], "crash")
-
-    def test_other_models_are_named_in_the_log_once_and_not_recorded(self):
-        self.game.generate(self.capture)
-        creature = "MODELS/PLANETS/CREATURES/QUADRUPED/QUADRUPED.SCENE.MBIN"
-        lod = "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC_LOD1.SCENE.MBIN"
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.build(creature, 0x1111111111111111, ["_HEAD_A", "_LEGS_B"])
-            self.build(creature, 0x1111111111111111, ["_HEAD_A", "_LEGS_C"])
-            self.build(lod, 0x1111111111111111, [], resource_type=7)
-        self.assertEqual(
-            logs.output,
-            [
-                f"INFO:TradeDepotCapture:Model {creature}: not a ship, so its parts aren't recorded "
-                "(2 parts).",
-                f"INFO:TradeDepotCapture:Model {lod}: a ship's, but without parts, so not recorded "
-                "(resource type 7).",
-            ],
-        )
-        self.assertEqual(self.models(), [])
+    def test_models_without_a_seed_arent_kept_by_seed(self):
+        # The game makes many things with seed FFFFFFFFFFFFFFFF, anyone's, and items hold such bytes.
+        self.build(FIGHTER_MODEL, 0xFFFFFFFFFFFFFFFF, ["_COCKPIT_A"])
+        self.build(FIGHTER_MODEL, 0xFFFFFFFF, ["_COCKPIT_A"])
+        self.assertEqual(self.capture._recent_models, {})
 
     def test_resources_without_a_descriptor_or_anything_in_one_are_ignored(self):
         self.game.generate(self.capture)
@@ -910,29 +842,25 @@ class ModelTests(ModelHelpers, CaptureTestCase):
             self.assertIsNone(self.capture.before_add_resource(None, 1, name, 0, None, 0))
             self.assertIsNone(self.capture.after_add_resource(None, 1, name, 0, None, 0))
             self.build(FIGHTER_MODEL, 0, [], handle=7)
-        self.assertEqual(self.models(), [])
+        self.poll()
+        self.assertEqual([line["t"] for line in self.lines()], ["session", "sys"])
         self.assertEqual(self.capture._handle_models, {}, "nothing to pair an item with")
 
-    def test_unreadable_or_implausible_part_lists_are_recorded_with_the_descriptors_bytes(self):
-        self._patch("RAW_DESCRIPTORS", 0)
-        self.game.generate(self.capture)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"], count=100_000)
-        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_A"], pointer=0xDEAD0000)
-        first, second = self.models()
-        self.assertRegex(first["errors"][0], r"^implausible part list \(count 100000, pointer 0x[0-9a-f]+\)$")
-        self.assertEqual(second["errors"], ["part list at 0xdead0000 couldn't be read"])
-        for model in (first, second):
-            self.assertEqual(model["parts"], [])
-            self.assertEqual(len(bytes.fromhex(model["raw"])), ctypes.sizeof(nms.cTkResourceDescriptor))
-
-    def test_only_the_first_records_keep_the_descriptors_bytes(self):
-        self._patch("RAW_DESCRIPTORS", 1)
-        self.game.generate(self.capture)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
-        self.build(FIGHTER_MODEL, 0x2222222222222222, ["_COCKPIT_B"])
-        first, second = self.models()
-        self.assertIn("raw", first)
-        self.assertNotIn("raw", second)
+    def test_unreadable_or_implausible_part_lists_are_noted_with_the_descriptors_bytes(self):
+        cases = [
+            ({"count": 100_000}, r"^implausible part list \(count 100000, pointer 0x[0-9a-f]+\)$"),
+            ({"pointer": 0xDEAD0000}, r"^part list at 0xdead0000 couldn't be read$"),
+        ]
+        for kwargs, error in cases:
+            with self.subTest(**kwargs):
+                descriptor = self.descriptor(0x1111111111111111, ["_COCKPIT_A"], **kwargs)
+                found = mod.resource_descriptor(ctypes.addressof(descriptor.contents))
+                self.assertRegex(found["errors"][0], error)
+                self.assertEqual(found["parts"], [])
+                self.assertEqual(len(bytes.fromhex(found["raw"])), ctypes.sizeof(nms.cTkResourceDescriptor))
+        descriptor = self.descriptor(0x2222222222222222, ["_COCKPIT_B"])
+        found = mod.resource_descriptor(ctypes.addressof(descriptor.contents))
+        self.assertEqual(found, {"seed": "2222222222222222", "useSeed": 1, "parts": ["_COCKPIT_B"]})
 
     def test_a_hook_failure_is_reported_once_and_the_game_carries_on(self):
         self.game.generate(self.capture)
@@ -941,7 +869,7 @@ class ModelTests(ModelHelpers, CaptureTestCase):
             self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
             self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
         self.assertEqual(len(logs.output), 1)
-        self.assertIn("Couldn't record a ship's parts.", logs.output[0])
+        self.assertIn("Couldn't note a model the game built.", logs.output[0])
 
     def test_names_are_read_a_page_at_a_time(self):
         buffer = (ctypes.c_char * 0x2000)()
@@ -970,14 +898,13 @@ class ModelTests(ModelHelpers, CaptureTestCase):
         self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
         font = self.name_pointer("FONTS/A.TTF")
         self.assertIsNone(self.capture.before_add_resource(None, 1, font, 0, None, 0))  # no descriptor
-        self.models()  # flush the record; the first count isn't due yet
+        self.poll()  # the first count isn't due yet
         later = mod.time.monotonic() + mod.FIRST_RESOURCE_COUNT_SECONDS
         with self.assertLogs("TradeDepotCapture", "INFO") as logs:
             self.capture._count_resources(later)
             self.capture._count_resources(later + 2 * mod.RESOURCE_COUNT_SECONDS)  # nothing new
         expected = (
-            "INFO:TradeDepotCapture:Resources the game has loaded so far: 2, 1 of them with a "
-            "descriptor; ship models: 1 seen, 1 recorded."
+            "INFO:TradeDepotCapture:Resources the game has loaded so far: 2, 1 of them with a descriptor."
         )
         self.assertEqual(logs.output, [expected])
 
@@ -985,29 +912,13 @@ class ModelTests(ModelHelpers, CaptureTestCase):
         self.game.generate(self.capture)
         self.assertEqual(self.lines()[0]["enums"]["resourceType"][1], "SceneGraph")
 
-    def test_turning_ship_parts_off_leaves_the_function_alone(self):
-        source = harness.MOD_PATH.read_text(encoding="utf-8")
-        self.assertIn("\nRECORD_SHIP_PARTS = True\n", source)
-        path = Path(self._tmp.name) / "system_capture_without_parts.py"
-        path.write_text(source.replace("\nRECORD_SHIP_PARTS = True\n", "\nRECORD_SHIP_PARTS = False\n"))
-        spec = importlib.util.spec_from_file_location("system_capture_without_parts", path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        self.addCleanup(sys.modules.pop, spec.name, None)
-        spec.loader.exec_module(module)
-        capture = module.TradeDepotCapture()
-        hooks = {hook.__name__ for hook in capture.hooks}
-        self.assertFalse(hooks & {"before_add_resource", "after_add_resource"})
-        self.assertNotIn("before_item_update", hooks, "items are paired with models from that function")
-        self.assertEqual(capture.ship_parts, "Off (RECORD_SHIP_PARTS is False)")
-        self.assertEqual(capture.multitools, "Off: needs RECORD_SHIP_PARTS too")
-
-    def test_report_lists_each_exotics_parts(self):
+    def test_report_lists_each_exotics_parts_as_earlier_versions_recorded_them(self):
         self.game.generate(self.capture)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"])
-        self.build(EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"])
-        self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])
-        self.models()
+        self.append(
+            model_line(0, FIGHTER_MODEL, 0x1111111111111111, ["_COCKPIT_A"]),
+            model_line(2, EXOTIC_MODEL, 0x8000000000000001, ["_SCLASSSHIP_ROY", "_WINGS_A"]),
+            model_line("crash", FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"]),
+        )
         text = "\n".join(report.model_lines(report.read_captures([self.capture_file])))
         self.assertIn("Ship models recorded with their parts: 3 (FIGHTER_PROC 2, S-CLASS_PROC 1)", text)
         self.assertIn("by ship type: Fighter 1, Exotic 1, Sentinel crash-site ship 1", text)
@@ -1023,11 +934,12 @@ class ModelTests(ModelHelpers, CaptureTestCase):
         self.game.generate(self.capture)
         fighter = parts_model.parts("FIGHTER_PROC", 0x1111111111111111)
         exotic = parts_model.parts("S-CLASS_PROC", 0x8000000000000001)
-        self.build(FIGHTER_MODEL, 0x1111111111111111, [*fighter, "TEXTURE_TEMP"])
-        # With the parts of a scene its body brings in, which the tables have no descriptor for.
-        self.build(EXOTIC_MODEL, 0x8000000000000001, [exotic[0], "_FROM_ITS_SCENE_A", *exotic[1:]])
-        self.build(FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"])  # not what the tables pick
-        self.models()
+        self.append(
+            model_line(0, FIGHTER_MODEL, 0x1111111111111111, [*fighter, "TEXTURE_TEMP"]),
+            # With the parts of a scene its body brings in, which the tables have no descriptor for.
+            model_line(2, EXOTIC_MODEL, 0x8000000000000001, [exotic[0], "_FROM_ITS_SCENE_A", *exotic[1:]]),
+            model_line("crash", FIGHTER_MODEL, CRASH_SEED, ["_COCKPIT_C"]),  # not what the tables pick
+        )
         lines = report.part_model_lines(report.read_captures([self.capture_file]))
         self.assertIn("  FIGHTER_PROC: 1 of 2 agree", lines)
         self.assertIn(
@@ -1051,13 +963,23 @@ class ModelTests(ModelHelpers, CaptureTestCase):
             ],
             pools=[({"tools": [{"name": MULTITOOL_MODEL, "seed": "00000000000000AB", "parts": ["_X"]}]}, None)],
             items=[({"model": {"name": ROYAL_TOOL_MODEL, "seed": "00000000000000CD", "parts": ["_Y"]}}, None)],
-        )
+            # Paint (0.13.0 on) holds the model's parts, made with its own seed if painted with another.
+            paints=[
+                ({"file": FIGHTER_MODEL, "seed": "1111111111111111", "parts": ["_B"]}, None),
+                ({"file": FIGHTER_MODEL, "seed": "2222222222222222", "modelSeed": "00000000000000EF",
+                  "parts": ["_C", "_D"]}, None),
+                # Not your own, whose parts may be picked by hand.
+                ({"own": "ship 2", "file": FIGHTER_MODEL, "seed": "3333333333333333", "parts": ["_E"]}, None),
+            ],
+        )  # fmt: skip
         self.assertEqual(
             report.recorded_parts(captures),
             {
                 ("S-CLASS_PROC", 0x8000000000000001): ["_SCLASSSHIP_ROY", "_WINGS_A"],
                 ("MULTITOOL", 0xAB): ["_X"],
                 ("ROYALMULTITOOL", 0xCD): ["_Y"],
+                ("FIGHTER_PROC", 0x1111111111111111): ["_B"],
+                ("FIGHTER_PROC", 0xEF): ["_C", "_D"],
             },
         )
         self.assertEqual(report.part_model_lines(report.Captures()), [])
@@ -2201,8 +2123,8 @@ class ToolTests(ModelHelpers, CaptureTestCase):
         spec.loader.exec_module(module)
         capture = module.TradeDepotCapture()
         hooks = {hook.__name__ for hook in capture.hooks}
-        self.assertFalse(hooks & {"before_item_update", "after_add_resource"})
-        self.assertIn("before_add_resource", hooks)
+        self.assertFalse(hooks & {"before_item_update", "before_add_resource", "after_add_resource"})
+        self.assertIn("after_pick_paint", hooks, "paint has a switch of its own")
         self.assertEqual(capture.multitools, "Off (RECORD_MULTITOOLS is False)")
         capture.before_generate(self.game.this(), False, ctypes.pointer(self.game.seed))
         self.assertEqual(capture._generating, {}, "no system's set gathered")
@@ -2438,7 +2360,7 @@ class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
             "\n".join(logs.output),
         )
         self.assertEqual(self.sounds, ["colors"])
-        self.assertEqual(self.capture.colors, "1 customisations, 0 models of yours; your ships 0 times")
+        self.assertEqual(self.capture.colors, "1 customisations; your ships 0 times")
 
     def test_a_customisation_is_read_again_later_and_recorded_when_it_changes(self):
         address = self.slot(0)
@@ -2594,7 +2516,7 @@ class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.capture.record_colors()
         self.assertEqual([r["why"] for r in self.records("player")], ["loaded", "button"])
         self.assertEqual(self.sounds, ["recorded", "colors"])
-        self.assertEqual(self.capture.colors, "0 customisations, 0 models of yours; your ships 2 times")
+        self.assertEqual(self.capture.colors, "0 customisations; your ships 2 times")
 
     def test_your_ships_are_recorded_as_often_as_the_mod_records_them_in_a_session(self):
         self._patch("PLAYER_RECORDS", 1)
@@ -2615,41 +2537,32 @@ class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.assertIn("Couldn't record your ships: no save is loaded yet.", "\n".join(logs.output))
         self.assertEqual(self.sounds, ["problem"])
 
-    def test_models_the_game_builds_with_the_seed_of_one_of_yours_are_recorded_as_yours(self):
+    def test_what_has_no_seed_is_never_taken_for_yours(self):
+        # An empty place among your ships holds FFFFFFFFFFFFFFFF, which the game gives many things it makes
+        # without a seed, such as other players' characters: nothing with it is taken for yours by its seed.
         self.my_ship(2, MY_SHIP_SEED, FIGHTER_MODEL)
-        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_COCKPIT_A"])  # before the mod knows the seed
+        self.my_ship(3, 0xFFFFFFFFFFFFFFFF)
         self.capture.record_colors()
         self.poll()
-        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_COCKPIT_A", "TEXTURE_TEMP"])
-        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_COCKPIT_A", "TEXTURE_TEMP"])  # built again
-        (own,) = self.records("own")
-        self.assertEqual(
-            {k: v for k, v in own.items() if k not in ("at", "raw")},
-            {
-                "t": "own",
-                "whose": "ship 2",
-                "name": FIGHTER_MODEL,
-                "type": 1,
-                "seed": f"{MY_SHIP_SEED:016X}",
-                "useSeed": 1,
-                "parts": ["_COCKPIT_A", "TEXTURE_TEMP"],
-            },
-        )
-        self.assertEqual(self.records("model"), [], "not as one of the system's")
+        self.assertEqual(self.capture._own_seeds, {f"{MY_SHIP_SEED:016X}": "ship 2"})
+        stranger = "MODELS/COMMON/PLAYER/PLAYERCHARACTER/PLAYERCHARACTER.SCENE.MBIN"
+        self.task(self.standalone(0xFFFFFFFFFFFFFFFF), name=stranger)  # another player's, say
+        self.fill_customisation(self.slot(4), 0xFFFFFFFFFFFFFFFF)
+        self.task(self.slot(4), name=stranger)  # yours, in your player state
+        other, yours = self.records("custom")
+        self.assertEqual(other["other"], 1)
+        self.assertEqual(yours["region"], f"{4 * mod.LAYOUT.customisation_size:X}")
+        self.assertNotIn("F" * 16, self.capture._own_seeds, "nor is your customisation's seed taken for one")
 
-    def test_textures_of_ships_and_multi_tools_loaded_with_a_descriptor_are_recorded(self):
+    def test_report_lists_textures_as_0_12_0_would_have_recorded_them(self):
         texture = "TEXTURES/COMMON/SPACECRAFT/FIGHTERS/SHARED/PRIMARY.DDS"
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.build(texture, 0x1111111111111111, [], resource_type=7)
-            self.build(texture, 0x1111111111111111, [], resource_type=7)  # again: the same
-            self.build(texture.replace("SPACECRAFT/FIGHTERS", "WEAPONS/MULTITOOL"), 0xAB, ["TEXTURE_TEMP"])
-            self.build("TEXTURES/PLANETS/BIOMES/GRASS.DDS", 0x1111111111111111, [])  # not a ship's
-        self.assertEqual(
-            [(t["name"].split("/")[2], t["type"], t["seed"], t["parts"]) for t in self.records("tex")],
-            [("SPACECRAFT", 7, "1111111111111111", []), ("WEAPONS", 1, "00000000000000AB", ["TEXTURE_TEMP"])],
-        )
-        self.assertIn(f"The game loads textures with a descriptor, as {texture}: they're recorded.", logs.output[0])
-        self.assertEqual(self.records("model"), [])
+        tool_texture = texture.replace("SPACECRAFT/FIGHTERS", "WEAPONS/MULTITOOL")
+        self.append(
+            {"t": "tex", "at": 0, "name": texture, "type": 7, "seed": "1111111111111111", "useSeed": 1,
+             "parts": []},
+            {"t": "tex", "at": 0, "name": tool_texture, "type": 1, "seed": "00000000000000AB", "useSeed": 1,
+             "parts": ["TEXTURE_TEMP"]},
+        )  # fmt: skip
         lines = report.color_lines(report.read_captures([self.capture_file]))
         self.assertIn(
             "Textures of ships and multi-tools loaded with a descriptor: 2 (PRIMARY 2); with the seed of a "
@@ -2682,9 +2595,12 @@ class ColorTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.task(self.standalone(0x9999999999999999), name=MULTITOOL_MODEL)  # someone else's
         self.capture.record_colors()
         self.poll()
-        self.build(FIGHTER_MODEL, MY_SHIP_SEED, [*fighter, "TEXTURE_TEMP"])
-        self.build(FIGHTER_MODEL, MY_SHIP_SEED, ["_PICKED_BY_HAND"])  # built in the Starship Fabricator, say
-        self.poll()
+        own = {"t": "own", "at": 0, "whose": "ship 2", "name": FIGHTER_MODEL, "type": 1}
+        own["seed"] = f"{MY_SHIP_SEED:016X}"
+        self.append(  # as 0.12.0 to 0.14.0 recorded models of yours
+            dict(own, parts=[*fighter, "TEXTURE_TEMP"]),
+            dict(own, parts=["_PICKED_BY_HAND"]),  # built in the Starship Fabricator, say
+        )
         captures = report.read_captures([self.capture_file])
         summary = report.summary_lines(captures)[0]
         self.assertIn("2 customisation(s), 1 record(s) of your ships, 2 model(s) of yours", summary)
@@ -2867,17 +2783,43 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.assertEqual(capture.paint, "Off (RECORD_PAINT is False)")
         self.assertIsNone(module.session_header()["paintLayout"])
 
-    def test_a_multi_tools_paint_holds_the_palettes_it_was_picked_from(self):
-        self.capture._tools_heard.add("00000000ABCDEF01")
+    def test_a_multi_tools_paint_holds_its_palettes_unless_they_are_the_older_ones_made_from_its_seed(self):
+        # Told to use its older palettes, the game makes a multi-tool's the older way from its seed: those of
+        # the systems' multi-tools aren't recorded, but yours are, and any multi-tool's made otherwise.
+        self.capture._tools_heard.update({"00000000ABCDEF01", "00000000ABCDEF02"})
+        self.capture._own_seeds["00000000ABCDEF03"] = "slot 2 at 3AE0"
         places = [[(3 * p + k) % 64 for k in range(5)] for p in range(mod.PALETTE_COUNT)]
         self.paint(MULTITOOL_MODEL, 0xABCDEF01, [[OPTION]], places=places, legacy=True)
+        self.paint(MULTITOOL_MODEL, 0xABCDEF02, [[OPTION]], places=places)
+        self.paint(MULTITOOL_MODEL, 0xABCDEF03, [[OPTION]], places=places, legacy=True)
         self.paint(FIGHTER_MODEL, 0x1111111111111111, [[OPTION]], colour=(0.25, 0.5, 0.75, 1.0))
-        tool, ship = self.records("paint")
-        self.assertEqual((tool["palettes"], tool["legacy"]), (places, 1))
-        self.assertNotIn("useColour", tool)
+        older, other, yours, ship = self.records("paint")
+        self.assertEqual(older["legacy"], 1)
+        self.assertNotIn("palettes", older)
+        self.assertNotIn("useColour", older)
+        self.assertEqual(other["palettes"], places)
+        self.assertNotIn("legacy", other)
+        self.assertEqual((yours["own"], yours["legacy"], yours["palettes"]), ("slot 2 at 3AE0", 1, places))
         self.assertNotIn("palettes", ship, "a ship's colors come from the palettes made from its seed")
         self.assertNotIn("legacy", ship)
         self.assertEqual(ship["useColour"], [0.25, 0.5, 0.75, 1.0])
+
+    def test_the_paint_of_the_crash_site_ship_says_so(self):
+        self.paint(FIGHTER_MODEL, CRASH_SEED, [[OPTION]], parts=["_COCKPIT_C"])
+        (record,) = self.records("paint")
+        self.assertEqual((record["system"], record["slot"]), (f"{UA:016X}", "crash"))
+
+    def test_paint_without_a_seed_is_never_written(self):
+        # The game paints many things without a seed, anyone's: there's no telling whose they are.
+        self.capture._tools_heard.add("F" * 16)  # as a system's set may list a multi-tool without a seed
+        self.capture._own_seeds["F" * 16] = "ship 3"  # as 0.12.0 to 0.14.0 took an empty place among yours
+        self.paint(MULTITOOL_MODEL.replace("/MULTITOOL.", "/STAFFMULTITOOL."), 0xFFFFFFFFFFFFFFFF, [[OPTION]])
+        self.paint(FIGHTER_MODEL, 0xFFFFFFFFFFFFFFFF, [[OPTION]])
+        self.paint(FIGHTER_MODEL, 0, [[OPTION]])
+        self.assertEqual(self.records("paint"), [])
+        self.now += mod.PAINT_WAIT_SECONDS + 1
+        self.assertEqual(self.records("paint"), [])
+        self.assertEqual(self.capture._waiting_paint, {})
 
     def test_palettes_that_dont_hold_places_in_palettes_are_noted(self):
         self.capture._tools_heard.add("00000000ABCDEF01")
@@ -2888,7 +2830,7 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
             tool["errors"], ["the palettes the paint was picked from don't hold places in palettes"]
         )
 
-    def test_session_header_says_where_the_mod_reads_paint_and_the_poi_table(self):
+    def test_session_header_says_where_the_mod_reads_paint(self):
         header = self.lines()[0]
         self.assertEqual(
             header["paintLayout"],
@@ -2900,9 +2842,8 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
                 "partOptions": "10",
             },
         )
-        self.assertEqual(header["poiLayout"]["table"], f"{nms.cGcApplication.mpData.offset:X}>128")
-        self.assertEqual(header["poiLayout"]["fields"], {"id": "E8", "behaviour": "A8", "type": "168"})
-        self.assertEqual(header["poiLayout"]["variants"], ["0", 64, 5])
+        for retired in ("starCount", "poiLayout"):  # 0.11.0 to 0.14.0 counted stars, 0.13.0 on read suns
+            self.assertNotIn(retired, header)
 
     def test_report_lists_the_paint_and_any_model_and_seed_painted_otherwise(self):
         self.capture._own_seeds[f"{MY_SHIP_SEED:016X}"] = "ship 2"
@@ -2934,6 +2875,20 @@ class PaintTests(ColorHelpers, ModelHelpers, CaptureTestCase):
         self.assertIn("    0:BASE=STRIPES (Paint/Alternative1 3)", lines)
         self.assertIn(
             f"  FIGHTER_PROC {MY_SHIP_SEED:016X}, yours (ship 2): 1 texture options in 1 samplers, kept",
+            lines,
+        )
+
+    def test_report_checks_the_parts_of_the_painted_models_against_those_worked_out_from_the_seed(self):
+        fighter = parts_model.parts("FIGHTER_PROC", 0x1111111111111111)
+        self.paint(FIGHTER_MODEL, 0x1111111111111111, [[OPTION]], parts=[*fighter, "TEXTURE_TEMP"])
+        # Painted with another seed than its model was made with, which the parts are picked with.
+        self.paint(FIGHTER_MODEL, 0x0123456789ABCDEF, [[OPTION]], parts=["_COCKPIT_C"], model_seed=CRASH_SEED)
+        self.poll()
+        lines = report.part_model_lines(report.read_captures([self.capture_file]))
+        self.assertIn("  FIGHTER_PROC: 1 of 2 agree", lines)
+        self.assertIn(
+            f"    disagrees: FIGHTER_PROC 0102030405060708: worked out "
+            f"{' '.join(parts_model.parts('FIGHTER_PROC', CRASH_SEED))}; recorded _COCKPIT_C",
             lines,
         )
 
@@ -3006,105 +2961,6 @@ class CaptureFileTests(CaptureTestCase):
             kinds = [json.loads(line)["t"] for line in path.read_text(encoding="utf-8").splitlines()]
             self.assertEqual(kinds[0], "session")
             self.assertEqual(kinds.count("session"), 1)
-
-
-class SunTests(CaptureTestCase):
-    VARIANTS = ["SUN_A", "SUN_B", "SUN_C", "SUN_D", "SUN_E"]  # made up
-
-    def setUp(self):
-        super().setUp()
-        self.now = 100.0  # the mod's clock (time.monotonic), which the tests move on
-        self._patch("time", types.SimpleNamespace(monotonic=lambda: self.now, time=mod.time.time))
-        data = self.game._alloc(nms.cGcApplication.Data)
-        application = self.game._alloc(nms.cGcApplication)
-        application.mpData = ctypes.pointer(data)
-        mod.gameData.GcApplication = application  # NMS.py has found the game
-        self.data = ctypes.addressof(data)
-
-    def bytes_at(self, size: int) -> int:
-        buffer = (ctypes.c_ubyte * size)()
-        self.game.memory.keep(buffer)
-        self.game._keep.append(buffer)
-        return ctypes.addressof(buffer)
-
-    def table(self, items) -> None:
-        """The game's space POI table, as NMS.py places it: ``items``, each (type, ID, the class hash of its
-        behaviour, and the color variants its behaviour holds, or None for no behaviour)."""
-        layout = mod.LAYOUT
-        table = self.bytes_at(ctypes.sizeof(nmse.cGcSpacePoiTable))
-        entries = self.bytes_at(layout.poi_item_size * max(len(items), 1))
-        for index, (kind, name, hashed, variants) in enumerate(items):
-            at = entries + index * layout.poi_item_size
-            behaviour = 0
-            if variants is not None:
-                behaviour = self.bytes_at(ctypes.sizeof(nmse.cGcSpacePoiStarData))
-                for k, variant in enumerate(variants):
-                    where = behaviour + layout.star_variants + k * layout.star_variant_size
-                    ctypes.memmove(where, variant.encode(), len(variant))
-            ctypes.memmove(at + layout.poi_id, name, len(name))
-            ctypes.memmove(at + layout.poi_behaviour, struct.pack("<QI", behaviour, hashed), 12)
-            ctypes.memmove(at + layout.poi_type, struct.pack("<I", kind), 4)
-        ctypes.memmove(table + layout.poi_items, struct.pack("<QI", entries, len(items)), 12)
-        ctypes.memmove(self.data + layout.poi_table, struct.pack("<Q", table), 8)
-
-    def suns(self) -> list[dict]:
-        return [line for line in self.lines() if line["t"] == "suns"]
-
-    def test_the_color_variants_for_suns_are_recorded_once_a_session(self):
-        poi = mod.enums.cGcSpacePoiType
-        self.poll()  # the game hasn't loaded the table yet
-        self.table(
-            [
-                (poi.AsteroidBelt, b"ROCKS", 0x1234ABCD, None),
-                (poi.Star, b"SUN", mod.STAR_POI_DATA, self.VARIANTS),
-                (poi.Star, b"ODD_SUN", 0x0BADF00D, None),
-                (99, b"NEWER", 0x1234ABCD, None),  # a type newer than NMS.py, say
-            ]
-        )
-        self.poll()
-        self.assertEqual(self.suns(), [], "looked for again only after a while")
-        self.now += mod.SUNS_RETRY_SECONDS
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.poll()
-        self.now += 1000
-        self.poll()
-        (suns,) = self.suns()
-        self.assertEqual(
-            suns["stars"],
-            [
-                {"index": 1, "id": "SUN", "variants": self.VARIANTS},
-                {"index": 2, "id": "ODD_SUN", "behaviour": "0BADF00D"},
-            ],
-        )
-        self.assertIn(
-            "Recorded the game's color variants for suns: SUN_A, SUN_B, SUN_C, SUN_D, SUN_E.",
-            "\n".join(logs.output),
-        )
-
-    def test_a_table_that_doesnt_look_like_one_is_noted_once_and_left_alone(self):
-        self.table([(0x3F800000, b"ODD", 0, None)])  # a float where the type should be, say
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.poll()
-        self.now += 1000
-        self.poll()
-        self.assertEqual(self.suns(), [])
-        self.assertIn(
-            "Couldn't read the game's space POI table: implausible space POI type 1065353216 in entry 0.",
-            "\n".join(logs.output),
-        )
-
-    def test_turning_stars_off_leaves_the_table_alone(self):
-        self._patch("RECORD_STARS", False)
-        self.table([(mod.enums.cGcSpacePoiType.Star, b"SUN", mod.STAR_POI_DATA, self.VARIANTS)])
-        self.poll()
-        self.assertEqual(self.suns(), [])
-
-    def test_report_lists_the_color_variants_for_suns(self):
-        self.table([(mod.enums.cGcSpacePoiType.Star, b"SUN", mod.STAR_POI_DATA, self.VARIANTS)])
-        self.poll()
-        lines = report.star_guild_lines(report.read_captures([self.capture_file]))
-        self.assertIn("Color variants for suns, from the game's space POI table, recorded 1 time(s):", lines)
-        self.assertIn("  SUN (entry 0): SUN_A, SUN_B, SUN_C, SUN_D, SUN_E (x1)", lines)
 
 
 class DiagnosticsTests(CaptureTestCase):
@@ -3395,45 +3251,10 @@ class PollingTests(CaptureTestCase):
         self.assertEqual(self.sounds, ["problem"])
 
 
-# The game's star count function, built from STAR_COUNT_CODE, with the values it reads at made-up places
-# after it, as far apart as NMS.py puts them in the game's globals (offsets from the code's start).
-SKY, DEBUG, APPLICATION = nmse.cGcSkyGlobals, nmse.cGcDebugOptions, nms.cGcApplication
-STAR_PLACES = {
-    "one": 0x200,
-    "binary": 0x300,
-    "ternary": 0x300 + SKY.TernaryStarChance.offset - SKY.BinaryStarChance.offset,
-    "forceBinary": 0x2000,
-    "forceTernary": 0x2000 + DEBUG.ForceTernaryStar.offset - DEBUG.ForceBinaryStar.offset,
-    "bootMode": 0x2000 + DEBUG.BootMode.offset - DEBUG.ForceBinaryStar.offset,
-    "data": 0x3000,
-    "gameMode": 0x3000 + APPLICATION.meGameMode.offset - APPLICATION.mpData.offset,
-}
+# Where the solar system keeps its NebulaSeed, which the game counts its stars by.
 NEBULA_SEED = (
     mod.LAYOUT.data + nmse.cGcSolarSystemData.Sky.offset + nmse.cGcSpaceSkyProperties.NebulaSeed.offset
 )
-STAR_SETTING = 0x40  # where the setting is in the application's data
-STAR_JUMPS = {"three": 0x9C, "count": 0x9E}
-STAR_OFFSET = 0x16459B0  # where the function is in the game, as found by its pattern
-
-
-def star_function(places=STAR_PLACES, nebula=NEBULA_SEED, setting=STAR_SETTING, jumps=STAR_JUMPS) -> bytes:
-    """Code shaped like STAR_COUNT_CODE that reads ``places``, the solar system's ``nebula`` and the
-    application data's ``setting``, and jumps to ``jumps``."""
-    code = bytearray()
-    for text, _ in mod.STAR_COUNT_CODE:
-        tokens = text.split()
-        end = len(code) + sum(4 if token[0] in "<[" else 1 for token in tokens)
-        for token in tokens:
-            name = token.strip("<>[]~")
-            if token[0] == "<":
-                code += (places[name] - end).to_bytes(4, "little", signed=True)
-            elif token[0] == "[":
-                code += {"nebula": nebula, "setting": setting}[name].to_bytes(4, "little", signed=True)
-            elif token[0] == "~":
-                code += (jumps[name] - end).to_bytes(1, "little", signed=True)
-            else:
-                code.append(int(token, 16))
-    return bytes(code)
 
 
 def next_float32(value: float) -> float:
@@ -3441,332 +3262,6 @@ def next_float32(value: float) -> float:
     return struct.unpack("<f", (struct.unpack("<I", struct.pack("<f", value))[0] + 1).to_bytes(4, "little"))[
         0
     ]
-
-
-class StarCodeTests(unittest.TestCase):
-    """read_star_shape and star_shape_problem: whether the game's code is what the mod knows."""
-
-    def test_the_shape_names_what_the_function_reads(self):
-        found = mod.read_star_shape(star_function() + bytes(0x81))
-        self.assertEqual(found, dict(STAR_PLACES, nebula=NEBULA_SEED, setting=STAR_SETTING, **STAR_JUMPS))
-        self.assertIsNone(mod.star_shape_problem(found))
-
-    def test_code_that_differs_or_ends_too_soon(self):
-        code = bytearray(star_function())
-        code[0x12] ^= 1  # mov edx, eax
-        self.assertEqual(mod.read_star_shape(bytes(code)), "its code differs at 0x12")
-        self.assertEqual(mod.read_star_shape(star_function()[:0x40]), "its code ends before 0x3f")
-
-    def test_the_count_is_returned_from_one_place(self):
-        code = bytearray(star_function())
-        code[0x7E] += 2  # the last je to return the count goes elsewhere
-        self.assertEqual(mod.read_star_shape(bytes(code)), "its jumps differ at 0x7d")
-        found = mod.read_star_shape(star_function(jumps={"three": 0x9E, "count": 0x9E}))
-        self.assertEqual(mod.star_shape_problem(found), "its jumps don't go where the count's shape says")
-
-    def test_what_it_reads_must_be_where_nms_py_puts_it(self):
-        moved = {
-            "ternary": "the chances it reads aren't where NMS.py puts the sky globals' star chances",
-            "bootMode": "the debug options it reads aren't where NMS.py puts them",
-            "forceTernary": "the debug options it reads aren't where NMS.py puts them",
-            "gameMode": "the game mode it reads isn't where NMS.py puts the application's",
-        }
-        for name, why in moved.items():
-            with self.subTest(name):
-                places = dict(STAR_PLACES, **{name: STAR_PLACES[name] + 4})
-                self.assertEqual(mod.star_shape_problem(mod.read_star_shape(star_function(places))), why)
-        found = mod.read_star_shape(star_function(nebula=NEBULA_SEED + 4))
-        self.assertEqual(
-            mod.star_shape_problem(found),
-            f"it reads the solar system at +{NEBULA_SEED + 4:X}, not at its NebulaSeed (+{NEBULA_SEED:X})",
-        )
-
-
-class StarHelpers:
-    def install_stars(self, code=None, **values):
-        """The game's star count function, as a new mod instance finds it: ``code`` (by default shaped
-        like STAR_COUNT_CODE) at the start of a buffer, with the values it reads after it, and the
-        application data it reads the setting from; ``values`` sets them (see set_star_values)."""
-        self.star_buffer = (ctypes.c_ubyte * 0x4000)()
-        code = star_function() if code is None else code
-        self.star_buffer[: len(code)] = code
-        address = self.game.memory.keep(self.star_buffer)
-        self.star_data = (ctypes.c_ubyte * 0x100)()
-        ctypes.c_uint64.from_buffer(self.star_buffer, STAR_PLACES["data"]).value = self.game.memory.keep(
-            self.star_data
-        )
-        self.set_star_values(
-            **dict({"one": 1.0, "binary": 0.2, "ternary": 0.05, "bootMode": 1, "gameMode": 1}, **values)
-        )
-        stars = mod.StarCount(address, STAR_OFFSET, bytes(self.star_buffer[: mod.STAR_CODE_BYTES]))
-        self._patch("locate_star_count", lambda: stars)
-        self.capture = mod.TradeDepotCapture()
-        return stars
-
-    def set_star_values(self, setting=None, **values) -> None:
-        for name, value in values.items():
-            kind, _ = mod.STAR_VALUES[name]
-            struct.pack_into(kind, self.star_buffer, STAR_PLACES[name], value)
-        if setting is not None:
-            self.star_data[STAR_SETTING] = setting
-
-    def set_nebula_seed(self, value: float) -> None:
-        ctypes.c_float.from_address(self.game.address + NEBULA_SEED).value = value
-
-
-class StarTests(StarHelpers, CaptureTestCase):
-    def test_the_header_holds_the_functions_code_and_the_values_it_reads(self):
-        self.install_stars()
-        self.poll()
-        self.poll()
-        self.assertEqual(
-            self.lines()[0]["starCount"],
-            {
-                "offset": f"{STAR_OFFSET:X}",
-                "code": bytes(self.star_buffer[: mod.STAR_CODE_BYTES]).hex().upper(),
-                "shape": 1,
-                "one": 1.0,
-                "binary": mod.float32(0.2),
-                "ternary": mod.float32(0.05),
-                "forceBinary": 0,
-                "forceTernary": 0,
-                "bootMode": 1,
-                "gameMode": 1,
-                "setting": 0,
-            },
-        )
-
-    def test_stars_are_worked_out_as_the_game_would(self):
-        stars = self.install_stars()
-        binary = mod.float32(1.0 - mod.float32(0.2))  # what the function compares NebulaSeed with
-        ternary = mod.float32(1.0 - mod.float32(0.05))
-        for nebula, count in (
-            (0.5, 1), (binary, 1), (next_float32(binary), 2), (0.9, 2), (ternary, 2), (next_float32(ternary), 3),
-            (math.nan, 1),
-        ):  # fmt: skip
-            with self.subTest(nebula=nebula):
-                self.set_nebula_seed(nebula)
-                self.assertEqual(stars.count(self.game.address), count)
-
-    def test_debug_options_force_two_or_three(self):
-        stars = self.install_stars(forceBinary=1)
-        self.set_nebula_seed(0.99)
-        self.assertEqual(stars.count(self.game.address), 2)
-        self.set_star_values(forceBinary=0, forceTernary=1)
-        self.set_nebula_seed(0.1)
-        self.assertEqual(stars.count(self.game.address), 3)
-
-    def test_the_way_the_mod_doesnt_follow(self):
-        stars = self.install_stars()
-        self.set_nebula_seed(0.9)
-        for values, count in (
-            ({"gameMode": 0, "setting": 1}, None),  # Unspecified, with the setting on
-            ({"gameMode": 6, "setting": 1}, None),  # Seasonal
-            ({"gameMode": 0, "setting": 0}, 2),
-            ({"gameMode": 1, "setting": 1}, 2),  # Normal
-            ({"gameMode": 6, "setting": 1, "bootMode": mod.SCRATCHPAD_BOOT}, 2),
-            ({"gameMode": 6, "setting": 1, "bootMode": 1, "forceTernary": 1}, 3),
-        ):
-            with self.subTest(values):
-                self.set_star_values(**values)
-                self.assertEqual(stars.count(self.game.address), count)
-        self.set_star_values(forceTernary=0)
-        self.poll()
-        self.poll()
-        record = self.lines()[1]
-        self.assertEqual((record.get("starsUnknown"), record.get("gameMode")), (1, 6))
-        self.assertNotIn("stars", record)
-        self.assertEqual(self.capture.stars_here, "Unknown: in game mode 6 the game can count them another way")
-
-    def test_records_hold_the_stars(self):
-        self.install_stars()
-        self.set_nebula_seed(0.9)
-        self.game.generate(self.capture)
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.poll()
-            self.poll()
-        self.assertEqual(
-            [(line["via"], line["stars"]) for line in self.lines()[1:]], [("gen", 2), ("poll", 2)]
-        )
-        self.assertIn("Recorded Shown-Name (03E9F3545C3E, galaxy 1): 3 ships", "\n".join(logs.output))
-        self.assertIn("; 2 stars", "\n".join(logs.output))
-        self.assertEqual(self.capture.stars_here, "2, a binary system")
-
-    def test_the_tab_says_how_many_stars_the_last_system_has(self):
-        self.install_stars()
-        self.assertEqual(self.capture.stars_here, "None yet.")
-        self.set_nebula_seed(0.97)
-        self.poll()
-        self.poll()
-        self.assertEqual(self.lines()[1]["stars"], 3)
-        self.assertEqual(self.capture.stars_here, "3, a trinary system")
-
-    def test_one_star_goes_without_saying(self):
-        self.install_stars()
-        self.set_nebula_seed(0.5)
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.poll()
-            self.poll()
-        self.assertEqual(self.lines()[1]["stars"], 1)
-        self.assertNotIn("star", "\n".join(line for line in logs.output if "Recorded " in line))
-        self.assertEqual(self.capture.stars_here, "1")
-
-    def test_values_it_cant_read_are_reported_once(self):
-        self.install_stars()
-        ctypes.c_uint64.from_buffer(self.star_buffer, STAR_PLACES["data"]).value = 0
-        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
-            self.poll()
-            self.poll()
-            self.capture.record_now()
-            self.capture.on_frame()
-        self.assertNotIn("stars", self.lines()[1])
-        self.assertEqual(
-            sum(
-                "Couldn't work out a system's stars: the values the game counts" in line
-                for line in logs.output
-            ),
-            1,
-        )
-        self.assertEqual(set(self.lines()[0]["starCount"]), {"offset", "code", "shape"})
-
-    def test_code_the_mod_doesnt_know(self):
-        code = bytearray(star_function())
-        code[0x12] ^= 1
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.install_stars(code=bytes(code))
-        self.assertIn("isn't what the mod knows (its code differs at 0x12)", "\n".join(logs.output))
-        self.set_nebula_seed(0.9)
-        self.poll()
-        self.poll()
-        header, record = self.lines()
-        self.assertEqual(
-            (header["starCount"]["shape"], header["starCount"]["why"]), (0, "its code differs at 0x12")
-        )
-        self.assertNotIn("stars", record)
-        self.assertNotIn("starsUnknown", record)
-
-    def test_not_found(self):
-        self._patch("locate_star_count", lambda: "its pattern isn't in this version of the game")
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.capture = mod.TradeDepotCapture()
-        self.assertIn(
-            "Couldn't find the game's star count function (its pattern isn't in this version of the game): "
-            "stars aren't recorded.",
-            "\n".join(logs.output),
-        )
-        self.poll()
-        self.poll()
-        header, record = self.lines()
-        self.assertEqual(header["starCount"], "its pattern isn't in this version of the game")
-        self.assertNotIn("stars", record)
-        self.assertEqual(self.capture.stars_here, "Not worked out; the log says why")
-
-    def test_looking_for_it_fails(self):
-        def broken():
-            raise OSError("no module")
-
-        self._patch("locate_star_count", broken)
-        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
-            self.capture = mod.TradeDepotCapture()
-        self.assertIn("Couldn't look for the game's star count function.", "\n".join(logs.output))
-        self.poll()
-        self.poll()
-        self.assertIsNone(self.lines()[0]["starCount"])
-        self.assertEqual(self.capture.stars_here, "Not worked out; the log says why")
-
-    def test_turned_off(self):
-        self._patch("RECORD_STARS", False)
-        self.capture = mod.TradeDepotCapture()
-        self.set_nebula_seed(0.97)
-        self.poll()
-        self.poll()
-        self.assertNotIn("stars", self.lines()[1])
-        self.assertEqual(self.capture.stars_here, "Off (RECORD_STARS is False)")
-
-    def test_located_only_inside_the_game_and_when_on(self):
-        with mock.patch("pymhf.core.memutils.find_pattern_in_binary") as find:
-            self.assertIsNone(mod.locate_star_count(), "outside the game")
-            with mock.patch.object(mod.pymhf_internal, "BASE_ADDRESS", 0x140000000, create=True):
-                self._patch("RECORD_STARS", False)
-                self.assertIsNone(mod.locate_star_count())
-        find.assert_not_called()
-
-    def test_located_in_the_game(self):
-        buffer = (ctypes.c_ubyte * 0x400)()
-        code = star_function()
-        buffer[: len(code)] = code
-        address = self.game.memory.keep(buffer)
-        base = address - STAR_OFFSET
-        with mock.patch.object(mod.pymhf_internal, "BASE_ADDRESS", base, create=True):
-            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=STAR_OFFSET) as find:
-                stars = mod.locate_star_count()
-            find.assert_called_once_with(mod.STAR_COUNT_PATTERN, False)
-            self.assertEqual((stars.address, stars.offset, stars.why), (address, STAR_OFFSET, None))
-            self.assertEqual(stars.code, bytes(buffer[: mod.STAR_CODE_BYTES]))
-            with mock.patch("pymhf.core.memutils.find_pattern_in_binary", return_value=None):
-                self.assertEqual(mod.locate_star_count(), "its pattern isn't in this version of the game")
-            with mock.patch(
-                "pymhf.core.memutils.find_pattern_in_binary", return_value=STAR_OFFSET + (1 << 40)
-            ):
-                self.assertEqual(mod.locate_star_count(), "its code couldn't be read")
-
-
-class GuildTests(CaptureTestCase):
-    def test_a_guild_button_records_the_guild_with_where_you_are(self):
-        self.game.set_address(UA | (3 << 52))  # on the fourth planet
-        self.capture.guild_explorers()
-        self.assertEqual(self.capture.status, "Recording the Explorers Guild here...")
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.poll()
-        guilds = [line for line in self.lines() if line["t"] == "guild"]
-        self.assertEqual(len(guilds), 1)
-        self.assertEqual(guilds[0]["system"], f"{UA:016X}", "the system, without the planet digit")
-        self.assertEqual(guilds[0]["guild"], "Explorers")
-        self.assertEqual(guilds[0]["loc"], mod.player_location())
-        self.assertIn("where", guilds[0])
-        self.assertIn(
-            "Recorded the Explorers Guild for the region of 03E9F3545C3E, galaxy 1.", "\n".join(logs.output)
-        )
-        self.assertEqual(self.capture.status, "Recorded the Explorers Guild here.")
-        self.assertEqual(self.sounds, ["recorded"])
-
-    def test_each_button_names_its_guild(self):
-        for press, guild in (
-            (self.capture.guild_merchants, "Merchants"),
-            (self.capture.guild_explorers, "Explorers"),
-            (self.capture.guild_mercenaries, "Mercenaries"),
-        ):
-            press()
-            self.capture._record_guild()
-            self.assertEqual(self.capture._pending[-1]["guild"], guild)
-
-    def test_no_guild_without_a_system(self):
-        self.game.loaded = False
-        self.capture.guild_merchants()
-        with self.assertLogs("TradeDepotCapture", "INFO") as logs:
-            self.poll()
-        self.assertIn(
-            "Couldn't record the Merchants Guild: no star system is loaded yet.", "\n".join(logs.output)
-        )
-        self.assertEqual(self.sounds, ["problem"])
-        self.assertEqual([line for line in self.lines() if line["t"] == "guild"], [])
-
-    def test_a_failure_is_reported(self):
-        def broken():
-            raise OSError("unreadable")
-
-        self._patch("active_system", broken)
-        self.capture.guild_mercenaries()
-        with self.assertLogs("TradeDepotCapture", "WARNING") as logs:
-            self.poll()
-        self.assertIn("Couldn't record a guild.", "\n".join(logs.output))
-        self.assertIn("problem", self.sounds)
-
-    def test_one_frame_records_one_press(self):
-        self.capture.guild_merchants()
-        self.poll()
-        self.poll()
-        self.assertEqual(len([line for line in self.lines() if line["t"] == "guild"]), 1)
 
 
 class ApplicationTests(CaptureTestCase):
@@ -3864,8 +3359,8 @@ class SoundTests(unittest.TestCase):
         self.assertGreater(max(map(abs, samples[:800])), 32767 * 0.5 * 0.7)
 
     def test_every_sound_is_a_short_wav(self):
-        self.assertEqual(set(mod.SOUNDS), {"recorded", "exotic parts", "multi-tool", "colors", "problem"})
-        self.assertEqual(len({tuple(notes) for notes in mod.SOUNDS.values()}), 5, "each sound is different")
+        self.assertEqual(set(mod.SOUNDS), {"recorded", "multi-tool", "colors", "problem"})
+        self.assertEqual(len({tuple(notes) for notes in mod.SOUNDS.values()}), 4, "each sound is different")
         for name, notes in mod.SOUNDS.items():
             with self.subTest(name=name):
                 data = mod.tone(notes)
@@ -4011,7 +3506,13 @@ class LauncherTests(unittest.TestCase):
                 self.assertIs(mod.game_running(), expected)
 
 
-class ReportTests(StarHelpers, CaptureTestCase):
+class ReportTests(CaptureTestCase):
+    def rewrite(self, change) -> None:
+        """Change the lines written so far with ``change(lines)``, into what an earlier version wrote."""
+        lines = self.lines()
+        change(lines)
+        self.capture_file.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
     def capture_systems(self) -> report.Captures:
         self.game.generate(self.capture)
         other = (0x079 << 40) | (1 << 32) | 0x01234567
@@ -4112,19 +3613,31 @@ class ReportTests(StarHelpers, CaptureTestCase):
         self.assertEqual(found.layout, ["ships 0-1", "3 other draws", "ship 2"])
         self.assertIsNone(report.locate_ship_stream(UA, ["0123456789ABCDEF"], None, 100).offset)
 
-    def test_stars_and_guilds(self):
-        self.install_stars()  # binary star chance 0.2, ternary 0.05
+    def test_stars_and_guilds_as_earlier_versions_recorded_them(self):
         other = (0x079 << 40) | (1 << 32) | 0x01234567  # in another region
-        for ua, guilds in ((UA, ["explorers", "explorers"]), (other, ["merchants", "mercenaries"])):
+        for ua in (UA, other):
             self.game.set_address(ua)
             self.game.fill(ua, "Abarof-Dulin")
-            self.set_nebula_seed(report.nebula_seed(ua))  # as the game draws it: 0.696 and 0.876
+            # NebulaSeed as the game draws it: 0.696 and 0.876.
+            ctypes.c_float.from_address(self.game.address + NEBULA_SEED).value = report.nebula_seed(ua)
             self.game.generate(self.capture)
             self.poll()
             self.poll()
-            for guild in guilds:
-                getattr(self.capture, f"guild_{guild}")()
-                self.poll()
+        chances = {"one": 1.0, "binary": report.float32(0.2), "ternary": report.float32(0.05)}
+        function = {"offset": "16459B0", "code": "", "shape": 1, **chances, "bootMode": 1, "gameMode": 1}
+
+        def counted(lines: list[dict]) -> None:  # as 0.11.0 to 0.14.0 counted stars
+            lines[0]["starCount"] = function
+            for line in lines[1:]:
+                line["stars"] = 1 if int(line["ua"], 16) == UA else 2
+
+        self.rewrite(counted)
+        region, elsewhere = f"{UA:016X}", f"{other:016X}"
+        self.append(  # as 0.10.0 to 0.14.0 recorded the guilds you clicked
+            *({"t": "guild", "at": 0, "system": region, "guild": "Explorers", "where": 2} for _ in range(2)),
+            {"t": "guild", "at": 0, "system": elsewhere, "guild": "Merchants", "where": 2},
+            {"t": "guild", "at": 0, "system": elsewhere, "guild": "Mercenaries", "where": 2},
+        )
         captures = report.read_captures([self.capture_file])
         self.assertIn("4 guild(s)", "\n".join(report.summary_lines(captures)))
         self.assertEqual(
@@ -4132,7 +3645,7 @@ class ReportTests(StarHelpers, CaptureTestCase):
             [
                 "",
                 "Stars: systems by how many stars the game counts: 1 x1, 2 x1",
-                f"  the game's star count function: found at +{STAR_OFFSET:X}; binary star chance 0.2, "
+                "  the game's star count function: found at +16459B0; binary star chance 0.2, "
                 "ternary 0.05; game mode 1, boot mode 1 (1 session(s))",
                 "  NebulaSeed, which it counts by, is the 9th draw of the system seed's stream: 2/2 systems "
                 "with raw data",
@@ -4161,7 +3674,27 @@ class ReportTests(StarHelpers, CaptureTestCase):
             report.star_guild_lines(captures),
         )
 
-    def test_star_counts_wait_for_the_games_chances(self):
+    def test_without_the_games_chances_stars_are_worked_out_with_those_star_model_has(self):
+        other = (0x079 << 40) | (1 << 32) | 0x01234567
+        for ua in (UA, other):  # as 0.15.0 on records systems: without their stars
+            self.game.set_address(ua)
+            self.game.fill(ua, "Abarof-Dulin")
+            ctypes.c_float.from_address(self.game.address + NEBULA_SEED).value = report.nebula_seed(ua)
+            self.game.generate(self.capture)
+        self.assertEqual(
+            report.star_guild_lines(report.read_captures([self.capture_file])),
+            [
+                "",
+                "Stars: systems by how many stars the game counts: none recorded",
+                "  NebulaSeed, which it counts by, is the 9th draw of the system seed's stream: 2/2 systems "
+                "with raw data",
+                "  worked out from the address with the game's chances as star_model.py has them: 1 x1, 2 x1 "
+                "over 2 systems",
+                "    007901234567 galaxy 1 Abarof-Dulin: 2 stars",
+            ],
+        )
+
+    def test_star_counts_as_0_10_0_recorded_the_function(self):
         self.game.generate(self.capture)
         captures = report.read_captures([self.capture_file])
         captures.sessions[0].header["starCount"] = {"offset": "10", "callable": 0, "why": "instruction E8"}
@@ -4174,9 +3707,22 @@ class ReportTests(StarHelpers, CaptureTestCase):
             "  the game's star count function: found at +10; not called: instruction E8 (1 session(s))", lines
         )
         self.assertIn(
-            "  the game's star chances aren't recorded yet, so counts can't be worked out from addresses",
+            "  worked out from the address with the game's chances as star_model.py has them: 1 x1 over 1 "
+            "systems",
             lines,
         )
+
+    def test_color_variants_for_suns_as_0_13_0_and_0_14_0_recorded_them(self):
+        self.game.generate(self.capture)
+        variants = ["SUN_A", "SUN_B", "SUN_C", "SUN_D", "SUN_E"]  # made up
+        self.append(
+            {"t": "suns", "at": 0, "stars": [{"index": 1, "id": "SUN", "variants": variants},
+                                             {"index": 2, "id": "ODD_SUN", "behaviour": "0BADF00D"}]},
+        )  # fmt: skip
+        lines = report.star_guild_lines(report.read_captures([self.capture_file]))
+        self.assertIn("Color variants for suns, from the game's space POI table, recorded 1 time(s):", lines)
+        self.assertIn("  SUN (entry 1): SUN_A, SUN_B, SUN_C, SUN_D, SUN_E (x1)", lines)
+        self.assertIn("  ODD_SUN (entry 2): behaviour 0BADF00D (x1)", lines)
 
     def test_giant_planets_by_kind(self):
         enums = {
@@ -4246,15 +3792,15 @@ class ReportTests(StarHelpers, CaptureTestCase):
                 self.assertEqual(report._star_function(info), text)
 
     def test_nebula_seed_and_star_count(self):
-        self.assertEqual(report.nebula_seed(UA), mod.float32(0.6958989500999451))
+        self.assertEqual(report.nebula_seed(UA), report.float32(0.6958989500999451))
         # A fraction of the largest draw, 0xFFFFFFFF, not of 2^32: they round apart for this system.
-        self.assertEqual(report.nebula_seed(0x1000136FBEEE7), mod.float32(28072737 / 4294967295.0))
-        self.assertNotEqual(report.nebula_seed(0x1000136FBEEE7), mod.float32(28072737 / 4294967296.0))
+        self.assertEqual(report.nebula_seed(0x1000136FBEEE7), report.float32(28072737 / 4294967295.0))
+        self.assertNotEqual(report.nebula_seed(0x1000136FBEEE7), report.float32(28072737 / 4294967296.0))
         self.assertEqual(report.star_count(0.5, 0.2, 0.05), 1)
-        self.assertEqual(report.star_count(next_float32(mod.float32(0.8)), 0.2, 0.05), 2)
+        self.assertEqual(report.star_count(next_float32(report.float32(0.8)), 0.2, 0.05), 2)
         self.assertEqual(report.star_count(0.96, 0.2, 0.05), 3)
-        chance = mod.float32(0.2)  # as the game keeps it; the function compares with 1 - it, rounded
-        self.assertEqual(report.star_count(mod.float32(1.0 - chance), chance, 0.05), 1)
+        chance = report.float32(0.2)  # as the game keeps it; the function compares with 1 - it, rounded
+        self.assertEqual(report.star_count(report.float32(1.0 - chance), chance, 0.05), 1)
 
     def test_sets_and_offers_against_the_multi_tool_model(self):
         session = report.Session({"enums": {}}, "test")

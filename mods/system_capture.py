@@ -11,6 +11,9 @@
 # log_dir = "{CURR_DIR}"
 # log_level = "info"
 # window_name_override = "Trade Depot capture"
+#
+# [tool.pymhf.gui]
+# shown = true
 # ///
 
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -21,23 +24,20 @@ to the session's file in ``captures`` next to this file, named for your Steam
 ID and when the file was made (see new_capture_file). The line holds the system's
 universal address, its seed, the game's own description of it (name, star,
 race, economy, planets) and ``SystemShips``, the list of ships the game
-prepares for the system, and how many stars it has, worked out as the game's
-own star count function would (see StarCount). The multi-tools the game builds
-for the system as it generates it go on a line of their own, with each one's
-seed and parts, and so does the guild whose envoy you say you saw, with the
-buttons on the mod's tab.
-When the game builds the model of a ship from the system's list, the mod also
-records the parts the game picked for it, with the ship's seed; and when the
-game offers an item, such as a multi-tool to buy or as a gift or reward, what
-the item holds: its inventories, and the seed and parts of its model. To work out
-how the game colors ships and multi-tools, it also records what the game makes
+prepares for the system. The multi-tools the game builds for the system as it
+generates it go on a line of their own, with each one's seed and parts; and
+when the game offers an item, such as a multi-tool to buy or as a gift or
+reward, so does what the item holds: its inventories, and the seed and parts of
+its model. To work out how the game paints ships and multi-tools, it also
+records the paint the game picks for the ships of each system's list and the
+system's multi-tools, with the parts each is made of, and what the game makes
 your own ships, multi-tool and freighter from: each one's seed, the texture
 option picked for each layer of its paint and the colors picked from each
-palette; the paint the game picks for the ships of each system's list and the
-system's multi-tools; and, once a session, the game's color variants for suns.
-The One Million Years Trade Depot uses these lines as ground truth for
-working out how the game picks a system's ships and multi-tools, and what a
-seed makes them look like.
+palette. The One Million Years Trade Depot uses these lines as ground truth
+for working out how the game picks a system's ships and multi-tools, and what
+a seed makes them look like. What its records have already settled, such as how
+many stars a system has and which guild its region's stations have, the mod no
+longer records.
 
 The mod only reads. It changes nothing in the game or your save. Every read
 of game memory goes through ReadProcessMemory, so if NMS.py's struct layouts
@@ -87,10 +87,10 @@ from pymhf import Mod
 from pymhf.core.hooking import Structure, static_function_hook
 from pymhf.gui.decorators import STRING, gui_button
 
-MOD_VERSION = "0.14.0"
+MOD_VERSION = "0.15.0"
 # Bump when the meaning of a field changes; tools/captures/report.py checks it.
 # 2: generation traces, raw system data, display names and query records.
-# (0.3.0 to 0.14.0 only add or drop record types, fields and controls, or let a field hold more
+# (0.3.0 to 0.15.0 only add or drop record types, fields and controls, or let a field hold more
 # kinds of thing, as 0.8.2 does with an item's "tools", so they keep format 2.)
 FORMAT_VERSION = 2
 STEAM_APP_ID = 275850
@@ -108,25 +108,13 @@ STEAM_ID_BASE = 76561197960265728  # an individual Steam account's SteamID64, le
 SAVE_FOLDERS = Path("HelloGames") / "NMS"  # in %APPDATA%: a folder st_<SteamID64> for each Steam account
 IDENTIFIER_FILE = "identifier.txt"
 
-# Record the parts the game picks for each ship of the system's own ship list
-# when it builds the ship's model. This watches a function the game calls for
-# everything it loads; set it to False if the game crashes or loads slowly
-# with the mod, and the mod won't touch that function at all.
-RECORD_SHIP_PARTS = True
 # Record the multi-tools the game makes for each system, and the items it
 # offers, such as a multi-tool on a rack or at a merchant, or as a gift or
-# reward. The seeds and parts of multi-tools come through the same function as
-# the ships', so they need RECORD_SHIP_PARTS too. Set it to False if the game
-# misbehaves near a multi-tool rack with the mod, and the mod won't watch the
-# function that updates items for sale.
+# reward. Multi-tools' seeds and parts come through a function the game calls
+# for everything it loads, Engine::AddResource. Set it to False if the game
+# crashes, loads slowly or misbehaves near a multi-tool rack with the mod, and
+# the mod won't watch that function or the one that updates items for sale.
 RECORD_MULTITOOLS = True
-# Record how many stars each system has. The mod finds the game's own function
-# for it, cGcSolarSystem::GetStarCount, which NMS.py names but can't hook, reads
-# its code, and works the count out the same way from the values it reads
-# (see StarCount). Once a session it also records the game's color variants for
-# suns, which a system's suns are drawn with (see STAR_POI_DATA). Set it to False
-# if the game misbehaves with the mod, and the mod won't look for the function.
-RECORD_STARS = True
 # Record what the game makes your own ships, multi-tool and freighter from, to work out how it colors
 # ships and multi-tools: the seed each one is made from, the texture option it picked for each layer of
 # its paint, and the colors it picked from each palette. The mod watches the function the game makes them
@@ -135,9 +123,9 @@ RECORD_STARS = True
 # mod won't watch that function or read them.
 RECORD_COLORS = True
 # Record the paint the game picks for the ships and multi-tools it makes, the NPCs' as well as yours: the
-# texture option for each layer, and the color it's painted in. The mod watches the function the game picks
-# them with, which NMS.py doesn't name (see PAINT_PATTERN). Set it to False if the game misbehaves with the
-# mod, and the mod won't watch that function.
+# texture option for each layer, and the color it's painted in, with the parts the model is made of. The mod
+# watches the function the game picks them with, which NMS.py doesn't name (see PAINT_PATTERN). Set it to
+# False if the game misbehaves with the mod, and the mod won't watch that function.
 RECORD_PAINT = True
 # Short tones tell you what happened while the log is hidden behind the game.
 PLAY_SOUNDS = True
@@ -148,8 +136,6 @@ SOUND_VOLUME = 0.3  # 0 to 1
 # Notes as (frequency in Hz, seconds); a frequency of 0 is a rest.
 SOUNDS = {
     "recorded": [(880.0, 0.07), (1318.5, 0.12)],  # two rising notes
-    # high, high, higher: the parts of the system's exotic are recorded
-    "exotic parts": [(1318.5, 0.06), (0.0, 0.05), (1318.5, 0.06), (0.0, 0.05), (1760.0, 0.12)],
     # two quick very high notes: a system's multi-tools, or one the game offers, are recorded
     "multi-tool": [(2093.0, 0.05), (0.0, 0.04), (2093.0, 0.05)],
     # three quick rising notes: the colors of one of your ships or multi-tools are recorded
@@ -177,19 +163,8 @@ MAX_NAME_RECORDS = 20_000
 # Ship models: resources whose name holds one of these, and that come with a
 # descriptor (the parts picked and the seed they were picked with).
 SHIP_MODEL_PATHS = ("/SPACECRAFT/",)
-MAX_MODEL_RECORDS = 20_000
 MAX_MODEL_PARTS = 256
 MODEL_NAME_LENGTH = 0x100  # cTkFixedString<0x100>, the game's resource names
-# Ship models built before the mod has read their system's ship list wait this
-# many at a time; those whose seed then isn't in the list (your own ships and
-# other players') are dropped unrecorded.
-WAITING_MODELS = 2_000
-# The first few model records of a session keep the descriptor's raw bytes, to
-# check NMS.py's layout of it against the game.
-RAW_DESCRIPTORS = 20
-# Names of other models with parts that the log mentions, to show what the
-# game builds that isn't a ship.
-OTHER_MODELS_LOGGED = 30
 # Models the game built with a descriptor, kept in memory only, by seed and by
 # resource handle, so that an item the game offers can be paired with its
 # model. Outside a system's set of multi-tools (below), one is written to the
@@ -225,64 +200,6 @@ TOOL_BUILDS_RECORDED = 500  # "built" lines for multi-tool models, per session
 # them. For each item the game offers, the mod reads the one the item's handle picks, as a check
 # on the model it paired the item with.
 MAX_RESOURCES = 1 << 22
-# cGcSolarSystem::GetStarCount, found by the pattern NMS.py gives for it. Its code (as 0.10.0 recorded it
-# in October 2026) counts a system's stars from the system's NebulaSeed, a value of its sky between 0
-# and 1, and two chances in the game's sky globals:
-#     1 + (NebulaSeed > 1 - TernaryStarChance) + (NebulaSeed > 1 - BinaryStarChance)
-# or 2 if the debug option ForceBinaryStar is on, or 3 if ForceTernaryStar is. In two game modes, with a
-# setting on that the mod doesn't know, the function goes on another way, which the mod doesn't follow.
-# The mod doesn't call the function: it checks that its code still has this shape, reads the values the
-# code reads, from the places the code reads them from, and works the count out the same way. Each
-# session's first line holds the function's first STAR_CODE_BYTES and those values.
-STAR_COUNT_PATTERN = "F3 0F 10 0D ? ? ? ? 33 C0 F3 0F 10 91"
-STAR_CODE_BYTES = 256
-# The function's instructions: hex bytes; <name>, an address relative to the next instruction; [name],
-# an offset in the solar system; ~name, where a short jump goes (each ~count goes to the same place).
-STAR_COUNT_CODE = (
-    ("F3 0F 10 0D <one>", "movss xmm1, [one]"),
-    ("33 C0", "xor eax, eax"),
-    ("F3 0F 10 91 [nebula]", "movss xmm2, [rcx + NebulaSeed]"),
-    ("8B D0", "mov edx, eax"),
-    ("0F 28 C1", "movaps xmm0, xmm1"),
-    ("4C 8B C1", "mov r8, rcx"),
-    ("F3 0F 5C 05 <ternary>", "subss xmm0, [TernaryStarChance]"),
-    ("F3 0F 5C 0D <binary>", "subss xmm1, [BinaryStarChance]"),
-    ("0F 2F D0", "comiss xmm2, xmm0"),
-    ("0F 97 C2", "seta dl"),
-    ("0F 2F D1", "comiss xmm2, xmm1"),
-    ("0F 97 C0", "seta al"),
-    ("FF C0", "inc eax"),
-    ("03 D0", "add edx, eax: edx is the count"),
-    ("B8 02 00 00 00", "mov eax, 2"),
-    ("80 3D <forceBinary> 00", "cmp byte [ForceBinaryStar], 0"),
-    ("0F 45 D0", "cmovne edx, eax"),
-    ("80 3D <forceTernary> 00", "cmp byte [ForceTernaryStar], 0"),
-    ("B8 03 00 00 00", "mov eax, 3"),
-    ("75 ~three", "jne to return 3"),
-    ("83 3D <bootMode> 05", "cmp dword [BootMode], Scratchpad"),
-    ("74 ~count", "je to return the count"),
-    ("8B 0D <gameMode>", "mov ecx, [the application's meGameMode]"),
-    ("85 C9", "test ecx, ecx"),
-    ("74 05", "je over the next two: Unspecified"),
-    ("83 F9 06", "cmp ecx, Seasonal"),
-    ("75 ~count", "jne to return the count"),
-    ("48 8B 0D <data>", "mov rcx, [the application's mpData]"),
-    ("80 B9 [setting] 00", "cmp byte [rcx + setting], 0"),
-    ("74 ~count", "je to return the count, or else go on another way"),
-)
-# The values the mod reads where the function's code reads them, as struct formats and sizes.
-STAR_VALUES = {
-    "one": ("<f", 4),
-    "binary": ("<f", 4),
-    "ternary": ("<f", 4),
-    "forceBinary": ("<B", 1),
-    "forceTernary": ("<B", 1),
-    "bootMode": ("<i", 4),
-    "gameMode": ("<I", 4),
-    "data": ("<Q", 8),
-}
-SCRATCHPAD_BOOT = 5  # cGcDebugOptions.BootMode, in which the function returns the count
-STAR_SETTING_MODES = (0, 6)  # cGcGameMode Unspecified and Seasonal, in which the setting matters
 # Other models with parts that aren't ships get a "built" line the first time
 # the game builds each file in a session, for up to this many files.
 OTHER_BUILDS_RECORDED = 500
@@ -352,13 +269,6 @@ SHIP_RESOURCES = 12
 PLAYER_FIRST_SECONDS = 30.0
 PLAYER_EVERY_SECONDS = 60.0
 PLAYER_RECORDS = 12
-# Models the game builds with the seed of one of your ships or multi-tools, recorded at most this many times
-# a session.
-OWN_MODELS_RECORDED = 300
-# The textures of ships and multi-tools the game loads with a descriptor, as it may when it paints them for
-# a seed: recorded (`tex` lines), the first this many of each file and seed a session.
-TEXTURE_FOLDERS = ("/SPACECRAFT/", "/WEAPONS/")
-TEXTURES_RECORDED = 200
 # The paint the game picks for a model it makes (RECORD_PAINT). In the game's code (NMS.exe, October 2026)
 # the task that makes a model first makes the model's 66 palettes from its seed, then hands one function the
 # part of the task that keeps what's picked, the seed and the palettes; for each of the model's samplers
@@ -369,7 +279,8 @@ TEXTURES_RECORDED = 200
 # a recorded system's ship list, of the multi-tools in recorded `pool` and `item` lines, and of yours are
 # written, at most PAINT_RECORDED a session. The others wait in memory, at most PAINT_WAITING of them, up to
 # PAINT_WAIT_SECONDS for such a line to name their seed, which the mod looks for every PAINT_CHECK_SECONDS,
-# and are then dropped unwritten, as other players' are.
+# and are then dropped unwritten, as other players' are. So is a model painted without a seed (NO_SEEDS): the
+# game makes many things that way, anyone's, so there's no telling whose it is.
 PAINT_PATTERN = (
     "4C 89 4C 24 ? 48 89 54 24 ? 55 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 ? 48 81 EC ? ? ? ? 8B"
 )
@@ -386,26 +297,16 @@ PAINT_TASK_PART = 0x1D8
 PAINT_TASK_FILE = 0x28
 PAINT_TASK_DESCRIPTOR = 0x128
 PAINT_PART_OPTIONS = 0x10
-# 0.13.0's captures showed that a ship's paint takes its colors from the palettes the game makes from the
-# ship's seed, and a freighter's or a frigate's from those of its system's seed; a multi-tool's from neither.
-# So for multi-tools the mod also records the palettes the function was handed: PALETTE_COUNT of PALETTE_ENTRY
-# bytes, each five colors and then their places in the palette (at PALETTE_PLACES); and for every model,
-# whether the task was told to use the game's older palettes (a flag at PAINT_TASK_LEGACY), and the color it
-# was told to paint with, if it was.
+# 0.13.0's and 0.14.0's captures showed where the colors come from: a ship's from the palettes the game makes
+# from the ship's seed, a freighter's or a frigate's from those of its system's seed, and a multi-tool's, which
+# the game is told to make with its older palettes, from those it makes the older way from the multi-tool's
+# seed. So for every model the mod records whether the task was told to use the older palettes (a flag at
+# PAINT_TASK_LEGACY) and the color it was told to paint with, if it was; and the palettes the function was
+# handed only for a multi-tool of yours or one not made with the older palettes: PALETTE_COUNT of
+# PALETTE_ENTRY bytes, each five colors and then their places in the palette (at PALETTE_PLACES).
 PAINT_TASK_LEGACY = 0x1C9
 PALETTE_ENTRY = 0x70
 PALETTE_PLACES = 0x50
-# A system's suns (RECORD_STARS). In the game's code (NMS.exe, October 2026) each sun is a copy of the
-# system's one space POI of type Star, numbered from 0, the main sun, by how many stars the system has. The
-# behaviour of that POI's entry in the game's space POI table is a cGcSpacePoiStarData, whose ColourVariants
-# name five color variants for suns; sun number k is drawn with the one at (the system's star type + k) mod 5.
-# The game tells a behaviour's class by a hash of its name, STAR_POI_DATA, next to the pointer to it. Once a
-# session, the mod records each Star entry of the table with the names (a `suns` line), looking for the table
-# every SUNS_RETRY_SECONDS until the game has loaded it.
-STAR_POI_DATA = 0x72DD9DBF
-MAX_POI_ITEMS = 1024
-MAX_POI_TYPE = 0xFF  # a type beyond this means the table isn't where, or as, NMS.py says
-SUNS_RETRY_SECONDS = 10.0
 NAME_LENGTH = 0x7F  # cTkFixedString<0x7F>, what the name generator writes
 MAX_SHIPS = 512
 MAX_LOCATORS = 4096
@@ -413,6 +314,8 @@ MAX_READ = 1 << 20
 MASK64 = (1 << 64) - 1
 PLANET_BITS = 0xF << 52  # the planet digit of a universal address
 ZERO_SEED = "0" * 16
+# Not seeds: what the game gives the many models it makes without one, whoever's they are.
+NO_SEEDS = (ZERO_SEED, "F" * 16)
 
 logger = logging.getLogger("TradeDepotCapture")
 
@@ -559,21 +462,6 @@ class Layout:
         # The customisations as one region: as many bytes as the biggest a customisation may be (see
         # CUSTOMISATION_READ) times how many there are.
         self.customisations_size = CUSTOMISATION_SLOTS * max(CUSTOMISATION_READ, self.customisation_size)
-        # The game's space POI table, for its color variants for suns (see STAR_POI_DATA).
-        item = nmse.cGcSpacePoiTableItem
-        self.application_data = nms.cGcApplication.mpData.offset
-        self.poi_table = (
-            nms.cGcApplication.Data.mRealityManager.offset + nms.cGcRealityManager.mpSpacePoiTable.offset
-        )
-        self.poi_items = nmse.cGcSpacePoiTable.Items.offset
-        self.poi_item_size = ctypes.sizeof(item)
-        self.poi_id = item.Id.offset
-        self.poi_behaviour = item.Behaviour.offset
-        self.poi_type = item.Type.offset
-        variants = dict(nmse.cGcSpacePoiStarData._fields_)["ColourVariants"]  # a ctypes array of names
-        self.star_variants = nmse.cGcSpacePoiStarData.ColourVariants.offset
-        self.star_variant_size = ctypes.sizeof(variants._type_)
-        self.star_variant_count = variants._length_
 
     def color_layout(self) -> dict:
         """Where the mod reads your ships and their customisations, as NMS.py places them, for the
@@ -593,20 +481,6 @@ class Layout:
             },
             "colorSets": [f"{offset:X}" for offset in self.color_sets],
         }  # fmt: skip
-
-    def poi_layout(self) -> dict:
-        """Where the mod reads the game's space POI table, as NMS.py places it, for the session header."""
-        return {
-            "table": f"{self.application_data:X}>{self.poi_table:X}",
-            "items": f"{self.poi_items:X}",
-            "itemSize": self.poi_item_size,
-            "fields": {
-                "id": f"{self.poi_id:X}",
-                "behaviour": f"{self.poi_behaviour:X}",
-                "type": f"{self.poi_type:X}",
-            },
-            "variants": [f"{self.star_variants:X}", self.star_variant_size, self.star_variant_count],
-        }
 
 
 LAYOUT = Layout()
@@ -868,8 +742,7 @@ def galaxy_attributes(attributes) -> dict:
         "wealth": as_int(star.TradingData.WealthClass),
         "conflict": as_int(star.ConflictData),
         "anomaly": as_int(star.Anomaly),
-        # A value of the region the system is in, recorded to compare with the guild seen there.
-        "regionColour": number(voxel.RegionColourValue),
+        "regionColour": number(voxel.RegionColourValue),  # a value the game keeps for the system's region
         "planets": as_int(star.NumberOfPlanets),
         "prime": as_int(star.NumberOfPrimePlanets),
         "spacePois": as_int(star.NumberOfSpacePois),
@@ -997,8 +870,9 @@ def read_c_string(address: int, limit: int) -> str | None:
     return text_bytes.decode("utf-8", errors="backslashreplace")
 
 
-def resource_descriptor(address: int, keep_raw: bool = False) -> dict | None:
-    """The parts and seeds in a cTkResourceDescriptor, or None if it has neither.
+def resource_descriptor(address: int) -> dict | None:
+    """The parts and seeds in a cTkResourceDescriptor, or None if it has neither; with its bytes (``raw``)
+    if its parts couldn't be read.
 
     The game hands one of these over with each model it builds: the IDs of
     the parts it picked and the seed it picked them with.
@@ -1019,7 +893,6 @@ def resource_descriptor(address: int, keep_raw: bool = False) -> dict | None:
     found["parts"] = part_ids(pointer, count, problems)
     if problems:
         found["errors"] = problems
-    if problems or keep_raw:
         found["raw"] = raw.hex().upper()
     return found
 
@@ -1058,12 +931,6 @@ def is_multitool_model(name: str) -> bool:
         and not any(folder in path for folder in NOT_MULTITOOL_DIRS)
         and not is_ship_model(name)
     )
-
-
-def is_texture(name: str) -> bool:
-    """Whether ``name`` is one of the textures of a ship or a multi-tool."""
-    path = name.replace("\\", "/").upper()
-    return path.startswith("TEXTURES/") and any(folder in path for folder in TEXTURE_FOLDERS)
 
 
 def is_painted_model(name: str) -> bool:
@@ -1337,13 +1204,14 @@ def own_seeds(ships_raw: bytes | None, region: bytes | None) -> dict[str, str]:
     """The seeds of your ships and of your customisations, with what each is ("ship 3", your fourth ship;
     "slot 2 at 3A78", the third customisation if they're 0x3A78 bytes apart), from the bytes of your ships
     (see player_ships) and of the region your customisations are in. A seed below 2^32 is left out: a
-    customisation's place read at the wrong distance is likelier to hold a small number than a seed."""
+    customisation's place read at the wrong distance is likelier to hold a small number than a seed. So is
+    FFFFFFFFFFFFFFFF, which an empty place holds, as the game gives it to many things made without a seed."""
     seeds: dict[str, str] = {}
     if ships_raw is not None:
         at_seed = nmse.cGcResourceElement.Seed.offset
         for place in range(len(ships_raw) // LAYOUT.ship_resource_size):
             at = place * LAYOUT.ship_resource_size + at_seed
-            if (value := int.from_bytes(ships_raw[at : at + 8], "little")) >= 1 << 32:
+            if 1 << 32 <= (value := int.from_bytes(ships_raw[at : at + 8], "little")) < MASK64:
                 seeds.setdefault(hex64(value), f"ship {place}")
     if region is not None:
         for stride in customisation_strides():
@@ -1351,7 +1219,7 @@ def own_seeds(ships_raw: bytes | None, region: bytes | None) -> dict[str, str]:
                 at = slot * stride + LAYOUT.custom_seed
                 if (
                     at + 8 <= len(region)
-                    and (value := int.from_bytes(region[at : at + 8], "little")) >= 1 << 32
+                    and 1 << 32 <= (value := int.from_bytes(region[at : at + 8], "little")) < MASK64
                 ):
                     seeds.setdefault(hex64(value), f"slot {slot} at {stride:X}")
     return seeds
@@ -1724,197 +1592,6 @@ def system_display_name(address: int) -> str | None:
     return text(buffer) or None
 
 
-# --- How many stars a system has ---
-
-
-def float32(value: float) -> float:
-    """``value`` rounded to the nearest 32-bit float, as the game's float arithmetic rounds."""
-    return struct.unpack("<f", struct.pack("<f", value))[0]
-
-
-def read_star_shape(code: bytes) -> dict[str, int] | str:
-    """Match ``code`` against STAR_COUNT_CODE: what each name in it stands for (an offset from the start
-    of the code for <name> and ~name, the displacement itself for [name]), or why it doesn't match."""
-    at = 0
-    found: dict[str, int] = {}
-    for text, _ in STAR_COUNT_CODE:
-        tokens = text.split()
-        end = at + sum(4 if token[0] in "<[" else 1 for token in tokens)
-        if end > len(code):
-            return f"its code ends before {at:#x}"
-        position, named = at, []
-        for token in tokens:
-            size = 4 if token[0] in "<[" else 1 if token[0] == "~" else 0
-            if size:
-                named.append((token, int.from_bytes(code[position : position + size], "little", signed=True)))
-                position += size
-            elif code[position] != int(token, 16):
-                return f"its code differs at {position:#x}"
-            else:
-                position += 1
-        for token, value in named:
-            name = token.strip("<>[]~")
-            resolved = value if token[0] == "[" else end + value  # rip-relative and jumps count from the end
-            if token[0] == "~" and found.get(name, resolved) != resolved:
-                return f"its jumps differ at {at:#x}"
-            found[name] = resolved
-        at = end
-    return found
-
-
-def star_shape_problem(found: dict[str, int]) -> str | None:
-    """Why what the matched code reads doesn't match where NMS.py says those values are, or None."""
-    sky, debug, application = nmse.cGcSkyGlobals, nmse.cGcDebugOptions, nms.cGcApplication
-    nebula = LAYOUT.data + nmse.cGcSolarSystemData.Sky.offset + nmse.cGcSpaceSkyProperties.NebulaSeed.offset
-    if found["nebula"] != nebula:
-        return f"it reads the solar system at +{found['nebula']:X}, not at its NebulaSeed (+{nebula:X})"
-    if found["ternary"] - found["binary"] != sky.TernaryStarChance.offset - sky.BinaryStarChance.offset:
-        return "the chances it reads aren't where NMS.py puts the sky globals' star chances"
-    force = debug.ForceTernaryStar.offset - debug.ForceBinaryStar.offset
-    boot = debug.BootMode.offset - debug.ForceBinaryStar.offset
-    if (
-        found["forceTernary"] - found["forceBinary"] != force
-        or found["bootMode"] - found["forceBinary"] != boot
-    ):
-        return "the debug options it reads aren't where NMS.py puts them"
-    if found["gameMode"] - found["data"] != application.meGameMode.offset - application.mpData.offset:
-        return "the game mode it reads isn't where NMS.py puts the application's"
-    if found["three"] == found["count"]:
-        return "its jumps don't go where the count's shape says"
-    return None
-
-
-class StarCount:
-    """cGcSolarSystem::GetStarCount, found in the game by STAR_COUNT_PATTERN: where it is, its first
-    bytes, and, if its code has the shape of STAR_COUNT_CODE, where the values it reads are, so that the
-    mod can read them and work a system's star count out as the function would."""
-
-    def __init__(self, address: int, offset: int, code: bytes):
-        self.address, self.offset, self.code = address, offset, code
-        found = read_star_shape(code)
-        self.why = found if isinstance(found, str) else star_shape_problem(found)
-        self.places: dict[str, int] = {}
-        if self.why is None:
-            self.nebula, self.setting = found["nebula"], found["setting"]
-            self.places = {name: address + found[name] for name in STAR_VALUES}
-
-    def settings(self) -> dict | None:
-        """The values the function reads besides the solar system's, now: None if one can't be read."""
-        values: dict = {}
-        for name, (kind, size) in STAR_VALUES.items():
-            raw = read_memory(self.places[name], size)
-            if raw is None:
-                return None
-            values[name] = struct.unpack(kind, raw)[0]
-        data = values.pop("data")
-        raw = read_memory(data + self.setting, 1) if data else None
-        if raw is None:
-            return None
-        values["setting"] = raw[0]
-        return values
-
-    def count(self, system: int) -> int | None:
-        """How many stars the solar system at ``system`` has, worked out as the function would; None if
-        the function would take the way the mod doesn't know (see STAR_COUNT_CODE). Raises CaptureError
-        if what it reads can't be read."""
-        values = self.settings()
-        raw = read_memory(system + self.nebula, 4) if values is not None else None
-        if raw is None:
-            raise CaptureError("the values the game counts a system's stars by couldn't be read")
-        nebula = struct.unpack("<f", raw)[0]
-        stars = 1 + (nebula > float32(values["one"] - values["ternary"]))
-        stars += nebula > float32(values["one"] - values["binary"])
-        if values["forceBinary"]:
-            stars = 2
-        if values["forceTernary"]:
-            return 3
-        if values["bootMode"] == SCRATCHPAD_BOOT or values["gameMode"] not in STAR_SETTING_MODES:
-            return stars
-        return None if values["setting"] else stars
-
-    def info(self) -> dict:
-        """What the session header says of the function: its code, and the values it reads now."""
-        found = {
-            "offset": f"{self.offset:X}",
-            "code": self.code.hex().upper(),
-            "shape": int(self.why is None),
-        }
-        if self.why is not None:
-            found["why"] = self.why
-        elif (values := self.settings()) is not None:
-            found.update(values)
-        return found
-
-
-def locate_star_count() -> StarCount | str | None:
-    """The game's GetStarCount, or why it couldn't be found; None if RECORD_STARS is off or the mod
-    isn't running inside the game."""
-    base = getattr(pymhf_internal, "BASE_ADDRESS", -1)
-    if not RECORD_STARS or not isinstance(base, int) or base <= 0:
-        return None
-    from pymhf.core.memutils import find_pattern_in_binary
-
-    offset = find_pattern_in_binary(STAR_COUNT_PATTERN, False)
-    if offset is None:
-        return "its pattern isn't in this version of the game"
-    code = read_memory(base + offset, STAR_CODE_BYTES)
-    if code is None:
-        return "its code couldn't be read"
-    return StarCount(base + offset, offset, code)
-
-
-def application_data() -> int | None:
-    """Where the game's application data is (cGcApplication::Data), or None while NMS.py hasn't found
-    the game."""
-    application = gameData.GcApplication
-    if not isinstance(application, ctypes.Structure):
-        return None
-    return read_u64(ctypes.addressof(application) + LAYOUT.application_data) or None
-
-
-def star_pois() -> list[dict] | None:
-    """The Star entries of the game's space POI table (see STAR_POI_DATA): each one's place in the table
-    and ID, and the names of the color variants for suns that its behaviour holds (``variants``), or the hash
-    of its behaviour's class (``behaviour``) if that isn't cGcSpacePoiStarData. None while the table can't be
-    read; raises CaptureError if what's read there doesn't look like the table."""
-    data = application_data()
-    table = read_u64(data + LAYOUT.poi_table) if data else None
-    header = read_memory(table + LAYOUT.poi_items, 12) if table else None
-    if header is None:
-        return None
-    pointer, count = struct.unpack("<QI", header)
-    if not count:
-        return None  # not loaded yet
-    if not pointer or count > MAX_POI_ITEMS:
-        raise CaptureError(f"implausible space POI table (count {count}, pointer {pointer:#x})")
-    size = LAYOUT.poi_item_size
-    raw = read_memory(pointer, count * size)
-    if raw is None:
-        raise CaptureError("the space POI table couldn't be read")
-    stars: list[dict] = []
-    for index in range(count):
-        item = raw[index * size : (index + 1) * size]
-        kind = int.from_bytes(item[LAYOUT.poi_type : LAYOUT.poi_type + 4], "little")
-        if kind > MAX_POI_TYPE:
-            raise CaptureError(f"implausible space POI type {kind} in entry {index}")
-        if kind != enums.cGcSpacePoiType.Star:
-            continue
-        name = item[LAYOUT.poi_id : LAYOUT.poi_id + 16].split(b"\0", 1)[0]
-        star: dict = {"index": index, "id": name.decode("utf-8", errors="backslashreplace")}
-        behaviour, hashed = struct.unpack_from("<QI", item, LAYOUT.poi_behaviour)
-        length, many = LAYOUT.star_variant_size, LAYOUT.star_variant_count
-        names = None
-        if hashed == STAR_POI_DATA and behaviour:
-            names = read_memory(behaviour + LAYOUT.star_variants, length * many)
-        if names is None:
-            star["behaviour"] = f"{hashed:08X}"
-        else:
-            texts = (names[i * length : (i + 1) * length].split(b"\0", 1)[0] for i in range(many))
-            star["variants"] = [name.decode("utf-8", errors="backslashreplace") for name in texts]
-        stars.append(star)
-    return stars
-
-
 def paint_layout() -> dict:
     """Where the mod reads the paint the game picks (see PAINT_PATTERN), for the session header."""
     return {
@@ -2077,12 +1754,6 @@ def _guarded(read, *args):
         return f"error: {exc}"
 
 
-def star_info(stars: StarCount | str | None) -> dict | str | None:
-    """What the session header says of the game's star count function (see StarCount.info), or why it
-    wasn't found."""
-    return stars.info() if isinstance(stars, StarCount) else stars
-
-
 def session_header(mod: Mod | None = None) -> dict:
     return {
         "t": "session",
@@ -2092,13 +1763,10 @@ def session_header(mod: Mod | None = None) -> dict:
         "exe": str(getattr(pymhf_internal, "BINARY_HASH", "") or "") or None,
         "steamBuild": _guarded(steam_build, getattr(pymhf_internal, "BINARY_PATH", None)),
         "hooks": _guarded(hook_status, mod) if mod is not None else None,
-        # The game's star count function, or why it wasn't found (see StarCount).
-        "starCount": _guarded(star_info, getattr(mod, "_stars", None)),
         # Where the mod reads your ships and their customisations, if it does (RECORD_COLORS).
         "colorLayout": _guarded(LAYOUT.color_layout) if RECORD_COLORS else None,
-        # Where it reads the paint the game picks (RECORD_PAINT), and the ways it draws suns (RECORD_STARS).
+        # Where it reads the paint the game picks (RECORD_PAINT).
         "paintLayout": paint_layout() if RECORD_PAINT else None,
-        "poiLayout": _guarded(LAYOUT.poi_layout) if RECORD_STARS else None,
         "nmspy": package_version("nmspy"),
         "pymhf": package_version("pymhf"),
         "python": platform.python_version(),
@@ -2137,26 +1805,7 @@ def describe(record: dict) -> str:
         pool = f"{len(ships)} ships"
         if counts:
             pool += " (" + ", ".join(f"{ship_label(c)} {n}" for c, n in counts.most_common()) + ")"
-    stars = record.get("stars")
-    if isinstance(stars, int) and stars != 1:
-        pool += f"; {stars} stars"
     return f"{name} ({where}): {pool}"
-
-
-# What the mod's tab says of a system's stars, by how many.
-STAR_LABELS = {1: "1", 2: "2, a binary system", 3: "3, a trinary system"}
-
-
-def stars_label(record: dict) -> str:
-    """How many stars a recorded system has, as the mod's tab says it."""
-    stars = record.get("stars")
-    if isinstance(stars, int):
-        return STAR_LABELS.get(stars, str(stars))
-    if record.get("starsUnknown"):
-        return f"Unknown: in game mode {record.get('gameMode')} the game can count them another way"
-    if not RECORD_STARS:
-        return "Off (RECORD_STARS is False)"
-    return "Not worked out; the log says why"
 
 
 def tone(notes: list[tuple[float, float]], volume: float = SOUND_VOLUME, rate: int = 22050) -> bytes:
@@ -2234,8 +1883,8 @@ class TradeDepotCapture(Mod):
     __author__ = "One Million Years Trade Depot contributors"
     __description__ = (
         "Records each star system you visit, the ships the game prepares for it "
-        "and the parts it picks for them, the items the game offers, such as multi-tools, "
-        "and the colors of your own ships and multi-tool."
+        "and the paint and parts it picks for them, the items the game offers, such as "
+        "multi-tools, and the colors of your own ships and multi-tool."
     )
     __version__ = MOD_VERSION
     __pymhf_required_version__ = "0.2.4"
@@ -2244,18 +1893,14 @@ class TradeDepotCapture(Mod):
     # still being set up.
     _status = "Waiting for a star system to load."
     _last = "None yet."
-    _stars_here = "None yet."
     _count = 0
     _query_count = 0
     _name_count = 0
-    _model_count = 0
-    _ship_models_seen = 0
     _tool_count = 0
     _pool_count = 0
     _offer_count = 0
     _item_count = 0
     _custom_count = 0
-    _own_count = 0
     _player_count = 0
 
     def __init__(self):
@@ -2288,17 +1933,9 @@ class TradeDepotCapture(Mod):
         self._first_frame: float | None = None
         self._waiting_for_game = False
         self._game_found = False
-        # Ship models. The ship seeds of the last few systems read, newest last, as
-        # system -> {seed: (slot, ship class)}; models built before their system was read;
-        # models written; distinct ship models seen; other models the log has mentioned;
-        # exotics whose tone has played.
-        self._ship_systems: dict[int, dict[str, tuple[int | str, int | None]]] = {}
-        self._waiting_models: dict[tuple, dict] = {}
-        self._model_keys: set[tuple] = set()
-        self._seen_models: set[tuple] = set()
-        self._other_models: set[str] = set()
-        self._exotics_heard: set[str] = set()
-        self._raw_descriptors = 0
+        # The ship seeds of the last few systems read, newest last, as system -> {seed: slot}, so that the
+        # paint of a system's ships, and items holding one, can be told from other players' ships.
+        self._ship_systems: dict[int, dict[str, int | str]] = {}
         # Items and their models. Models built lately with a descriptor, in memory only, as
         # seed -> [model] and resource handle -> model (None once the game has handed the
         # handle to something else); models being built, by (thread, address of the handle the
@@ -2332,8 +1969,7 @@ class TradeDepotCapture(Mod):
         # read again, by address; when each address was last read; the files of other customisations
         # written; the seeds of your ships and customisations, with what each is; seeds whose tone has
         # played; your player state: what it held when last written, how often it was, when it's next due,
-        # whether you clicked the button, whether a customisation was written since; models written with
-        # one of your seeds.
+        # whether you clicked the button, whether a customisation was written since.
         self._custom_keys: set[tuple] = set()
         self._custom_watch: dict[int, dict] = {}
         self._custom_read: dict[int, float] = {}
@@ -2348,8 +1984,6 @@ class TradeDepotCapture(Mod):
         self._player_armed = False  # whether the first record of your ships has been made due
         self._player_requested = False
         self._custom_since_player = False
-        self._own_model_keys: set[tuple] = set()
-        self._texture_keys: set[tuple] = set()  # textures written, by (file, seed, parts)
         # Paint (RECORD_PAINT): written, by (file, seed, model seed, kept); waiting for a line to name their
         # seed, by the same, with when they started waiting; how many written; whether the log has said so.
         self._paint_keys: set[tuple] = set()
@@ -2357,10 +1991,6 @@ class TradeDepotCapture(Mod):
         self._next_paint_check = 0.0
         self._paint_count = 0
         self._paint_logged = False
-        # The color variants for suns (RECORD_STARS): whether they're recorded this session, and when to look
-        # for them next.
-        self._suns_recorded = False
-        self._next_suns = 0.0
         # Resources the game has loaded, and how many came with a descriptor, for the log.
         self._resources = 0
         self._described = 0
@@ -2371,31 +2001,11 @@ class TradeDepotCapture(Mod):
         except Exception:
             logger.warning("Couldn't prepare the sounds.", exc_info=True)
         logger.info("Trade Depot capture %s is recording to a new file in %s", MOD_VERSION, CAPTURE_DIR)
-        if RECORD_MULTITOOLS and RECORD_SHIP_PARTS:
+        if RECORD_MULTITOOLS:
             logger.info(
                 "A system's multi-tools are recorded as you arrive. To record the one on offer, with its "
                 "class and slots, go up to the space station's multi-tool case or a settlement's "
                 "multi-tool rack and look at what's for sale."
-            )
-        # The game's star count function (see StarCount), or why it wasn't found, for the session header.
-        self._stars: StarCount | str | None = None
-        self._guild_requested: str | None = None
-        try:
-            self._stars = locate_star_count()
-        except Exception:
-            self._report_once("stars-find", "Couldn't look for the game's star count function.")
-        if isinstance(self._stars, StarCount):
-            if self._stars.why is None:
-                logger.info("Found the game's star count function: each system's stars are recorded.")
-            else:
-                logger.info(
-                    "Found the game's star count function, but its code isn't what the mod knows (%s), so "
-                    "stars aren't recorded. Its code goes in the capture file, to update the mod from.",
-                    self._stars.why,
-                )
-        elif self._stars is not None:
-            logger.info(
-                "Couldn't find the game's star count function (%s): stars aren't recorded.", self._stars
             )
 
     # --- GUI (read on the GUI thread, so these only return cached values) ---
@@ -2421,19 +2031,10 @@ class TradeDepotCapture(Mod):
         return str(self._name_count)
 
     @property
-    @STRING("Ship parts recorded")
-    def ship_parts(self):
-        if not RECORD_SHIP_PARTS:
-            return "Off (RECORD_SHIP_PARTS is False)"
-        return f"{self._model_count} of {self._ship_models_seen} ship models seen"
-
-    @property
     @STRING("Multi-tools recorded")
     def multitools(self):
         if not RECORD_MULTITOOLS:
             return "Off (RECORD_MULTITOOLS is False)"
-        if not RECORD_SHIP_PARTS:
-            return "Off: needs RECORD_SHIP_PARTS too"
         return (
             f"{self._tool_count} in {self._pool_count} systems' sets; {self._offer_count} on offer "
             f"(items recorded: {self._item_count})"
@@ -2444,10 +2045,7 @@ class TradeDepotCapture(Mod):
     def colors(self):
         if not RECORD_COLORS:
             return "Off (RECORD_COLORS is False)"
-        return (
-            f"{self._custom_count} customisations, {self._own_count} models of yours; your ships "
-            f"{self._player_count} times"
-        )
+        return f"{self._custom_count} customisations; your ships {self._player_count} times"
 
     @property
     @STRING("Paint recorded")
@@ -2462,11 +2060,6 @@ class TradeDepotCapture(Mod):
         return self._last
 
     @property
-    @STRING("Stars in the last system")
-    def stars_here(self):
-        return self._stars_here
-
-    @property
     @STRING("Capture file")
     def capture_file(self):
         if self._capture_file is None:
@@ -2478,20 +2071,6 @@ class TradeDepotCapture(Mod):
         # The game thread does the reading, on its next frame.
         self._record_requested = True
         self._status = "Recording the current system..."
-
-    # The guild envoy on a space station's upper level says which guild a region's stations have. The game
-    # decides it where the mod can't read it yet, so you say which, and the mod records it with the system.
-    @gui_button("Guild envoy here: Merchants")
-    def guild_merchants(self):
-        self._request_guild("Merchants")
-
-    @gui_button("Guild envoy here: Explorers")
-    def guild_explorers(self):
-        self._request_guild("Explorers")
-
-    @gui_button("Guild envoy here: Mercenaries")
-    def guild_mercenaries(self):
-        self._request_guild("Mercenaries")
 
     @gui_button("Record your ships' colors now")
     def record_colors(self):
@@ -2514,7 +2093,7 @@ class TradeDepotCapture(Mod):
 
     @nms.cGcSolarSystem.Generate.before
     def before_generate(self, this, lbUseSettingsFile, lSeed):
-        if RECORD_SHIP_PARTS and RECORD_MULTITOOLS:
+        if RECORD_MULTITOOLS:
             # The system's set: the run of multi-tools built just before (see POOL_LEAD_SECONDS), then
             # those this thread builds until Generate returns; those other threads build meanwhile are
             # only counted.
@@ -2595,7 +2174,7 @@ class TradeDepotCapture(Mod):
     def after_region_name(self, this, lu64Seed, lResult, lLocResult):
         self._named("region", lu64Seed, lResult, lLocResult)
 
-    if RECORD_SHIP_PARTS:  # otherwise the mod leaves this function alone
+    if RECORD_MULTITOOLS:  # otherwise the mod leaves these functions alone
         # Engine::AddResource(type, name, flags, descriptor) loads a resource for the game.
         # NMS.py 180383 lists the resource manager's own AddResource among the functions whose
         # pattern no longer finds them; this one's still does. NMS.py calls the descriptor
@@ -2607,9 +2186,8 @@ class TradeDepotCapture(Mod):
             try:
                 self._model_requested(liType, lpcName, lAlternateMaterialId, result)
             except Exception:
-                self._report_once("model", "Couldn't record a ship's parts.")
+                self._report_once("model", "Couldn't note a model the game built.")
 
-    if RECORD_SHIP_PARTS and RECORD_MULTITOOLS:  # otherwise the mod leaves these functions alone
         # Once AddResource returns, the handle it filled in names the model it built; an item
         # the game offers holds the handle of its model.
         @nms.Engine.AddResource.after
@@ -2669,10 +2247,8 @@ class TradeDepotCapture(Mod):
     def on_frame(self):
         try:
             self._watch_for_game(time.monotonic())
-            self._record_guild()
             self._colors(time.monotonic())
             self._resolve_paint(time.monotonic())
-            self._record_suns(time.monotonic())
             self._flush_pending()
             self._poll()
             self._count_resources(time.monotonic())
@@ -2777,124 +2353,54 @@ class TradeDepotCapture(Mod):
             self._report_once("name-hook", "Couldn't record a planet or region name.")
 
     def _model_requested(self, type_value, name_pointer, descriptor_pointer, result_pointer=None) -> None:
-        """The game is about to build a model: note its parts if it's a ship from a system's ship list,
-        and keep it in memory for a while, for an item the game offers to be paired with."""
+        """The game is about to build a model from a descriptor: keep it in memory for a while, for an item
+        the game offers to be paired with, and add a multi-tool's to the set of the system being generated."""
         self._resources += 1  # counts for the log; a miss when threads race doesn't matter
         address = address_of(descriptor_pointer)
         if not address:
             return
-        descriptor = resource_descriptor(address, keep_raw=self._raw_descriptors < RAW_DESCRIPTORS)
+        descriptor = resource_descriptor(address)
         if descriptor is None:
             return
         self._described += 1
         name = read_c_string(address_of(name_pointer), MODEL_NAME_LENGTH)
-        if not name:
-            return
-        resource_type = as_int(type_value)
-        if RECORD_COLORS and is_texture(name):
-            self._texture_requested(name, resource_type, descriptor)
-            return
-        # One of yours? Asked without the lock, which _own_model takes: a miss now and then is harmless.
-        if RECORD_COLORS and descriptor["seed"] in self._own_seeds:
-            self._own_model(name, resource_type, descriptor)
-        if RECORD_MULTITOOLS:
-            entry = self._model_built(name, resource_type, descriptor, address_of(result_pointer))
-            if is_multitool_model(name):
-                self._join_pool(entry)
+        if not name or not name.replace("\\", "/").upper().startswith("MODELS/"):
+            return  # not a model: a texture, say, which the game may load with a descriptor too
+        entry = self._model_built(name, as_int(type_value), descriptor, address_of(result_pointer))
         if is_multitool_model(name):
+            self._join_pool(entry)
             self._multitool_model_built(name, len(descriptor["parts"]))
-            return
-        if not is_ship_model(name):
-            if descriptor["parts"]:
-                self._other_model(
-                    name, f"not a ship, so its parts aren't recorded ({len(descriptor['parts'])} parts)"
-                )
-            return
-        if not descriptor["parts"] and "errors" not in descriptor:
-            self._other_model(
-                name, f"a ship's, but without parts, so not recorded (resource type {resource_type})"
-            )
-            return
-        entry = {"name": name, "type": resource_type, **descriptor}
-        key = (name, descriptor["seed"], descriptor.get("seed2"), tuple(descriptor["parts"]))
-        with self._lock:
-            if key in self._model_keys:
-                return
-            if key not in self._seen_models and len(self._seen_models) < 2 * MAX_MODEL_RECORDS:
-                self._seen_models.add(key)
-                self._ship_models_seen += 1
-            place = self._ship_place(descriptor["seed"])
-            if place is not None:
-                self._write_model(key, entry, place)
-                return
-            # Not (yet) known as a ship of this system: wait for its ship list.
-            self._waiting_models.pop(key, None)
-            self._waiting_models[key] = dict(entry, at=int(time.time()))
-            while len(self._waiting_models) > WAITING_MODELS:
-                del self._waiting_models[next(iter(self._waiting_models))]
 
-    def _ship_place(self, seed: str) -> tuple[int, int | str, int | None] | None:
-        """(system, slot, ship class) of a ship seed in the systems read lately. The caller holds the lock."""
+    def _ship_place(self, seed: str) -> tuple[int, int | str] | None:
+        """(system, slot) of a ship seed in the systems read lately. The caller holds the lock."""
         for system, slots in reversed(self._ship_systems.items()):
-            if (place := slots.get(seed)) is not None:
-                return (system, *place)
+            if (slot := slots.get(seed)) is not None:
+                return system, slot
         return None
 
-    def _write_model(self, key: tuple, entry: dict, place: tuple[int, int | str, int | None]) -> None:
-        """Queue a ship's model for the capture file. The caller holds the lock."""
-        if key in self._model_keys or len(self._model_keys) >= MAX_MODEL_RECORDS:
-            return
-        self._model_keys.add(key)
-        system, slot, ship_class = place
-        record = {
-            "t": "model",
-            "at": entry.get("at", int(time.time())),
-            "system": hex64(system),
-            "slot": slot,
-        }
-        record.update((k, v) for k, v in entry.items() if k != "at")
-        if "raw" in record and "errors" not in record:
-            self._raw_descriptors += 1
-        self._pending.append(record)
-        parts = ", ".join(record["parts"]) or "no parts"
-        if len(self._model_keys) == 1:
-            logger.info(
-                "Recording ship parts. The first: %s, seed %s: %s", record["name"], record["seed"], parts
-            )
-        classes = ENUM_TABLES.get("shipClass", [])
-        if ship_class is not None and 0 <= ship_class < len(classes) and classes[ship_class] == "Royal":
-            logger.info("Recorded the parts of the exotic (seed %s): %s", record["seed"], parts)
-            self._status = "Recorded the parts of this system's exotic."
-            if record["seed"] not in self._exotics_heard:  # one tone per exotic, however many models
-                self._exotics_heard.add(record["seed"])
-                play_sound("exotic parts")
-
     def _remember_ships(self, record: dict) -> None:
-        """Note a system's ship seeds, so the parts of its ships can be recorded when the game builds them."""
+        """Note a system's ship seeds, so that the paint of its ships can be recorded as the game makes them."""
         ships = record.get("ships")
-        if not ships or not RECORD_SHIP_PARTS:
+        if not ships:
             return
         system = (int(record["ua"], 16) or int(record.get("seed") or "0", 16)) & ~PLANET_BITS
-        slots: dict[str, tuple[int | str, int | None]] = {}
+        slots: dict[str, int | str] = {}
         for slot, row in enumerate(ships):
-            if row[0] != ZERO_SEED:
-                slots.setdefault(row[0], (slot, row[2]))
-        if (crash := record.get("crashShip")) and crash != ZERO_SEED:
-            slots.setdefault(crash, ("crash", None))
+            if row[0] not in NO_SEEDS:
+                slots.setdefault(row[0], slot)
+        if (crash := record.get("crashShip")) and crash not in NO_SEEDS:
+            slots.setdefault(crash, "crash")
         with self._lock:
             self._ship_systems.pop(system, None)
             self._ship_systems[system] = slots
             while len(self._ship_systems) > 8:
                 del self._ship_systems[next(iter(self._ship_systems))]
-            for key in [k for k, waiting in self._waiting_models.items() if waiting["seed"] in slots]:
-                entry = self._waiting_models.pop(key)
-                self._write_model(key, entry, (system, *slots[entry["seed"]]))
 
     def _count_resources(self, now: float) -> None:
         """Every few minutes, while it changes, say in the log how many resources the game has
-        loaded through the function the mod watches for ship parts."""
+        loaded through the function the mod watches for multi-tools."""
         if (
-            not RECORD_SHIP_PARTS
+            not RECORD_MULTITOOLS
             or now < self._next_resource_count
             or self._resources == self._resources_logged
         ):
@@ -2902,22 +2408,10 @@ class TradeDepotCapture(Mod):
         self._next_resource_count = now + RESOURCE_COUNT_SECONDS
         self._resources_logged = self._resources
         logger.info(
-            "Resources the game has loaded so far: %d, %d of them with a descriptor; ship models: %d seen, "
-            "%d recorded.",
+            "Resources the game has loaded so far: %d, %d of them with a descriptor.",
             self._resources,
             self._described,
-            self._ship_models_seen,
-            self._model_count,
         )
-
-    def _other_model(self, name: str, why: str) -> None:
-        """Name in the log the first few models the game builds from a descriptor that aren't
-        recorded, to show what the game builds that way."""
-        with self._lock:
-            if name in self._other_models or len(self._other_models) >= OTHER_MODELS_LOGGED:
-                return
-            self._other_models.add(name)
-        logger.info("Model %s: %s.", name, why)
 
     def _multitool_model_built(self, name: str, parts: int) -> None:
         """Name in the log the first few multi-tool model files the game builds."""
@@ -2936,11 +2430,11 @@ class TradeDepotCapture(Mod):
         """Keep a model the game builds from a descriptor in memory for a while, by its seed and, once
         AddResource returns, by the resource handle it filled in at ``result``, in case an item the game
         offers holds either. Returns what's kept."""
-        entry = {"name": name, "type": resource_type}
-        entry.update((k, v) for k, v in descriptor.items() if k != "raw" or "errors" in descriptor)
+        entry = {"name": name, "type": resource_type, **descriptor}
         seed = int(descriptor["seed"], 16)
         with self._lock:
-            if seed >= 1 << 32:  # a smaller one is too easily mistaken for other numbers in an item
+            # A smaller seed is too easily mistaken for other numbers in an item, and FFFFFFFFFFFFFFFF isn't one.
+            if 1 << 32 <= seed < MASK64:
                 models = self._recent_models.pop(seed, [])
                 if not any(m["name"] == name and m["parts"] == entry["parts"] for m in models):
                     models.append(entry)
@@ -3399,7 +2893,7 @@ class TradeDepotCapture(Mod):
             play_sound("multi-tool")
 
     def _flush_pending(self) -> None:
-        """Write queued lookups, names, models and items (their hooks may run on any thread)."""
+        """Write queued lookups, names, paint, multi-tools and items (their hooks may run on any thread)."""
         now = time.monotonic()
         if not self._pending or now < self._next_flush:
             return
@@ -3427,7 +2921,6 @@ class TradeDepotCapture(Mod):
         with self._lock:
             self._query_count += kinds["query"]
             self._name_count += kinds["name"]
-            self._model_count += kinds["model"]
 
     def _record_generated(self, this, use_settings_file, seed_pointer) -> None:
         address = address_of(this)
@@ -3461,7 +2954,6 @@ class TradeDepotCapture(Mod):
                 context["locators"] = locators
         except CaptureError as exc:
             context["locators"] = {"error": str(exc)}
-        context.update(self._star_context(address))
         self._record(address, "gen", context)
 
     def _poll(self) -> None:
@@ -3502,46 +2994,6 @@ class TradeDepotCapture(Mod):
             self._arrived(seen)
         self._last_seen = seen
 
-    def _request_guild(self, guild: str) -> None:
-        """A guild button: the game thread records it on its next frame."""
-        self._guild_requested = guild
-        self._status = f"Recording the {guild} Guild here..."
-
-    def _record_guild(self) -> None:
-        """Record the guild whose envoy you said you saw, with the system you're in: the region's stations
-        all have the same one. The tone says whether it was recorded."""
-        guild, self._guild_requested = self._guild_requested, None
-        if guild is None:
-            return
-        try:
-            active = active_system()
-            ua = read_u64(active[0] + LAYOUT.ua) if active is not None else None
-            if not ua:
-                logger.info("Couldn't record the %s Guild: no star system is loaded yet.", guild)
-                self._status = "No star system is loaded yet."
-                play_sound("problem")
-                return
-            system = ua & ~PLANET_BITS
-            entry = {"t": "guild", "at": int(time.time()), "system": hex64(system), "guild": guild}
-            if (location := player_location()) is not None:
-                entry["loc"] = location
-            if (where := player_environment()[0]) is not None:
-                entry["where"] = where  # in a space station, say
-            with self._lock:
-                self._pending.append(entry)
-        except Exception:
-            self._report_once("guild", "Couldn't record a guild.")
-            play_sound("problem")
-            return
-        logger.info(
-            "Recorded the %s Guild for the region of %s, galaxy %d.",
-            guild,
-            portal_code(system),
-            galaxy_of(system),
-        )
-        self._status = f"Recorded the {guild} Guild here."
-        play_sound("recorded")
-
     # --- Colors (RECORD_COLORS) ---
 
     def _colors(self, now: float) -> None:
@@ -3574,7 +3026,7 @@ class TradeDepotCapture(Mod):
             for stride in customisation_strides():  # where one of them may start
                 if 0 <= offset < CUSTOMISATION_SLOTS * stride and offset % stride == 0:
                     return {"region": f"{offset:X}"}
-        if seed == ZERO_SEED:
+        if seed in NO_SEEDS:
             return None
         if state and seed not in self._own_seeds and now - self._own_refreshed >= 1.0:
             # Perhaps one of yours the mod hasn't seen yet: look at your ships' and customisations' seeds.
@@ -3591,9 +3043,9 @@ class TradeDepotCapture(Mod):
         return None
 
     def _remember_own(self, seeds: dict[str, str]) -> None:
-        """Note the seeds of your ships and customisations (see own_seeds), so the models the game builds
-        with them, and customisations it hands over with them, are recorded as yours; a ship's place says
-        best what a seed is."""
+        """Note the seeds of your ships and customisations (see own_seeds), so the paint of the models the
+        game makes with them, and customisations it hands over with them, are recorded as yours; a ship's
+        place says best what a seed is."""
         with self._lock:
             for seed, what in seeds.items():
                 if what.startswith("ship ") or seed not in self._own_seeds:
@@ -3693,7 +3145,7 @@ class TradeDepotCapture(Mod):
             self._pending.append(entry)
             self._custom_count += 1
             self._custom_since_player = True
-            if ("region" in entry or "own" in entry) and seed != ZERO_SEED:
+            if ("region" in entry or "own" in entry) and seed not in NO_SEEDS:
                 self._own_seeds.setdefault(seed, entry.get("own") or f"customisation at {entry['region']}")
             first = seed not in self._colors_heard
             self._colors_heard.add(seed)
@@ -3828,7 +3280,7 @@ class TradeDepotCapture(Mod):
         lines (``tool``), or a ship in a recorded system's ship list (``system`` and ``slot``); else None.
         The caller holds the lock."""
         for seed in (entry["seed"], entry.get("modelSeed")):
-            if seed is None or seed == ZERO_SEED:
+            if seed is None or seed in NO_SEEDS:
                 continue
             if (what := self._own_seeds.get(seed)) is not None:
                 return {"own": what}
@@ -3840,7 +3292,8 @@ class TradeDepotCapture(Mod):
         return None
 
     def _write_paint(self, key: tuple, entry: dict, place: dict) -> None:
-        """Queue a model's paint for the capture file. The caller holds the lock."""
+        """Queue a model's paint for the capture file, with the palettes it was picked from only if they may
+        not be what the mod knows them to be (see PAINT_TASK_LEGACY). The caller holds the lock."""
         if key in self._paint_keys:
             return
         if len(self._paint_keys) >= PAINT_RECORDED:
@@ -3854,6 +3307,8 @@ class TradeDepotCapture(Mod):
         self._paint_keys.add(key)
         record = {"t": "paint", "at": entry["at"], **place}
         record.update((k, v) for k, v in entry.items() if k not in ("at", "waited"))
+        if "own" not in place and record.get("legacy"):
+            record.pop("palettes", None)  # the older palettes made from the multi-tool's seed
         self._pending.append(record)
         self._paint_count = len(self._paint_keys)
         if not self._paint_logged:
@@ -3880,63 +3335,6 @@ class TradeDepotCapture(Mod):
                     self._write_paint(key, entry, place)
                 elif now - entry["waited"] > PAINT_WAIT_SECONDS:
                     del self._waiting_paint[key]
-
-    def _record_suns(self, now: float) -> None:
-        """Once a session, record the game's color variants for suns (see STAR_POI_DATA)."""
-        if not RECORD_STARS or self._suns_recorded or now < self._next_suns:
-            return
-        self._next_suns = now + SUNS_RETRY_SECONDS
-        try:
-            stars = star_pois()
-        except CaptureError as exc:
-            self._suns_recorded = True  # what's there doesn't look like the table: don't read it again
-            self._report_once(
-                "suns", "Couldn't read the game's space POI table: %s.", exc, with_traceback=False
-            )
-            return
-        except Exception:
-            self._suns_recorded = True
-            self._report_once("suns", "Couldn't read the game's space POI table.")
-            return
-        if stars is None:
-            return
-        self._suns_recorded = True
-        with self._lock:
-            self._pending.append({"t": "suns", "at": int(time.time()), "stars": stars})
-        named = [star for star in stars if "variants" in star]
-        if named:
-            logger.info("Recorded the game's color variants for suns: %s.", ", ".join(named[0]["variants"]))
-        else:
-            logger.info("Read the game's space POI table, but none of its stars has color variants for suns.")
-
-    def _texture_requested(self, name: str, resource_type: int, descriptor: dict) -> None:
-        """Queue a texture of a ship or multi-tool that the game loads with a descriptor, and the seed and
-        parts in it, once a session per file and seed (see TEXTURES_RECORDED)."""
-        key = (name, descriptor["seed"], tuple(descriptor["parts"]))
-        with self._lock:
-            if key in self._texture_keys or len(self._texture_keys) >= TEXTURES_RECORDED:
-                return
-            self._texture_keys.add(key)
-            entry = {"t": "tex", "at": int(time.time()), "name": name, "type": resource_type}
-            entry.update(descriptor)
-            self._pending.append(entry)
-        if len(self._texture_keys) == 1:
-            logger.info("The game loads textures with a descriptor, as %s: they're recorded.", name)
-
-    def _own_model(self, name: str, resource_type: int, descriptor: dict) -> None:
-        """Queue a model the game builds with the seed of one of your ships or customisations, once a
-        session (see OWN_MODELS_RECORDED)."""
-        key = (name, descriptor["seed"], descriptor.get("seed2"), tuple(descriptor["parts"]))
-        with self._lock:
-            what = self._own_seeds.get(descriptor["seed"])
-            full = len(self._own_model_keys) >= OWN_MODELS_RECORDED
-            if what is None or key in self._own_model_keys or full:
-                return
-            self._own_model_keys.add(key)
-            self._own_count += 1
-            entry = {"t": "own", "at": int(time.time()), "whose": what, "name": name, "type": resource_type}
-            entry.update(descriptor)
-            self._pending.append(entry)
 
     def _record_player(self, now: float) -> None:
         """Record your ships and the region of your player state that holds your customisations, when
@@ -4042,27 +3440,7 @@ class TradeDepotCapture(Mod):
                     context["displayName"] = name
             except Exception:
                 self._report_once("name", "Couldn't get the system's name from the game.")
-            context.update(self._star_context(named_system))
         return context
-
-    def _star_context(self, system: int) -> dict:
-        """How many stars the solar system at ``system`` has (``stars``), worked out as the game's own
-        function would; or that the function would go the way the mod doesn't follow (``starsUnknown``),
-        with the game mode it would go that way in."""
-        stars = self._stars
-        if not isinstance(stars, StarCount) or stars.why is not None:
-            return {}
-        try:
-            count = stars.count(system)
-        except CaptureError as exc:
-            self._report_once("stars", "Couldn't work out a system's stars: %s.", exc, with_traceback=False)
-            return {}
-        except Exception:
-            self._report_once("stars", "Couldn't work out a system's stars.")
-            return {}
-        if count is not None:
-            return {"stars": count}
-        return {"starsUnknown": 1, "gameMode": (stars.settings() or {}).get("gameMode")}
 
     def _record(self, address: int, via: str, context: dict, announce: bool = False) -> bool:
         record = snapshot(address)
@@ -4095,7 +3473,6 @@ class TradeDepotCapture(Mod):
                 self._player_due = time.monotonic() + PLAYER_FIRST_SECONDS
         logger.info("Recorded %s", summary)
         self._last = summary
-        self._stars_here = stars_label(entry)
         self._status = "Recording."
         if record.get("unusual"):
             self._report_once(

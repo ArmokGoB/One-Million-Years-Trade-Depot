@@ -41,6 +41,7 @@ import multitool_model  # noqa: E402
 import parts_model  # noqa: E402
 import ship_model  # noqa: E402  (nms_namegen is only needed for its bodies(), which --namegen uses)
 from star_model import float32, nebula_seed, star_count  # noqa: E402, F401
+from star_model import BINARY_STAR_CHANCE, TERNARY_STAR_CHANCE  # noqa: E402
 
 SUPPORTED_FORMATS = {1, 2}
 ZERO_SEED = "0" * 16
@@ -706,9 +707,11 @@ def _picked(parts: object) -> list[str]:
 
 
 def recorded_parts(captures: Captures) -> dict[tuple[str, int], list[str]]:
-    """The parts recorded with each model file and seed that the parts tables have, ships' and
-    multi-tools' alike. Where a seed was recorded more than once, its longest list: the game also
-    builds some models again with their texture only."""
+    """The parts recorded with each model file and seed that the parts tables have, of the systems' ships
+    and multi-tools: with the ships the game built (up to 0.14.0), the systems' sets of multi-tools, the
+    items on offer and the paint the game picked (0.13.0 on), but for the player's own, whose parts may be
+    picked by hand. Where a seed was recorded more than once, its longest list: the game also builds some
+    models again with their texture only."""
     known = set(parts_model.models())
     found: dict[tuple[str, int], list[str]] = {}
 
@@ -727,6 +730,10 @@ def recorded_parts(captures: Captures) -> dict[tuple[str, int], list[str]]:
             note(tool)
     for item, _session in captures.items:
         note(item.get("model"))
+    for paint, _session in captures.paints:
+        if "own" not in paint:  # the model's parts, made with its own seed if it has one
+            seed = paint.get("modelSeed") or paint.get("seed")
+            note({"name": paint.get("file"), "seed": seed, "parts": paint.get("parts")})
     return found
 
 
@@ -800,12 +807,12 @@ def _region_label(region: tuple[int, int]) -> str:
 
 
 # Where cGcSolarSystemData keeps the system's NebulaSeed (its Sky's), as NMS.py 180383 and 181442 place it: the
-# value the game's star count compares with its sky globals' chances (see the mod's StarCount).
+# value the game's star count function compares with its sky globals' chances.
 NEBULA_SEED_AT = 0x2080
 
 
 def _star_function(info: object) -> str:
-    """What a session header says of the game's star count function (see the mod's StarCount)."""
+    """What a session header says of the game's star count function (capture mods 0.10.0 to 0.14.0)."""
     if info is None:
         return "not looked for (RECORD_STARS off)"
     if not isinstance(info, dict):
@@ -845,6 +852,10 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
     chances = next(
         (info for info in reversed(headers) if isinstance(info, dict) and "binary" in info), None
     )  # the game's, from the newest session that read them
+    source = "the game's chances"
+    if chances is None:  # as 0.11.0 to 0.14.0 read them; 0.15.0 on doesn't
+        chances = {"binary": BINARY_STAR_CHANCE, "ternary": TERNARY_STAR_CHANCE, "one": 1.0}
+        source = "the game's chances as star_model.py has them"
     if found or stars or nebulas:
         counts = Counter(stars.values())
         lines += [
@@ -860,25 +871,21 @@ def star_guild_lines(captures: Captures, examples: int = 20) -> list[str]:
             f"  NebulaSeed, which it counts by, is the 9th draw of the system seed's stream: {drawn}/{len(nebulas)}"
             " systems with raw data"
         )
-        if chances is None:
-            lines.append(
-                "  the game's star chances aren't recorded yet, so counts can't be worked out from addresses"
-            )
-        else:
-            worked = {
-                system: star_count(nebula_seed(system), chances["binary"], chances["ternary"], chances["one"])
-                for system in systems
-            }
-            agree = sum(1 for system, n in stars.items() if worked.get(system) == n)
-            lines.append(
-                "  worked out from the address with the game's chances: "
-                + ", ".join(f"{n} x{c}" for n, c in sorted(Counter(worked.values()).items()))
-                + f" over {len(worked)} systems; the same as the game counted: {agree}/{len(stars)}"
-            )
-            several = [system for system, n in worked.items() if n != 1]
-            for system in several[:examples]:
-                counted = f" (the game counted {stars[system]})" if system in stars else ""
-                lines.append(f"    {systems[system].label()}: {worked[system]} stars{counted}")
+        worked = {
+            system: star_count(nebula_seed(system), chances["binary"], chances["ternary"], chances["one"])
+            for system in systems
+        }
+        agree = sum(1 for system, n in stars.items() if worked.get(system) == n)
+        lines.append(
+            f"  worked out from the address with {source}: "
+            + ", ".join(f"{n} x{c}" for n, c in sorted(Counter(worked.values()).items()))
+            + f" over {len(worked)} systems"
+            + (f"; the same as the game counted: {agree}/{len(stars)}" if stars else "")
+        )
+        several = [system for system, n in worked.items() if n != 1]
+        for system in several[:examples]:
+            counted = f" (the game counted {stars[system]})" if system in stars else ""
+            lines.append(f"    {systems[system].label()}: {worked[system]} stars{counted}")
     if captures.suns:
         variants: Counter[str] = Counter()
         for suns in captures.suns:
