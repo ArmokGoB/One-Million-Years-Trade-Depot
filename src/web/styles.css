@@ -108,11 +108,26 @@ body {
   margin: 0;
   min-height: 100vh;
   background-color: var(--night);
-  /* The system's stars: the main one at the top left, any others smaller across the top. */
+  /*
+   * The system's stars. The main one shines from above the top left corner,
+   * the same height above it however long the page is, and each other one,
+   * smaller, from the edge of the first screen in a direction from that
+   * corner: the second 20 degrees below the top edge, at the right edge
+   * (tan 20deg = 0.364), the third 80 degrees below it, at the bottom edge
+   * (1 / tan 80deg = 0.176).
+   */
   background-image:
-    radial-gradient(56rem 34rem at 0% -8%, color-mix(in srgb, var(--star) 20%, transparent), transparent 72%),
-    radial-gradient(40rem 24rem at 100% -6rem, color-mix(in srgb, var(--star-2) 12%, transparent), transparent 72%),
-    radial-gradient(30rem 18rem at 60% -5rem, color-mix(in srgb, var(--star-3) 10%, transparent), transparent 72%);
+    radial-gradient(56rem 34rem at 0% -17rem, color-mix(in srgb, var(--star) 20%, transparent), transparent 72%),
+    radial-gradient(
+      circle 22rem at 100% min(36.4vw, 100vh),
+      color-mix(in srgb, var(--star-2) 10%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      circle 18rem at min(17.6vh, 100vw) 100vh,
+      color-mix(in srgb, var(--star-3) 9%, transparent),
+      transparent 72%
+    );
   background-repeat: no-repeat;
   color: var(--ink);
   font-family: var(--font-text);
