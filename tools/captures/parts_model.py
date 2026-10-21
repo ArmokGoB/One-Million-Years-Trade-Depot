@@ -89,9 +89,11 @@ def _pick(stream: Stream, options: list) -> tuple | None:
     return last  # only if rounding put r at the very top
 
 
-def _walk(lists: list, stream: Stream, out: list[str]) -> None:
+def _walk(lists: list, stream: Stream, out: list[str], reached: set[str] | None = None) -> None:
     trees = tables()["trees"]
     for _type_id, options in lists:
+        if reached is not None:
+            reached.update(LOD_SUFFIX.sub("", unpack(option)[0]) for option in options)
         if any(unpack(option)[0] in out for option in options):
             continue  # decided already
         picked = _pick(stream, options)
@@ -103,11 +105,11 @@ def _walk(lists: list, stream: Stream, out: list[str]) -> None:
             out.append(listed)
         if children:
             low, high = stream.word(), stream.word()
-            _walk(children, Stream(mix((high << 32) | low)), out)
+            _walk(children, Stream(mix((high << 32) | low)), out, reached)
         for ref in refs:
             low, high = stream.word(), stream.word()
             if ref >= 0:
-                _walk(trees[ref], Stream(mix((high << 32) | low)), out)
+                _walk(trees[ref], Stream(mix((high << 32) | low)), out, reached)
 
 
 def reachable(model: str) -> dict[str, int]:
@@ -134,7 +136,14 @@ def reachable(model: str) -> dict[str, int]:
 
 def parts(model: str, seed: int) -> list[str]:
     """The parts the game picks for ``model`` (a key of the table, such as FIGHTER_PROC) with ``seed``, in order."""
+    return parts_and_options(model, seed)[0]
+
+
+def parts_and_options(model: str, seed: int) -> tuple[list[str], set[str]]:
+    """The parts the game picks for ``model`` with ``seed``, in order, and every option of every list it goes
+    through on the way, picked or not, less any LOD suffix: the parts it could have picked instead."""
     t = tables()
     out: list[str] = []
-    _walk(t["trees"][t["models"][model]], Stream(seed), out)
-    return out
+    reached: set[str] = set()
+    _walk(t["trees"][t["models"][model]], Stream(seed), out, reached)
+    return out, reached

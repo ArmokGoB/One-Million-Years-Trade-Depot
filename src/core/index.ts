@@ -31,7 +31,8 @@ export {
   type PaletteSource,
   type RGB,
 } from "./paint";
-export { distinguishingParts, PART_MODELS, partsFor, type PartModel } from "./parts";
+export { NAMED_MODELS, namedParts, type NamedPart, type Side } from "./partnames";
+export { distinguishingParts, PART_MODELS, partsAndOptions, partsFor, type PartModel } from "./parts";
 export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";
 export { MULTIPLIER, PRNG, seededPRNG } from "./prng";
 export { regionName } from "./region";
