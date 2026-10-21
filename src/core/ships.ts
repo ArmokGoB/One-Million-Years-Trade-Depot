@@ -23,6 +23,7 @@
 // have, comes from its slot: see slotTypes() and parts.ts.
 
 import { universalAddress, withPlanet } from "./address";
+import type { PaintModel } from "./paint";
 import { partsFor, type PartModel } from "./parts";
 import { seededPRNG } from "./prng";
 import { planetSeeds, systemAttributes, type Body } from "./system";
@@ -67,6 +68,14 @@ export interface Ship {
    * solar, say), none for ships without picked parts, such as frigates.
    */
   models: readonly PartModel[];
+  /**
+   * The models whose paint paint.ts works out for this slot: its models, and
+   * a frigate's closest level of detail; none for a ship the game doesn't
+   * paint, such as the corvette.
+   */
+  paints: readonly PaintModel[];
+  /** The texture hint the game paints the ship with: POLICE for the Sentinel ship, "" for the rest. */
+  hint: string;
   /** What a player should know about this slot, if anything, e.g. that it never turns up in systems. */
   note: string | null;
 }
@@ -299,17 +308,57 @@ const TYPE_MODELS: Record<string, PartModel> = {
   Exotic: "S-CLASS_PROC",
   Freighter: "FREIGHTER_PROC",
   "Capital freighter": "CAPITALFREIGHTER_PROC",
+  "Small freighter": "FREIGHTERSMALL_PROC",
+  "Tiny freighter": "FREIGHTERTINY_PROC",
   "Sentinel ship": "SENTINELSHIP_PROC",
+  "Sentinel freighter": "POLICEFREIGHTER",
   "Pirate fighter": "FIGHTER_PROC",
+  "Pirate capital freighter": "PIRATEFREIGHTER",
 };
+
+/**
+ * The models whose paint the site works out for the types without picked
+ * parts: each frigate's closest level of detail, the swarm's frigate and
+ * drone. The game paints no layer of the recon frigate, the DeepSpace organic
+ * frigate, the swarm's capital freighter or the corvette; the DeepSpaceCommon
+ * organic frigate's paint needs parts the site doesn't pick.
+ */
+const PAINT_ONLY_MODELS: Record<string, PaintModel> = {
+  "Combat frigate": "COMBATFRIGATELOD0",
+  "Exploration frigate": "SCIENCEFRIGATELOD0",
+  "Industrial frigate": "INDUSTRIALFRIGATELOD0",
+  "Trade frigate": "DIPLOMATICFRIGATELOD0",
+  "Support frigate": "SUPPORTFRIGATELOD0",
+  "Raider frigate": "PIRATECRUISERLOD0",
+  "Pirate frigate": "PIRATECRUISERLOD0",
+  "Cursed frigate": "GHOSTSHIPFRIGATELOD0",
+  "Swarm frigate": "SWARMFRIGATE",
+  "Swarm drone": "SWARM",
+};
+
+/** Each name of a type that holds one or the other ("Shuttle or solar"), capitalized. */
+function typeNames(type: string): string[] {
+  return type.split(" or ").map((name) => name.charAt(0).toUpperCase() + name.slice(1));
+}
 
 /** The models a ship of this type ("Fighter", "Shuttle or solar", ...) is built from, if it has picked parts. */
 export function typeModels(type: string): PartModel[] {
-  return type.split(" or ").flatMap((name) => {
-    const model = TYPE_MODELS[name.charAt(0).toUpperCase() + name.slice(1)];
+  return typeNames(type).flatMap((name) => {
+    const model = TYPE_MODELS[name];
     return model ? [model] : [];
   });
 }
+
+/** The models whose paint the site works out for a ship of this type: its models, or a frigate's closest detail. */
+export function typePaints(type: string): PaintModel[] {
+  return typeNames(type).flatMap((name) => {
+    const model = TYPE_MODELS[name] ?? PAINT_ONLY_MODELS[name];
+    return model ? [model] : [];
+  });
+}
+
+/** The slot of the Sentinel ship, which the game paints with the texture hint POLICE. */
+const SENTINEL_SLOT = 35;
 
 /**
  * The type the game puts in each of the 50 slots. Only the first 20, the
@@ -362,6 +411,8 @@ export function shipPool(code: bigint, galaxy: number): ShipPool {
       type: types[slot]![0],
       group: types[slot]![1],
       models: typeModels(types[slot]![0]),
+      paints: typePaints(types[slot]![0]),
+      hint: slot === SENTINEL_SLOT ? "POLICE" : "",
       note: SLOT_NOTES[slot] ?? null,
     })),
     exotic: first!.exotic,

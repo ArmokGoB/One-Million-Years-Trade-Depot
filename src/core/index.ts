@@ -4,6 +4,7 @@
 // website, from Node, or from any other project.
 
 export * from "./address";
+export { colorName, hexColor, oklch } from "./colornames";
 export * from "./describe";
 export { GALAXY_NAMES, galaxyLabel, galaxyName } from "./galaxies";
 export { GUILDS, guildFor, type Guild } from "./guild";
@@ -17,6 +18,19 @@ export {
   type MultitoolKind,
 } from "./multitools";
 export { generateName } from "./namegen";
+export {
+  basePalettes,
+  legacyPalettes,
+  PAINT_MODELS,
+  paint,
+  paintColors,
+  paletteSource,
+  type PaintedLayer,
+  type PaintModel,
+  type Palettes,
+  type PaletteSource,
+  type RGB,
+} from "./paint";
 export { distinguishingParts, PART_MODELS, partsFor, type PartModel } from "./parts";
 export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";
 export { MULTIPLIER, PRNG, seededPRNG } from "./prng";
@@ -33,6 +47,7 @@ export {
   SQUID_PART,
   twoMoonPlanets,
   typeModels,
+  typePaints,
   type Alternative,
   type Ship,
   type ShipGroup,

@@ -4,7 +4,8 @@
 
 Prints what was recorded (systems, ship pools, exotics, the parts the game
 picked for the ships and multi-tools it built, against those parts_model.py
-works out from their seeds, each system's own multi-tools, and the items the
+works out from their seeds, the paint it picked for them, against that
+paint_model.py works out, each system's own multi-tools, and the items the
 game offered, such as multi-tools); checks the game's
 data against itself, which is where a struct layout that no longer matches
 the game shows up first; and finds each system's ship seeds in the game's
@@ -38,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from game_rng import MASK32, MASK64, MIX_A, MIX_B, mix, seeded_state, stream_states, unmix  # noqa: E402, F401
 import guild_model  # noqa: E402
 import multitool_model  # noqa: E402
+import paint_model  # noqa: E402
 import parts_model  # noqa: E402
 import ship_model  # noqa: E402  (nms_namegen is only needed for its bodies(), which --namegen uses)
 from star_model import float32, nebula_seed, star_count  # noqa: E402, F401
@@ -772,6 +774,81 @@ def part_model_lines(captures: Captures, examples: int = 5) -> list[str]:
         if in_order:
             line += f", {in_order} of them with more parts, of scenes the tables have no descriptor for"
         lines.append(line)
+    lines += disagree[:examples]
+    if len(disagree) > examples:
+        lines.append(f"    and {len(disagree) - examples} more")
+    return lines
+
+
+# The slot of a system's ship list whose ship the game paints with the texture hint POLICE: the Sentinel ship's.
+SENTINEL_SLOT = 35
+# How far a recorded color may be from the one worked out: the record rounds it.
+COLOR_TOLERANCE = 1.5e-4
+
+
+def _paint_rows(passes: dict) -> list[list]:
+    """paint_model.py's paint as a capture's paint line lists it: [pass, layer, group, option, palette, color
+    alternative, color with alpha], no color as four zeros."""
+    rows = []
+    for k in sorted(passes):
+        for p in passes[k]:
+            color = [0.0, 0.0, 0.0, 0.0] if p.color is None else [*p.color, 1.0]
+            rows.append([k, p.layer, p.group, p.option, p.palette, p.alt, color])
+    return rows
+
+
+def _paint_difference(worked_out: list[list], recorded: list) -> str | None:
+    """Where a paint worked out and a recorded one first differ, or None if they don't."""
+    for k, (mine, theirs) in enumerate(zip(worked_out, recorded)):
+        if not isinstance(theirs, list) or len(theirs) < 8:
+            return f"row {k} unreadable"
+        same_color = all(abs(a - b) <= COLOR_TOLERANCE for a, b in zip(mine[6], theirs[7]))
+        if mine[:6] != theirs[:6] or not same_color:
+            return (
+                f"layer {k} worked out {mine[3] or '-'} (palette {mine[4]}, alternative {mine[5]}), "
+                f"recorded {theirs[3] or '-'} (palette {theirs[4]}, alternative {theirs[5]})"
+            )
+    if len(worked_out) != len(recorded):
+        return f"worked out {len(worked_out)} layers, recorded {len(recorded)}"
+    return None
+
+
+def paint_model_lines(captures: Captures, examples: int = 5) -> list[str]:
+    """The paint the game picked for each ship and multi-tool of a system (0.13.0 on) against what
+    paint_model.py works out from its seed: with the parts parts_model.py picks, the texture hint POLICE for
+    the Sentinel ship of a system's list, and the palettes of its own seed or, for the fleet's models, of its
+    system's address (paint_model.palette_source). Not yours, nor paint made with another model's seed."""
+    known, picked = set(paint_model.models()), set(parts_model.models())
+    tally: dict[str, list[int]] = {}
+    disagree: list[str] = []
+    palettes: dict[tuple[str, int], list] = {}
+    for paint, _session in captures.paints:
+        if "own" in paint or paint.get("kept") or paint.get("modelSeed"):
+            continue
+        file = _model_file(paint.get("file") or "")
+        seed, system = _hex_or_none(paint.get("seed")), _hex_or_none(paint.get("system"))
+        source = paint_model.palette_source(file)
+        recorded = paint.get("options")
+        if file not in known or seed is None or not isinstance(recorded, list):
+            continue
+        if source == paint_model.SYSTEM and system is None:
+            continue
+        key = (source, system if source == paint_model.SYSTEM else seed)
+        if key not in palettes:
+            make = paint_model.legacy_palettes if source == paint_model.LEGACY else paint_model.palettes
+            palettes[key] = make(key[1])
+        parts = parts_model.parts(file, seed) if file in picked else []
+        hint = "POLICE" if paint.get("slot") == SENTINEL_SLOT else ""
+        difference = _paint_difference(_paint_rows(paint_model.paint(file, parts, seed, palettes[key], hint)), recorded)
+        counts = tally.setdefault(file, [0, 0])
+        counts[0] += difference is None
+        counts[1] += 1
+        if difference is not None:
+            disagree.append(f"    disagrees: {file} {seed:016X}: {difference}")
+    if not tally:
+        return []
+    lines = ["", "Paint worked out from each seed (paint_model.py), against that recorded with it"]
+    lines += [f"  {file}: {tally[file][0]} of {tally[file][1]} agree" for file in paint_model.models() if file in tally]
     lines += disagree[:examples]
     if len(disagree) > examples:
         lines.append(f"    and {len(disagree) - examples} more")
@@ -1685,6 +1762,7 @@ def main(argv: list[str] | None = None) -> int:
         + lookup_lines(captures)
         + model_lines(captures)
         + part_model_lines(captures, args.examples)
+        + paint_model_lines(captures, args.examples)
         + star_guild_lines(captures)
         + giant_lines(captures)
         + pool_lines(captures)

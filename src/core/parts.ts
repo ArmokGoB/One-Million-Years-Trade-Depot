@@ -50,7 +50,11 @@ export type PartModel =
   | "MULTITOOL"
   | "ROYALMULTITOOL"
   | "SENTINELMULTITOOL"
-  | "ATLASMULTITOOL";
+  | "ATLASMULTITOOL"
+  | "FREIGHTERSMALL_PROC"
+  | "FREIGHTERTINY_PROC"
+  | "POLICEFREIGHTER"
+  | "PIRATEFREIGHTER";
 
 /** How much an option weighs in a pick, by weight class: normal, xRARE, xNEVER. */
 const WEIGHTS = [1, 0.05, 0] as const;

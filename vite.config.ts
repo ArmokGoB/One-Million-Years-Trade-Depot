@@ -7,7 +7,7 @@ export default defineConfig({
   build: {
     outDir: "dist",
     target: "es2022",
-    // The core carries ~570 KB of name tables (about 210 KB gzipped).
+    // The core carries ~570 KB of name tables and ~120 KB of paint tables (about 230 KB gzipped).
     chunkSizeWarningLimit: 800,
   },
   test: {

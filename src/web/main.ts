@@ -14,7 +14,8 @@ import {
   formatPortalCode,
   parseAnyAddress,
   parseGalaxyNumber,
-  type PartsInfo,
+  type BuildInfo,
+  type ColorInfo,
   type ShipGroup,
   type ShipsInfo,
   type StarColor,
@@ -138,15 +139,51 @@ function partsText(parts: readonly string[]): string {
   return parts.map((part) => part.replace(/^_/, "")).join(", ");
 }
 
-/** A ship's parts, one line per model it could be built from, each said which where there are two. */
-function partsLines(models: readonly PartsInfo[], className: string): HTMLElement[] {
-  return models.map(({ model, parts }) => {
-    const which = models.length > 1 ? `As a ${model.toLowerCase()}: ` : "";
-    return el("dd", className, which + partsText(parts));
+/**
+ * The colors of a ship's or multi-tool's paint, by name: a chip of each color
+ * of a name, then the name, once. `label` says whose they are to a screen
+ * reader.
+ */
+function paintColors(colors: readonly ColorInfo[], label = "Colors: "): Node[] {
+  const byName = new Map<string, string[]>();
+  for (const { hex, name } of colors) byName.set(name, [...(byName.get(name) ?? []), hex]);
+  const named = [...byName].map(([name, hexes], i) => {
+    const chips = el(
+      "span",
+      "paint__chips",
+      ...hexes.map((hex) => {
+        const chip = el("span", "paint__chip");
+        chip.style.backgroundColor = hex;
+        return chip;
+      }),
+    );
+    chips.setAttribute("aria-hidden", "true");
+    const color = el("span", "paint__color", chips, name);
+    if (i < byName.size - 1) color.append(el("span", "visually-hidden", ", "));
+    return color;
+  });
+  return [el("span", "visually-hidden", label), ...named];
+}
+
+/**
+ * A ship's parts and colors, for each model it could be built from, each said
+ * which where there are two: a line of its parts, if it has parts to pick,
+ * then a line of its colors, if the game paints it.
+ */
+function buildLines(builds: readonly BuildInfo[]): HTMLElement[] {
+  return builds.flatMap(({ model, parts, colors }) => {
+    const which = builds.length > 1 ? `As a ${model.toLowerCase()}: ` : "";
+    const lines: HTMLElement[] = [];
+    if (parts.length) lines.push(el("dd", "ships__parts", which + partsText(parts)));
+    if (colors.length) {
+      const label = which ? `${which.slice(0, -2)}, colors: ` : "Colors: ";
+      lines.push(el("dd", "ships__paint paint", ...paintColors(colors, label)));
+    }
+    return lines;
   });
 }
 
-/** The full ship list: each group's ships, every one a type with its seed and parts. */
+/** The full ship list: each group's ships, every one a type with its seed, parts and colors. */
 function shipList(ships: ShipsInfo): HTMLElement {
   const groups = el("div", "ships");
   for (const [group, heading] of SHIP_GROUPS) {
@@ -155,7 +192,7 @@ function shipList(ships: ShipsInfo): HTMLElement {
     const list = el("dl", "ships__list");
     for (const s of members) {
       const row = el("div", "ships__row", el("dt", "ships__type", s.type), el("dd", "ships__seed", s.seed));
-      row.append(...partsLines(s.parts, "ships__parts"));
+      row.append(...buildLines(s.builds));
       if (s.note) row.append(el("dd", "ships__note", s.note));
       list.append(row);
     }
@@ -164,17 +201,27 @@ function shipList(ships: ShipsInfo): HTMLElement {
   return groups;
 }
 
+interface KeyShip {
+  seed: string;
+  parts: readonly string[];
+  colors: readonly ColorInfo[];
+}
+
 /**
- * A ship's seed and parts in the key, then the seed and parts it would have
- * if the system's two-moon planets had their moons the other way round.
+ * A ship's seed, parts and colors in the key, then those it would have if the
+ * system's two-moon planets had their moons the other way round.
  */
-function keyShip(seed: string, parts: readonly string[], others: { seed: string; parts: readonly string[] }[]): Node[] {
+function keyShip(ship: KeyShip, others: KeyShip[]): Node[] {
+  const lines = (s: KeyShip) => [
+    ...(s.parts.length ? [el("span", "manifest__note", partsText(s.parts))] : []),
+    ...(s.colors.length ? [el("span", "manifest__note paint", ...paintColors(s.colors))] : []),
+  ];
   return [
-    el("span", "manifest__note", `Seed ${seed}`),
-    el("span", "manifest__note", partsText(parts)),
+    el("span", "manifest__note", `Seed ${ship.seed}`),
+    ...lines(ship),
     ...others.flatMap((other) => [
       el("span", "manifest__note", `Or seed ${other.seed}, with the moons the other way round`),
-      el("span", "manifest__note", partsText(other.parts)),
+      ...lines(other),
     ]),
   ];
 }
@@ -199,8 +246,9 @@ function exoticEntry(ships: ShipsInfo): HTMLElement {
       : ", whichever way round the moons are";
   }
 
-  const arranged = ships.alternatives.map((a) => ({ seed: a.exotic, parts: a.exoticParts }));
-  return el("dd", undefined, verdict, ...keyShip(ships.exotic, ships.exoticParts, arranged));
+  const arranged = ships.alternatives.map((a) => ({ seed: a.exotic, parts: a.exoticParts, colors: a.exoticColors }));
+  const exotic = { seed: ships.exotic, parts: ships.exoticParts, colors: ships.exoticColors };
+  return el("dd", undefined, verdict, ...keyShip(exotic, arranged));
 }
 
 function shipsSection(d: SystemDescription): HTMLElement {
@@ -225,9 +273,8 @@ function shipsSection(d: SystemDescription): HTMLElement {
       "dd",
       undefined,
       ...keyShip(
-        ships.crashSite,
-        ships.crashSiteParts,
-        ships.alternatives.map((a) => ({ seed: a.crashSite, parts: a.crashSiteParts })),
+        { seed: ships.crashSite, parts: ships.crashSiteParts, colors: ships.crashSiteColors },
+        ships.alternatives.map((a) => ({ seed: a.crashSite, parts: a.crashSiteParts, colors: a.crashSiteColors })),
       ),
     ),
   );
@@ -241,14 +288,16 @@ function shipsSection(d: SystemDescription): HTMLElement {
   return el("section", "result__section", el("h3", "result__heading", "Ships"), ...warning, key, all);
 }
 
-/** The system's own multi-tools: the first run of its set, each with its seed and parts. */
+/** The system's own multi-tools: the first run of its set, each with its seed, parts and colors. */
 function multitoolsSection(d: SystemDescription): HTMLElement {
   const key = el("dl", "manifest");
   let standard = 0;
   for (const tool of d.multitools) {
     const term = tool.kind === "Standard" ? `Standard ${++standard}` : tool.kind;
-    const parts = el("span", "manifest__note", partsText(tool.parts));
-    key.append(el("dt", undefined, term), el("dd", undefined, tool.seed, parts));
+    const dd = el("dd", undefined, tool.seed);
+    if (tool.parts.length) dd.append(el("span", "manifest__note", partsText(tool.parts)));
+    if (tool.colors.length) dd.append(el("span", "manifest__note paint", ...paintColors(tool.colors)));
+    key.append(el("dt", undefined, term), dd);
   }
   const sale = d.uncharted || d.abandoned ? "" : "The space station sells one of the standard ones, most often the first. ";
   const intro = el("p", "result__aside", `${sale}Three more standard ones aren't worked out yet.`);
@@ -335,7 +384,7 @@ function render(d: SystemDescription): void {
     "section",
     "result__section result__next",
     el("h3", "result__heading", "Coming next"),
-    el("p", undefined, "The colors of every ship and multi-tool. ", roadmap, "."),
+    el("p", undefined, "Names for the parts of every ship and multi-tool. ", roadmap, "."),
   );
 
   const header = el("header", "result__header", name, region, ...(flags.length ? [flagList] : []), actions);
