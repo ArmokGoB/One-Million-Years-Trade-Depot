@@ -12,9 +12,11 @@ whether its exotic is a squid, and the start, exotic and crash-site seed of
 every other arrangement of a two-moon planet's moons; how many stars
 tools/captures/star_model.py gives the system, and the color of each, from
 nms_namegen's star type; the guild and the first run of multi-tools that
-guild_model.py and multitool_model.py give it; and the parts parts_model.py
+guild_model.py and multitool_model.py give it; the parts parts_model.py
 picks for one model with the system's first ship seed, each model in turn,
-case by case.
+case by case; and the paint paint_model.py gives one model with that seed,
+its palettes from the system's address or the seed as the model's are, each
+model in turn too.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -45,6 +47,7 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "captures"))
     import guild_model  # noqa: E402
     import multitool_model  # noqa: E402
+    import paint_model  # noqa: E402
     import parts_model  # noqa: E402
     import ship_model  # noqa: E402
     import star_model  # noqa: E402
@@ -96,7 +99,30 @@ def main() -> int:
             "others": [[o.start, f"{o.ships[20]:016X}", f"{o.crash:016X}"] for o in others],
         }
 
+    def paint(case: int, model: str, seed: int, ua: int) -> list:
+        """One model's paint, compactly: each pass's layers as option:palette:alternative:color, the color
+        as hex, empty for none and for a layer that isn't painted. The Sentinel ship with the hint POLICE
+        every other time."""
+        source = paint_model.palette_source(model)
+        if source == paint_model.LEGACY:
+            palettes = paint_model.legacy_palettes(seed)
+        else:
+            palettes = paint_model.palettes(ua if source == paint_model.SYSTEM else seed)
+        parts = parts_model.parts(model, seed) if model in models else []
+        hint = "POLICE" if model == "SENTINELSHIP_PROC" and case % 2 else ""
+
+        def hex_color(layer) -> str:
+            if not layer.painted or layer.color is None:
+                return ""
+            # Rounded half up, as JavaScript's Math.round does.
+            return "".join(f"{int(min(1.0, max(0.0, c)) * 255 + 0.5):02x}" for c in layer.color)
+
+        passes = paint_model.paint(model, parts, seed, palettes, hint)
+        layers = [[f"{p.option}:{p.palette}:{p.alt}:{hex_color(p)}" for p in passes[k]] for k in sorted(passes)]
+        return [model, hint, layers]
+
     models = parts_model.models()
+    paint_models = paint_model.models()
     out = sys.stdout
     for case in range(args.count):
         code, galaxy = random_case()
@@ -123,6 +149,8 @@ def main() -> int:
             # the parts of one model, in turn, with the system's first ship seed
             model = models[case % len(models)]
             rec["parts"] = [model, parts_model.parts(model, int(rec["ships"]["first"], 16))]
+            # and the paint of one model, in turn, with that seed
+            rec["paint"] = paint(case, paint_models[case % len(paint_models)], int(rec["ships"]["first"], 16), ua)
         if isinstance(seeds, dict):
             rec["seeds"] = [f"{s & 0xFFFFFFFFFFFFFFFF:016X}" for s in seeds["planet_seeds"]]
             rec["planet_count"] = seeds["planet_count"]

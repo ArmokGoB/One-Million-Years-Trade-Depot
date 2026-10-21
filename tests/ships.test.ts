@@ -8,12 +8,17 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  basePalettes,
+  colorName,
   describeSystem,
   distinguishingParts,
   exoticSquid,
   firstDraw,
   hex64,
+  hexColor,
   MULTIPLIER,
+  paint,
+  paintColors,
   parsePortalCode,
   planetSeeds,
   partsFor,
@@ -22,9 +27,19 @@ import {
   SQUID_PART,
   systemAttributes,
   typeModels,
+  typePaints,
+  universalAddress,
   withPlanet,
+  type Palettes,
+  type PartModel,
   type ShipGroup,
 } from "../src/core";
+
+/** A starship's colors as the site works them out: its paint, with palettes from `palettes`. */
+function colorsOf(model: PartModel, seed: bigint, palettes: Palettes, hint = "") {
+  const passes = paint(model, partsFor(model, seed), seed, palettes, hint);
+  return paintColors(passes).map((color) => ({ hex: hexColor(color), name: colorName(color) }));
+}
 
 interface ShipVector {
   what: string;
@@ -184,17 +199,34 @@ describe("slot models", () => {
     expect(typeModels("Shuttle or solar")).toEqual(["SHUTTLE_PROC", "SAILSHIP_PROC"]);
     expect(typeModels("Solar or shuttle")).toEqual(["SAILSHIP_PROC", "SHUTTLE_PROC"]);
     expect(typeModels("Pirate fighter")).toEqual(["FIGHTER_PROC"]);
+    expect(typeModels("Sentinel freighter")).toEqual(["POLICEFREIGHTER"]);
+    expect(typeModels("Pirate capital freighter")).toEqual(["PIRATEFREIGHTER"]);
     expect(typeModels("Combat frigate")).toEqual([]);
   });
 
-  it("give parts to the civilian ships, the exotic, the freighters, the Sentinel ship and the pirates", () => {
+  it("give parts to the civilian ships, the exotic, the freighters, the Sentinels' and the pirates' ships", () => {
     const v = file.vectors.find((v) => v.what === "Gek, no moons")!;
     const ships = shipPool(parsePortalCode(v.code), v.galaxy).ships;
     const withParts = ships.filter((s) => s.models.length).map((s) => s.slot);
-    expect(withParts).toEqual([...Array(25).keys(), 35, 37, 38, 39, 40, 41]);
+    expect(withParts).toEqual([...Array(27).keys(), 35, 36, 37, 38, 39, 40, 41, 43]);
     expect(ships[20]!.models).toEqual(["S-CLASS_PROC"]);
     expect(ships[24]!.models).toEqual(["CAPITALFREIGHTER_PROC"]);
+    expect(ships[25]!.models).toEqual(["FREIGHTERSMALL_PROC"]);
     expect(ships[35]!.models).toEqual(["SENTINELSHIP_PROC"]);
+  });
+
+  it("paint those and the frigates and the swarm's frigate and drone, the Sentinel ship with the hint POLICE", () => {
+    const v = file.vectors.find((v) => v.what === "Gek, no moons")!;
+    const ships = shipPool(parsePortalCode(v.code), v.galaxy).ships;
+    const painted = ships.filter((s) => s.paints.length).map((s) => s.slot);
+    // Not the recon frigate, the organic frigates, the swarm's capital freighter or the corvette.
+    expect(painted).toEqual([...Array(50).keys()].filter((slot) => ![32, 33, 34, 46, 49].includes(slot)));
+    expect(ships[27]!.paints).toEqual(["COMBATFRIGATELOD0"]);
+    expect(ships[42]!.paints).toEqual(["PIRATECRUISERLOD0"]);
+    expect(ships[44]!.paints).toEqual(["PIRATECRUISERLOD0"]);
+    expect(ships[48]!.paints).toEqual(["SWARM"]);
+    expect(typePaints("Shuttle or solar")).toEqual(["SHUTTLE_PROC", "SAILSHIP_PROC"]);
+    expect(ships.filter((s) => s.hint).map((s) => [s.slot, s.hint])).toEqual([[35, "POLICE"]]);
   });
 });
 
@@ -234,6 +266,8 @@ describe("describeSystem", () => {
   it("includes the ships, with seeds written as on the rest of the page", () => {
     const v = file.vectors.find((v) => v.what === "Korvax, a planet with one moon")!;
     const d = describeSystem(parsePortalCode(v.code), v.galaxy);
+    const seed = (k: number) => BigInt(`0x${v.ships[k]}`);
+    const crash = BigInt(`0x${v.crash}`);
     expect(d.ships.exotic).toBe(`0x${v.ships[20]}`);
     expect(d.ships.exoticSquid).toEqual(v.exoticSquid);
     expect(d.ships.crashSite).toBe(`0x${v.crash}`);
@@ -243,11 +277,39 @@ describe("describeSystem", () => {
       type: "Hauler",
       group: "civilian",
       seed: `0x${v.ships[0]}`,
-      parts: [{ model: "Hauler", parts: distinguishingParts("DROPSHIP_PROC", BigInt(`0x${v.ships[0]}`)) }],
+      builds: [
+        {
+          model: "Hauler",
+          parts: distinguishingParts("DROPSHIP_PROC", seed(0)),
+          colors: colorsOf("DROPSHIP_PROC", seed(0), basePalettes(seed(0))),
+        },
+      ],
       note: null,
     });
-    expect(d.ships.exoticParts).toEqual(distinguishingParts("S-CLASS_PROC", BigInt(`0x${v.ships[20]}`)));
-    expect(d.ships.crashSiteParts).toEqual(distinguishingParts("SENTINELSHIP_PROC", BigInt(`0x${v.crash}`)));
+    expect(d.ships.exoticParts).toEqual(distinguishingParts("S-CLASS_PROC", seed(20)));
+    expect(d.ships.exoticColors).toEqual(colorsOf("S-CLASS_PROC", seed(20), basePalettes(seed(20))));
+    expect(d.ships.crashSiteParts).toEqual(distinguishingParts("SENTINELSHIP_PROC", crash));
+    // The crash-site ship has no texture hint; the system's Sentinel ship has POLICE.
+    expect(d.ships.crashSiteColors).toEqual(colorsOf("SENTINELSHIP_PROC", crash, basePalettes(crash)));
+    expect(d.ships.ships[35]!.builds[0]!.colors).toEqual(
+      colorsOf("SENTINELSHIP_PROC", seed(35), basePalettes(seed(35)), "POLICE"),
+    );
+    // A freighter takes its colors from its system's palettes.
+    const system = basePalettes(universalAddress(withPlanet(parsePortalCode(v.code), 0), v.galaxy));
+    expect(d.ships.ships[24]!.builds[0]!.colors).toEqual(colorsOf("CAPITALFREIGHTER_PROC", seed(24), system));
+    // A frigate's, from its closest level of detail, which has no parts.
+    expect(d.ships.ships[27]!.builds).toEqual([
+      {
+        model: "Combat frigate",
+        parts: [],
+        colors: paintColors(paint("COMBATFRIGATELOD0", [], seed(27), system)).map((color) => ({
+          hex: hexColor(color),
+          name: colorName(color),
+        })),
+      },
+    ]);
+    expect(d.ships.ships[27]!.builds[0]!.colors.length).toBeGreaterThan(0);
+    expect(d.ships.ships[32]!.builds).toEqual([]);
     expect(d.ships.ships[32]!.note).toMatch(/Beachhead expedition/);
     expect(d.ships.uncertain).toBeNull();
     expect(d.ships.alternatives).toEqual([]);
@@ -258,13 +320,19 @@ describe("describeSystem", () => {
     const ships = describeSystem(parsePortalCode(v.code), v.galaxy).ships;
     expect(ships.uncertain).toBe(v.uncertain);
     expect(ships.alternatives).toEqual(
-      v.others.map((o) => ({
-        exotic: `0x${o.exotic}`,
-        exoticSquid: o.exoticSquid,
-        exoticParts: distinguishingParts("S-CLASS_PROC", BigInt(`0x${o.exotic}`)),
-        crashSite: `0x${o.crash}`,
-        crashSiteParts: distinguishingParts("SENTINELSHIP_PROC", BigInt(`0x${o.crash}`)),
-      })),
+      v.others.map((o) => {
+        const exotic = BigInt(`0x${o.exotic}`);
+        const crash = BigInt(`0x${o.crash}`);
+        return {
+          exotic: `0x${o.exotic}`,
+          exoticSquid: o.exoticSquid,
+          exoticParts: distinguishingParts("S-CLASS_PROC", exotic),
+          exoticColors: colorsOf("S-CLASS_PROC", exotic, basePalettes(exotic)),
+          crashSite: `0x${o.crash}`,
+          crashSiteParts: distinguishingParts("SENTINELSHIP_PROC", crash),
+          crashSiteColors: colorsOf("SENTINELSHIP_PROC", crash, basePalettes(crash)),
+        };
+      }),
     );
     expect(ships.alternatives).toHaveLength(1);
   });

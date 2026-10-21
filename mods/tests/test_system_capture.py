@@ -48,6 +48,7 @@ _spec.loader.exec_module(report)
 import game_rng  # noqa: E402  (tools/captures is on the path once report.py is loaded)
 import guild_model  # noqa: E402
 import multitool_model  # noqa: E402
+import paint_model  # noqa: E402
 import parts_model  # noqa: E402
 import ship_model  # noqa: E402
 
@@ -4039,6 +4040,54 @@ class PartsModelTests(unittest.TestCase):
         self.assertEqual(parts_model.parts("NESTED", seed), expected)
         reachable = ["_C_1", "_D_1", "_D_2", "_E_1", "_E_2", "_E_3", "_E_4", "_A_1", "_A_2", "_A_3"]
         self.assertEqual(parts_model.reachable("NESTED"), dict.fromkeys(reachable, 0))
+
+
+class PaintReportTests(unittest.TestCase):
+    """The report's check of recorded paint against tools/captures/paint_model.py, with the real paint tables."""
+
+    @staticmethod
+    def recorded(model, seed, palettes, hint="", parts=None):
+        """A paint line's rows ([sampler, layer, group, option, palette, alternative, index, color, override])
+        for the paint paint_model.py works out."""
+        if parts is None:
+            parts = parts_model.parts(model, seed) if model in parts_model.models() else []
+        rows = report._paint_rows(paint_model.paint(model, parts, seed, palettes, hint))
+        return [[*row[:6], -1, row[6], 0] for row in rows]
+
+    def test_report_checks_recorded_paint_against_that_worked_out_from_the_seed(self):
+        system = f"{UA:016X}"
+        fighter, other, sentinel, frigate = 0x1111111111111111, 0x2222222222222222, 0x3333333333333333, 0x4444
+        wrong = self.recorded("FIGHTER_PROC", other, paint_model.palettes(other))
+        wrong[0][3] = "SOMETHING_ELSE"
+        paints = [
+            # A starship's palettes come from its own seed.
+            {"file": FIGHTER_MODEL, "seed": f"{fighter:016X}", "system": system, "slot": 0,
+             "options": self.recorded("FIGHTER_PROC", fighter, paint_model.palettes(fighter))},
+            {"file": FIGHTER_MODEL, "seed": f"{other:016X}", "system": system, "slot": 1, "options": wrong},
+            # The Sentinel ship of a system's list is painted with the texture hint POLICE.
+            {"file": "MODELS/COMMON/SPACECRAFT/SENTINELSHIP/SENTINELSHIP_PROC.SCENE.MBIN", "seed": f"{sentinel:016X}",
+             "system": system, "slot": 35,
+             "options": self.recorded("SENTINELSHIP_PROC", sentinel, paint_model.palettes(sentinel), "POLICE")},
+            # A frigate's, from its system's address.
+            {"file": "MODELS/COMMON/SPACECRAFT/FRIGATES/COMBATFRIGATELOD0.SCENE.MBIN", "seed": f"{frigate:016X}",
+             "system": system, "slot": 27,
+             "options": self.recorded("COMBATFRIGATELOD0", frigate, paint_model.palettes(UA))},
+            # Not yours, nor a model the tables don't paint.
+            {"own": "ship 0", "file": FIGHTER_MODEL, "seed": f"{other:016X}", "options": []},
+            {"file": "MODELS/COMMON/SPACECRAFT/FRIGATES/COMBATFRIGATE.SCENE.MBIN", "seed": "1", "system": system,
+             "slot": 27, "options": []},
+        ]  # fmt: skip
+        lines = report.paint_model_lines(report.Captures(paints=[(paint, None) for paint in paints]))
+        self.assertEqual(lines[1], "Paint worked out from each seed (paint_model.py), against that recorded with it")
+        self.assertIn("  FIGHTER_PROC: 1 of 2 agree", lines)
+        self.assertIn("  SENTINELSHIP_PROC: 1 of 1 agree", lines)
+        self.assertIn("  COMBATFRIGATELOD0: 1 of 1 agree", lines)
+        (disagrees,) = [line for line in lines if "disagrees" in line]
+        expected = f"    disagrees: FIGHTER_PROC {other:016X}: layer 0 worked out "
+        self.assertTrue(disagrees.startswith(expected), disagrees)
+        self.assertIn("recorded SOMETHING_ELSE", disagrees)
+        self.assertEqual(len(lines), 6)  # a blank line, the heading, three models and the one that disagrees
+        self.assertEqual(report.paint_model_lines(report.Captures()), [])
 
 
 @unittest.skipUnless(os.environ.get("NMS_NAMEGEN"), "set NMS_NAMEGEN to a clone of nms_namegen")

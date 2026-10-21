@@ -3,9 +3,19 @@
 // One call that gathers everything the site shows about a system.
 
 import { formatPortalCode, portalParts, toGalacticCoordinates, universalAddress, withPlanet } from "./address";
+import { colorName, hexColor } from "./colornames";
 import { guildFor, type Guild } from "./guild";
 import { MULTITOOL_MODELS, multitoolRun, type MultitoolKind } from "./multitools";
-import { distinguishingParts, type PartModel } from "./parts";
+import {
+  basePalettes,
+  legacyPalettes,
+  paint,
+  paintColors,
+  paletteSource,
+  type PaintModel,
+  type Palettes,
+} from "./paint";
+import { distinguishingParts, PART_MODELS, partsFor, type PartModel } from "./parts";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
 import { CRASH_SITE_MODEL, shipPool, type ShipGroup } from "./ships";
@@ -26,8 +36,8 @@ export const ECONOMIES = [
 export const TIERS = ["", "Low", "Medium", "High"] as const;
 export const RACES = ["None", "Gek", "Korvax", "Vy'keen"] as const;
 
-/** What each model with parts is, as a type of ship or multi-tool. */
-export const MODEL_NAMES: Record<PartModel, string> = {
+/** What each model with parts or paint is, as a type of ship or multi-tool. */
+export const MODEL_NAMES: Record<PaintModel, string> = {
   FIGHTER_PROC: "Fighter",
   DROPSHIP_PROC: "Hauler",
   SCIENTIFIC_PROC: "Explorer",
@@ -41,14 +51,37 @@ export const MODEL_NAMES: Record<PartModel, string> = {
   ROYALMULTITOOL: "Royal multi-tool",
   SENTINELMULTITOOL: "Sentinel multi-tool",
   ATLASMULTITOOL: "Atlas multi-tool",
+  FREIGHTERSMALL_PROC: "Small freighter",
+  FREIGHTERTINY_PROC: "Tiny freighter",
+  POLICEFREIGHTER: "Sentinel freighter",
+  PIRATEFREIGHTER: "Pirate capital freighter",
+  COMBATFRIGATELOD0: "Combat frigate",
+  SCIENCEFRIGATELOD0: "Exploration frigate",
+  INDUSTRIALFRIGATELOD0: "Industrial frigate",
+  DIPLOMATICFRIGATELOD0: "Trade frigate",
+  SUPPORTFRIGATELOD0: "Support frigate",
+  GHOSTSHIPFRIGATELOD0: "Cursed frigate",
+  PIRATECRUISERLOD0: "Pirate frigate",
+  SWARMFRIGATE: "Swarm frigate",
+  SWARM: "Swarm drone",
 };
 
-/** The parts that tell a ship or multi-tool apart from others built from the same model (see distinguishingParts). */
-export interface PartsInfo {
+/** A color the game paints with, and its name. */
+export interface ColorInfo {
+  /** As CSS: "#rrggbb". */
+  hex: string;
+  /** In words (see colorName), e.g. "dark teal". */
+  name: string;
+}
+
+/** A model a ship or multi-tool is built from: the parts that tell it apart, and the colors of its paint. */
+export interface BuildInfo {
   /** The model's name (see MODEL_NAMES), e.g. "Shuttle". */
   model: string;
-  /** Part IDs as the game lists them, e.g. "_COCKPIT_E". */
+  /** Part IDs as the game lists them, e.g. "_COCKPIT_E" (see distinguishingParts); none for a frigate. */
   parts: string[];
+  /** Its paint's colors, each once, the hull's before the decals' (see paintColors); none if the game paints none. */
+  colors: ColorInfo[];
 }
 
 export interface ShipInfo {
@@ -57,8 +90,11 @@ export interface ShipInfo {
   type: string;
   group: ShipGroup;
   seed: string;
-  /** Its parts, for each model the ship could be built from (two where it's one or the other); none for frigates. */
-  parts: PartsInfo[];
+  /**
+   * Its parts and colors, for each model the ship could be built from (two
+   * where it's one or the other); none where the site works out neither.
+   */
+  builds: BuildInfo[];
   /** What a player should know about this slot, if anything. */
   note: string | null;
 }
@@ -68,8 +104,10 @@ export interface ShipsInfo {
   /** Whether the exotic is a squid. */
   exoticSquid: boolean;
   exoticParts: string[];
+  exoticColors: ColorInfo[];
   crashSite: string;
   crashSiteParts: string[];
+  crashSiteColors: ColorInfo[];
   /** All 50, in the game's order. */
   ships: ShipInfo[];
   /** Why the prediction may be wrong for this system, if a known gap in the model applies. */
@@ -79,8 +117,10 @@ export interface ShipsInfo {
     exotic: string;
     exoticSquid: boolean;
     exoticParts: string[];
+    exoticColors: ColorInfo[];
     crashSite: string;
     crashSiteParts: string[];
+    crashSiteColors: ColorInfo[];
   }[];
 }
 
@@ -130,26 +170,63 @@ export interface SystemDescription {
    * standard ones, then the royal, the Sentinel and the Atlas one. Three more
    * standard ones follow, from a seed not worked out (see multitools.ts).
    */
-  multitools: { kind: MultitoolKind; seed: string; parts: string[] }[];
+  multitools: { kind: MultitoolKind; seed: string; parts: string[]; colors: ColorInfo[] }[];
   raw: SystemAttributes;
 }
 
 const seedText = (seed: bigint) => `0x${hex64(seed)}`;
 
-function describeShips(code: bigint, galaxy: number): ShipsInfo {
+const isPartModel = (model: PaintModel): model is PartModel => (PART_MODELS as string[]).includes(model);
+
+/**
+ * The colors of a system's ships and multi-tools, each model's palettes made
+ * once: a ship's from its own seed, the fleet's from the system's address and
+ * a multi-tool's from its own seed the older way (see paletteSource).
+ */
+class Painter {
+  private readonly made = new Map<string, Palettes>();
+
+  constructor(private readonly ua: bigint) {}
+
+  private palettes(model: PaintModel, seed: bigint): Palettes {
+    const source = paletteSource(model);
+    const from = source === "system" ? this.ua : seed;
+    const key = `${source === "legacy" ? "legacy" : "base"} ${from}`;
+    let palettes = this.made.get(key);
+    if (!palettes) {
+      palettes = source === "legacy" ? legacyPalettes(from) : basePalettes(from);
+      this.made.set(key, palettes);
+    }
+    return palettes;
+  }
+
+  colors(model: PaintModel, seed: bigint, hint = ""): ColorInfo[] {
+    const parts = isPartModel(model) ? partsFor(model, seed) : [];
+    const passes = paint(model, parts, seed, this.palettes(model, seed), hint);
+    return paintColors(passes).map((color) => ({ hex: hexColor(color), name: colorName(color) }));
+  }
+}
+
+function describeShips(code: bigint, galaxy: number, painter: Painter): ShipsInfo {
   const pool = shipPool(code, galaxy);
   return {
     exotic: seedText(pool.exotic),
     exoticSquid: pool.exoticSquid,
     exoticParts: distinguishingParts("S-CLASS_PROC", pool.exotic),
+    exoticColors: painter.colors("S-CLASS_PROC", pool.exotic),
     crashSite: seedText(pool.crashSite),
     crashSiteParts: distinguishingParts(CRASH_SITE_MODEL, pool.crashSite),
-    ships: pool.ships.map(({ slot, type, group, seed, models, note }) => ({
+    crashSiteColors: painter.colors(CRASH_SITE_MODEL, pool.crashSite),
+    ships: pool.ships.map(({ slot, type, group, seed, paints, hint, note }) => ({
       slot,
       type,
       group,
       seed: seedText(seed),
-      parts: models.map((model) => ({ model: MODEL_NAMES[model], parts: distinguishingParts(model, seed) })),
+      builds: paints.map((model) => ({
+        model: MODEL_NAMES[model],
+        parts: isPartModel(model) ? distinguishingParts(model, seed) : [],
+        colors: painter.colors(model, seed, hint),
+      })),
       note,
     })),
     uncertain: pool.uncertain,
@@ -157,8 +234,10 @@ function describeShips(code: bigint, galaxy: number): ShipsInfo {
       exotic: seedText(a.exotic),
       exoticSquid: a.exoticSquid,
       exoticParts: distinguishingParts("S-CLASS_PROC", a.exotic),
+      exoticColors: painter.colors("S-CLASS_PROC", a.exotic),
       crashSite: seedText(a.crashSite),
       crashSiteParts: distinguishingParts(CRASH_SITE_MODEL, a.crashSite),
+      crashSiteColors: painter.colors(CRASH_SITE_MODEL, a.crashSite),
     })),
   };
 }
@@ -175,6 +254,7 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
   else faction = race;
 
   const ua = universalAddress(systemCode, galaxy);
+  const painter = new Painter(ua);
   const stars = starCount(ua);
   const bodies: BodyInfo[] = seeds.planet_seeds.map((seed, i) => ({
     index: i + 1,
@@ -206,12 +286,13 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     planetCount: seeds.planet_count,
     moonCount: seeds.moon_count,
     bodies,
-    ships: describeShips(systemCode, galaxy),
+    ships: describeShips(systemCode, galaxy, painter),
     guild: guildFor(ua),
     multitools: multitoolRun(ua).map(({ kind, seed }) => ({
       kind,
       seed: seedText(seed),
       parts: distinguishingParts(MULTITOOL_MODELS[kind], seed),
+      colors: painter.colors(MULTITOOL_MODELS[kind], seed),
     })),
     raw: a,
   };

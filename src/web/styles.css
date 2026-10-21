@@ -634,6 +634,36 @@ a:hover {
   color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
+.ships__paint {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}
+
+/* The colors of a ship's or multi-tool's paint, by name: a chip of each color
+ * of a name, as square as a paint sample, then the name, wrapping between
+ * names, never inside one. */
+.paint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 1rem;
+  color: var(--ink-muted);
+}
+.paint__color {
+  white-space: nowrap;
+}
+.paint__chips {
+  display: inline-flex;
+  gap: 0.25em;
+  margin-right: 0.5em;
+  vertical-align: -0.08em;
+}
+.paint__chip {
+  width: 0.875em;
+  height: 0.875em;
+  border-radius: 2px;
+  /* A ring that shows the chip against the night, whatever its color, black included. */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 45%, transparent);
+}
 
 .button-secondary {
   min-height: 2.75rem;

@@ -10,10 +10,16 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  basePalettes,
   guildFor,
   hex64,
+  hexColor,
+  legacyPalettes,
   MULTITOOL_MODELS,
   multitoolRun,
+  PAINT_MODELS,
+  paint,
+  paletteSource,
   parsePortalCode,
   PART_MODELS,
   partsFor,
@@ -29,6 +35,7 @@ import {
   universalAddress,
   voxelAttributes,
   withPlanet,
+  type PaintModel,
   type PartModel,
 } from "../src/core";
 
@@ -60,6 +67,21 @@ interface Case {
   multitools?: [string, string][];
   /** tools/captures/parts_model.py's parts for one model with the system's first ship seed: [model, parts]. */
   parts?: [PartModel, string[]];
+  /**
+   * tools/captures/paint_model.py's paint of one model with that seed: [model, texture hint, each pass's
+   * layers as "option:palette:alternative:color"], the color as hex, empty for none and for a layer not painted.
+   */
+  paint?: [PaintModel, string, string[][]];
+}
+
+/** The port's paint in the shape generate.py writes. */
+function paintCase(model: PaintModel, hint: string, seed: bigint, ua: bigint): string[][] {
+  const source = paletteSource(model);
+  const palettes = source === "legacy" ? legacyPalettes(seed) : basePalettes(source === "system" ? ua : seed);
+  const parts = (PART_MODELS as string[]).includes(model) ? partsFor(model as PartModel, seed) : [];
+  return paint(model, parts, seed, palettes, hint).map((layers) =>
+    layers.map((l) => `${l.option}:${l.palette}:${l.alt}:${l.painted && l.color ? hexColor(l.color).slice(1) : ""}`),
+  );
 }
 
 interface ShipCase {
@@ -116,6 +138,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     const guilds = new Map<string, number>();
     const standardCounts = new Map<number, number>();
     const partModels = new Set<string>();
+    const paintModels = new Set<string>();
     for (const line of lines) {
       const c = JSON.parse(line) as Case;
       const code = parsePortalCode(c.code);
@@ -167,6 +190,13 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
         same(parts, () => partsFor(model, seed), `${tag} ${model} parts`, mismatches);
         partModels.add(model);
       }
+      if (c.paint !== undefined && !isErr(c.ships)) {
+        const [model, hint, layers] = c.paint;
+        const seed = BigInt(`0x${(c.ships as ShipCase).first}`);
+        const ua = universalAddress(withPlanet(code, 0), c.galaxy);
+        same(layers, () => paintCase(model, hint, seed, ua), `${tag} ${model} paint`, mismatches);
+        paintModels.add(model);
+      }
     }
     expect(lines.length).toBeGreaterThan(0);
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
@@ -176,6 +206,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     expect([...guilds.keys()].sort(), "cases with each guild").toEqual(["Explorers", "Mercenaries", "Merchants"]);
     expect([...standardCounts.keys()].sort(), "cases with 2, 3 and 4 standard multi-tools").toEqual([2, 3, 4]);
     expect([...partModels].sort(), "models whose parts were compared").toEqual([...PART_MODELS].sort());
+    expect([...paintModels].sort(), "models whose paint was compared").toEqual([...PAINT_MODELS].sort());
     expect(mismatches.slice(0, 20)).toEqual([]);
   }, 300_000); // 20,000 cases take seconds, mostly the ship pools
 });
