@@ -1,0 +1,24 @@
+{
+ "_source": "tools/captures/part_names_model.py over made-up seeds, written by tools/crosscheck/part_names_vectors.py.",
+ "vectors": [
+  {"model":"FIGHTER_PROC","seed":"F6E0E2F98BD3804A","names":[["","Speeder Fuselage",["_COCKPIT_E"]],["","Mono-Thruster",["_ENGINE_C"]],["","Afterburner E-Wings (Fin)",["_WINGS_E","_ACC_A2","_SUBWINGS_B"]]]},
+  {"model":"FIGHTER_PROC","seed":"9490FC9662868085","names":[["","Vector Fuselage",["_COCKPIT_B"]],["","Mono-Thruster",["_ENGINE_C"]],["","Swept Wings (Full)",["_WINGS_J","_WINGSJ_FULL"]]]},
+  {"model":"FIGHTER_PROC","seed":"F899FAD0DA0E88CA","names":[["","Vector Fuselage",["_COCKPIT_B"]],["","Tri-Booster",["_ENGINE_B"]],["","Vulture Wings (Fin)",["_WINGS_E","_ACC_A2","_SUBWINGS_F"]]]},
+  {"model":"DROPSHIP_PROC","seed":"FAE0F66102C50AA5","names":[["","Bulker Cockpit",["_COCKPIT_E"]],["","F-Wing Airlift Thruster",["_HULL_A","_ENGINES_B","_SUBWINGS_A28"]],["","E-Wing Heavy",["_HULL_A","_WINGS_1"]]]},
+  {"model":"DROPSHIP_PROC","seed":"6785A1BB6194674C","names":[["","Strato-Haul Cockpit",["_COCKPIT_G"]],["","Duo-Max Engine",["_HULL_A","_ENGINES_C"]],["","Supercruise Split-Wing",["_HULL_A","_WINGS_A","_THRUSTERS_A","_SUBWINGS_H"]]]},
+  {"model":"DROPSHIP_PROC","seed":"A35F4B54506A9C03","names":[["","Negotiator Cockpit",["_COCKPIT_F"]],["","Duo-Max Engine",["_HULL_A","_ENGINES_C"]],["","Megalith F-Wings",["_HULL_A","_WINGS_D","_CONTAINER_A","_SUBWINGS_B5"]]]},
+  {"model":"DROPSHIP_PROC","seed":"C240D4D725CAC542","names":[["","Longshore Cockpit",["_COCKPIT_D"]],["","Duo-Max Engine",["_HULL_A","_ENGINES_C"]]]},
+  {"model":"DROPSHIP_PROC","seed":"E0C45C2B8A1B4E55","names":[["","Supercruise Cockpit",["_COCKPIT_A"]],["","F-Wing Airlift Thruster",["_HULL_A","_ENGINES_B","_SUBWINGS_A28"]],["","Bulker Wings",["_HULL_A","_WINGS_D","_CONTAINER_B","_SUBWINGS_NULL8","_CONTACC_NULL"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"1E3800D22BEAAF51","names":[["","Dragonfly D-Hull",["_COCKPIT_AROOT","_ACCFRONT_C","_CANOPY_B"]],["left","Overseer Wing",["_WINGSL_G4","_WLG4A_NULL"]],["right","Overseer Wing",["_WINGSL_G4","_WLG4A_NULL"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"C8E50D739B2825D6","names":[["","Hesperius Hull",["_COCKPIT_DROOT","_WINGS_ASYM1","_CANOPY_B"]],["left","Drum Wing",["_WINGJOINTL_B1","_WLEFTT_F3"]],["right","Drum Wing (Overseer)",["_WINGJOINTR_B4","_WRIGHTT_G3"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"69391D8C443D3CE9","names":[["","Dragonfly Hull",["_COCKPIT_AROOT","_ACCFRONT_NONE","_WINGS_ASYM","_CANOPY_B"]],["left","Drum Wing (Overseer)",["_WINGJOINTL_B","_WLEFTT_G"]],["right","Drum Wing (Overseer)",["_WINGJOINTR_B3","_WRIGHTT_G2"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"BCB7B5360C8F3EEA","names":[["","Dragonfly F-Hull",["_COCKPIT_AROOT","_ACCFRONT_A","_CANOPY_B"]],["left","Superfoil Wing",["_WINGSL_H4","_SUBWING1_L","_SUBWINGL_A","_SUBWING2_L"]],["right","Superfoil Wing",["_WINGSL_H4","_SUBWING1_L","_SUBWINGL_A","_SUBWING2_L"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"6D1A60C6475A480F","names":[["","Hesperius Hull",["_COCKPIT_DROOT","_CANOPY_B"]],["left","Wing Stub (Empty)",["_WINGSLEFT_NONE4"]],["right","Wing Stub (Empty)",["_WINGSLEFT_NONE4"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"5690F1266D832329","names":[["","Firefly D-Hull",["_COCKPIT_AROOT","_ACCFRONT_C","_WINGS_ASYM","_CANOPY_A"]],["left","Longwave Wing",["_WINGJOINTL_B","_WLEFTT_A"]],["right","Pulsar Split-Wing",["_WINGJOINTR_A3","_WINGSR_B4","_SUBWING1_R","_SUBWINGL_C","_SUBWING2_R"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"1911299346126857","names":[["","Euclid Hull",["_COCKPIT_DROOT","_WINGS_ASYM1","_CANOPY_A"]],["left","Drum Wing",["_WINGJOINTL_B1","_WLEFTT_F3"]],["right","Sunspot Stub-Wing",["_WINGJOINTR_A4","_WINGSRIGHT_K4","_SUBWINGL_D"]]]},
+  {"model":"SCIENTIFIC_PROC","seed":"F870AD54E82B6375","names":[["","Dragonfly Hull",["_COCKPIT_AROOT","_ACCFRONT_NONE","_WINGS_ASYM","_CANOPY_B"]],["left","Overseer Wing",["_WINGJOINTL_A","_WINGSL_G"]],["right","Longwave Wing",["_WINGJOINTR_B3","_WRIGHTT_A2"]]]},
+  {"model":"SAILSHIP_PROC","seed":"3A17654961D096FC","names":[["","Falcon Cockpit",["_BODY_B"]],["","Square-Rig Solar Sail",["_SAILS_C"]],["","Shielded Wing (V-Blade)",["_TIPS_D","_WINGS_C"]]]},
+  {"model":"SAILSHIP_PROC","seed":"EEDCE2310A515BE6","names":[["","Falcon Cockpit",["_BODY_B"]],["","Hex Solar Sail",["_SAILS_B"]],["","Cutlass Wing (Drill)",["_TIPS_B","_WINGS_B"]]]},
+  {"model":"SAILSHIP_PROC","seed":"E104DEEEAFE1C300","names":[["","Exocet Fuselage",["_BODY_D"]],["","Crescent Solar Sail",["_SAILS_A"]],["","Razor Wing (H-Blade)",["_TIPS_E","_WINGS_A"]]]}
+ ]
+}
