@@ -241,9 +241,11 @@ function exoticEntry(ships: ShipsInfo): HTMLElement {
   // let verdict = first === "a squid" ? "Squid" : "Not a squid";
   if (others.length) {
     const different = [...new Set(others)].filter((phrase) => phrase !== first);
+    /*
     verdict += different.length
       ? `, or ${different.join(" or ")} with the moons ${others.length > 1 ? "another" : "the other"} way round`
       : ", whichever way round the moons are";
+      */
   }
 
   const arranged = ships.alternatives.map((a) => ({ seed: a.exotic, parts: a.exoticParts, colors: a.exoticColors }));
