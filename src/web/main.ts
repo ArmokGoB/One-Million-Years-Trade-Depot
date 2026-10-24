@@ -248,7 +248,7 @@ function exoticEntry(ships: ShipsInfo): HTMLElement {
 
   const arranged = ships.alternatives.map((a) => ({ seed: a.exotic, parts: a.exoticParts, colors: a.exoticColors }));
   const exotic = { seed: ships.exotic, parts: ships.exoticParts, colors: ships.exoticColors };
-  return el("dd", undefined, verdict, ...keyShip(exotic, arranged));
+  return el("dd", undefined, ...keyShip(exotic, arranged));
 }
 
 function shipsSection(d: SystemDescription): HTMLElement {
