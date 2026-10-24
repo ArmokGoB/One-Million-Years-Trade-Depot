@@ -238,7 +238,7 @@ function squidPhrase(squid: boolean): string {
 function exoticEntry(ships: ShipsInfo): HTMLElement {
   const calls = [ships.exoticSquid, ...ships.alternatives.map((a) => a.exoticSquid)];
   const [first, ...others] = calls.map(squidPhrase);
-  let verdict = first === "a squid" ? "Squid" : "Not a squid";
+  // let verdict = first === "a squid" ? "Squid" : "Not a squid";
   if (others.length) {
     const different = [...new Set(others)].filter((phrase) => phrase !== first);
     verdict += different.length
