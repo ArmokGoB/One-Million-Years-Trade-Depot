@@ -3,11 +3,12 @@
 """Writes tests/fixtures/ship-vectors.json: the ship model's output for a few addresses.
 
 tools/captures/ship_model.py predicts a system's 50 ship seeds from its
-address, whether its exotic is a squid, and what each civilian ship is,
-solars included; tests/ships.test.ts replays these vectors through the
-TypeScript port. The addresses are made up, picked by a fixed search so that between
-them they cover every kind of body layout and every dominant race the model
-treats differently. CI regenerates the file and fails if it changed.
+address, which planets have their two moons the other way round, whether
+its exotic is a squid, and what each civilian ship is, solars included;
+tests/ships.test.ts replays these vectors through the TypeScript port. The
+addresses are made up, picked by a fixed search so that between them they
+cover every kind of body layout and every dominant race the model treats
+differently. CI regenerates the file and fails if it changed.
 
 Usage:
     python3 tools/crosscheck/ship_vectors.py --namegen /path/to/nms_namegen
@@ -69,7 +70,8 @@ def main() -> int:
             and any(len(m) == 1 and not bodies[k].prime for k, m in moons.items())
         ):
             found.add("Korvax, a planet with one moon")
-        if inhabited and attributes["dominant_race"] == 3 and ship_model.uncertainty(bodies):
+        two_moons = [k for k, m in moons.items() if len(m) == 2 and not bodies[k].prime]
+        if inhabited and attributes["dominant_race"] == 3 and two_moons:
             found.add("Vy'keen, a planet with two moons")
         if attributes["uncharted"]:
             found.add("uncharted")
@@ -79,7 +81,7 @@ def main() -> int:
             found.add("a prime planet with moons")
         if len(bodies) == 6:
             found.add("six bodies")
-        if len(ship_model.two_moon_planets(bodies)) == 2:
+        if len(two_moons) == 2:
             found.add("two planets with two moons each")
         if galaxy != 0 and code >> 44:
             found.add("another galaxy, with a planet digit")
@@ -105,7 +107,7 @@ def main() -> int:
         code, galaxy = chosen[kind]
         ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & MASK32)
         bodies = ship_model.bodies(ua) or []
-        prediction, *others = ship_model.predictions(ua)
+        prediction = ship_model.predict(ua)
         attributes = systemAttributes(code & 0x0FFFFFFFFFFF, galaxy)
         civilian = ship_model.civilian_types(
             ua, prediction.ships[:20], attributes["dominant_race"], attributes["pirate"]
@@ -117,22 +119,12 @@ def main() -> int:
                 "code": f"{code:012X}",
                 "galaxy": galaxy,
                 "bodies": [[b.size, b.parent, b.prime] for b in bodies],
+                "swapped": sorted(ship_model.swapped_moons(ua, bodies)),
                 "start": prediction.start,
-                "uncertain": prediction.uncertain,
                 "ships": [f"{s:016X}" for s in prediction.ships],
                 "exoticSquid": ship_model.exotic_squid(prediction.ships[20]),
                 "crash": f"{prediction.crash:016X}",
                 "civilian": civilian,
-                # the other ways a two-moon planet's moons can be arranged
-                "others": [
-                    {
-                        "start": o.start,
-                        "exotic": f"{o.ships[20]:016X}",
-                        "exoticSquid": ship_model.exotic_squid(o.ships[20]),
-                        "crash": f"{o.crash:016X}",
-                    }
-                    for o in others
-                ],
             }
         )
 

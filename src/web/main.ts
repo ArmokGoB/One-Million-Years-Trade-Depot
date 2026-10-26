@@ -234,78 +234,25 @@ interface KeyShip {
   colors: readonly ColorInfo[];
 }
 
-/**
- * A ship's seed, parts and colors in the key, then those it would have if the
- * system's two-moon planets had their moons the other way round.
- */
-function keyShip(ship: KeyShip, others: KeyShip[]): Node[] {
-  const lines = (s: KeyShip) => [
-    ...(s.parts.length ? [el("span", "manifest__note", partsText(s.parts))] : []),
-    ...(s.colors.length ? [el("span", "manifest__note paint", ...paintColors(s.colors))] : []),
-  ];
+/** A ship's seed, parts and colors in the key. */
+function keyShip(ship: KeyShip): Node[] {
   return [
     el("span", "manifest__note", `Seed ${ship.seed}`),
-    ...lines(ship),
-    ...others.flatMap((other) => [
-      el("span", "manifest__note", `Or seed ${other.seed}, with the moons the other way round`),
-      ...lines(other),
-    ]),
+    ...(ship.parts.length ? [el("span", "manifest__note", partsText(ship.parts))] : []),
+    ...(ship.colors.length ? [el("span", "manifest__note paint", ...paintColors(ship.colors))] : []),
   ];
-}
-
-/** Whether an exotic is a squid, as running text reads it. */
-function squidPhrase(squid: boolean): string {
-  return squid ? "a squid" : "not a squid";
-}
-
-/**
- * The exotic in the key: whether it's a squid, for each way the system's
- * two-moon planets can have their moons arranged, then its seed and parts.
- */
-function exoticEntry(ships: ShipsInfo): HTMLElement {
-  const calls = [ships.exoticSquid, ...ships.alternatives.map((a) => a.exoticSquid)];
-  const [first, ...others] = calls.map(squidPhrase);
-  // let verdict = first === "a squid" ? "Squid" : "Not a squid";
-  if (others.length) {
-    const different = [...new Set(others)].filter((phrase) => phrase !== first);
-    /*
-    verdict += different.length
-      ? `, or ${different.join(" or ")} with the moons ${others.length > 1 ? "another" : "the other"} way round`
-      : ", whichever way round the moons are";
-      */
-  }
-
-  const arranged = ships.alternatives.map((a) => ({ seed: a.exotic, parts: a.exoticParts, colors: a.exoticColors }));
-  const exotic = { seed: ships.exotic, parts: ships.exoticParts, colors: ships.exoticColors };
-  return el("dd", undefined, ...keyShip(exotic, arranged));
 }
 
 function shipsSection(d: SystemDescription): HTMLElement {
   const ships = d.ships;
-  const warning = ships.uncertain
-    ? [
-        el(
-          "p",
-          "result__warning",
-          `Less certain here: this system has ${ships.uncertain}, and every seed depends on which. The exotic and ` +
-            `crash-site ship for ${ships.alternatives.length > 1 ? "the other ways" : "the other way"} are given too.`,
-        ),
-      ]
-    : [];
-
+  const exotic = { seed: ships.exotic, parts: ships.exoticParts, colors: ships.exoticColors };
+  const crashSite = { seed: ships.crashSite, parts: ships.crashSiteParts, colors: ships.crashSiteColors };
   const key = el("dl", "manifest");
   key.append(
     el("dt", undefined, "Exotic"),
-    exoticEntry(ships),
+    el("dd", undefined, ...keyShip(exotic)),
     el("dt", undefined, "Sentinel crash-site ship"),
-    el(
-      "dd",
-      undefined,
-      ...keyShip(
-        { seed: ships.crashSite, parts: ships.crashSiteParts, colors: ships.crashSiteColors },
-        ships.alternatives.map((a) => ({ seed: a.crashSite, parts: a.crashSiteParts, colors: a.crashSiteColors })),
-      ),
-    ),
+    el("dd", undefined, ...keyShip(crashSite)),
   );
   const all = el(
     "details",
@@ -314,7 +261,7 @@ function shipsSection(d: SystemDescription): HTMLElement {
     shipList(ships),
   );
 
-  return el("section", "result__section", el("h3", "result__heading", "Ships"), ...warning, key, all);
+  return el("section", "result__section", el("h3", "result__heading", "Ships"), key, all);
 }
 
 /** The system's own multi-tools: the first run of its set, each with its seed, parts and colors. */

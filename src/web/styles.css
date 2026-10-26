@@ -517,13 +517,6 @@ a:hover {
   color: var(--ink-muted);
 }
 
-.result__warning {
-  margin: 0 0 1.25rem;
-  max-width: 60ch;
-  padding-left: 0.875rem;
-  border-left: 3px solid var(--ink-muted);
-}
-
 .bodies {
   margin: 0;
   padding: 0;

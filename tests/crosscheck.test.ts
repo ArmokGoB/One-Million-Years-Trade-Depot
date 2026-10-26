@@ -32,6 +32,7 @@ import {
   shipPool,
   starColors,
   starCount,
+  swappedMoons,
   systemAttributes,
   systemName,
   universalAddress,
@@ -93,16 +94,15 @@ function paintCase(model: PaintModel, hint: string, seed: bigint, ua: bigint): s
 
 interface ShipCase {
   bodies: [number, number, boolean][];
+  /** The planets whose two moons are the other way round. */
+  swapped: number[];
   start: number;
-  uncertain: string | null;
   first: string;
   exotic: string;
   /** Whether the exotic is a squid. */
   squid: boolean;
   crash: string;
   last: string;
-  /** [start, exotic, crash] for each other arrangement of a two-moon planet's moons. */
-  others: [number, string, string][];
   /** The slots of the civilian ships the game makes solar. */
   solar: number[];
 }
@@ -110,16 +110,16 @@ interface ShipCase {
 /** The port's ship pool in the shape generate.py writes, key order included. */
 function shipCase(code: bigint, galaxy: number): ShipCase {
   const pool = shipPool(code, galaxy);
+  const { bodies } = planetSeeds(withPlanet(code, 0), galaxy);
   return {
-    bodies: planetSeeds(withPlanet(code, 0), galaxy).bodies.map((b) => [b.size, b.parent, b.prime]),
+    bodies: bodies.map((b) => [b.size, b.parent, b.prime]),
+    swapped: [...swappedMoons(universalAddress(withPlanet(code, 0), galaxy), bodies)].sort((a, b) => a - b),
     start: pool.drawsBeforeShips,
-    uncertain: pool.uncertain,
     first: hex64(pool.ships[0]!.seed),
     exotic: hex64(pool.exotic),
     squid: pool.exoticSquid,
     crash: hex64(pool.crashSite),
     last: hex64(pool.ships[49]!.seed),
-    others: pool.alternatives.map((a) => [a.drawsBeforeShips, hex64(a.exotic), hex64(a.crashSite)]),
     solar: pool.ships.flatMap((s, slot) => (s.type === "Solar" ? [slot] : [])),
   };
 }
@@ -144,6 +144,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     let shipPools = 0;
     let squids = 0;
     let solars = 0;
+    let swapped = 0;
     const starCounts = [0, 0, 0, 0];
     const sunsSeen = new Set<string>();
     const guilds = new Map<string, number>();
@@ -174,6 +175,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
           shipPools += 1;
           if (c.ships.squid) squids += 1;
           solars += c.ships.solar.length;
+          swapped += c.ships.swapped.length;
         }
       }
       if (c.stars !== undefined) {
@@ -222,6 +224,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
     expect(squids, "cases whose exotic is a squid").toBeGreaterThan(0);
     expect(solars, "civilian ships made solar").toBeGreaterThan(shipPools);
+    expect(swapped, "planets whose two moons are the other way round").toBeGreaterThan(100);
     expect(starCounts.slice(1), "cases with one, two and three stars").not.toContain(0);
     expect([...sunsSeen].sort(), "star colors seen").toEqual(["Blue", "Green", "Purple", "Red", "Yellow"]);
     expect([...guilds.keys()].sort(), "cases with each guild").toEqual(["Explorers", "Mercenaries", "Merchants"]);

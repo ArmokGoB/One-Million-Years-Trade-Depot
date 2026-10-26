@@ -128,18 +128,6 @@ export interface ShipsInfo {
   crashSiteColors: ColorInfo[];
   /** All 50, in the game's order. */
   ships: ShipInfo[];
-  /** Why the prediction may be wrong for this system, if a known gap in the model applies. */
-  uncertain: string | null;
-  /** The exotic and crash-site ship for each other way a two-moon planet's moons can be arranged. */
-  alternatives: {
-    exotic: string;
-    exoticSquid: boolean;
-    exoticParts: string[];
-    exoticColors: ColorInfo[];
-    crashSite: string;
-    crashSiteParts: string[];
-    crashSiteColors: ColorInfo[];
-  }[];
 }
 
 export interface BodyInfo {
@@ -258,16 +246,6 @@ function describeShips(code: bigint, galaxy: number, painter: Painter): ShipsInf
         colors: painter.colors(model, seed, hint),
       })),
       note,
-    })),
-    uncertain: pool.uncertain,
-    alternatives: pool.alternatives.map((a) => ({
-      exotic: seedText(a.exotic),
-      exoticSquid: a.exoticSquid,
-      exoticParts: distinguishingParts("S-CLASS_PROC", a.exotic),
-      exoticColors: painter.colors("S-CLASS_PROC", a.exotic),
-      crashSite: seedText(a.crashSite),
-      crashSiteParts: distinguishingParts(CRASH_SITE_MODEL, a.crashSite),
-      crashSiteColors: painter.colors(CRASH_SITE_MODEL, a.crashSite),
     })),
   };
 }

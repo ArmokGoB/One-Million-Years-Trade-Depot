@@ -18,6 +18,10 @@
 //   4. The ships: each seed mixes the next two draws; 50 ships, with the seed
 //      for Sentinel crash sites drawn between ships 41 and 42.
 //
+// Where a planet's two moons sit, which decides which attractors they block,
+// comes from the generator the game seeds with the address to place the
+// planets: see swappedMoons().
+//
 // Whether the exotic is a squid comes from the exotic's own seed: see
 // exoticSquid(). What each ship is built from, and so which parts it can
 // have, comes from its slot, and for a civilian ship from whether the game
@@ -26,9 +30,9 @@
 import { universalAddress, withPlanet } from "./address";
 import type { PaintModel } from "./paint";
 import { partsFor, type PartModel } from "./parts";
-import { seededPRNG } from "./prng";
+import { PRNG, seededPRNG } from "./prng";
 import { planetSeeds, systemAttributes, type Body } from "./system";
-import { mix64 } from "./u64";
+import { mix64, swap16 } from "./u64";
 
 /** Base radius of a planet's attractor shell, by size (0 large, 1 medium, 2 small, 3 moon). */
 const BASE_RADIUS: readonly number[] = [195072, 147456, 96768, 23040];
@@ -36,17 +40,19 @@ const SHELL = 40000;
 const CLEARANCE = 500;
 const STATION_DRAWS = 38;
 const TAIL_DRAWS = 3;
+/** The draws for each planet that isn't prime, as the game places them, before their moons'. */
+const PLANET_DRAWS = 3;
 const SHIP_COUNT = 50;
 const CRASH_BEFORE = 42;
 
 type Vec3 = readonly [number, number, number];
 
 /**
- * Where a moon sits relative to its parent: 225,792 away, a lone moon along
- * +x. A planet's two moons sit at +30 and -30 degrees of elevation, the first
- * above, at azimuths 0 and the golden angle (137.5 degrees); which of the two
- * gets which azimuth varies in a way not worked out yet. Written out exactly
- * as the Python model computes them.
+ * Where a moon sits relative to its parent: 225,792 away, at a point the game
+ * spreads over a sphere in a golden spiral. A lone moon sits along +x; a
+ * planet's two moons at +30 and -30 degrees of elevation, the first above, one
+ * at azimuth 0 and the other at the golden angle (137.5 degrees), which one
+ * as swappedMoons() says. Written out exactly as the Python model computes them.
  */
 const LONE_MOON: Vec3 = [225792, 0, 0];
 const ABOVE_AT_0: Vec3 = [195541.60797129598, 112895.99999999999, 0];
@@ -91,30 +97,16 @@ export interface ShipPool {
   crashSite: bigint;
   /** Draws the generator makes before the first ship's. */
   drawsBeforeShips: number;
-  /** Why the prediction may be wrong, if a known gap in the model applies. */
-  uncertain: string | null;
-  /**
-   * The ship seeds for each other way the system's two-moon planets can have
-   * their moons arranged. Empty unless a planet that isn't prime has two moons.
-   */
-  alternatives: Alternative[];
-}
-
-export interface Alternative {
-  /** The planets whose two moons are the other way round. */
-  swapped: number[];
-  ships: bigint[];
-  exotic: bigint;
-  exoticSquid: boolean;
-  crashSite: bigint;
-  drawsBeforeShips: number;
 }
 
 function distance(a: Vec3, b: Vec3): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-/** Each moon's position relative to its parent; the planets in `swapped` have their two moons the other way round. */
+/**
+ * Each moon's position relative to its parent; the planets in `swapped` have
+ * their two moons the other way round (see swappedMoons).
+ */
 function moonOffsets(bodies: readonly Body[], swapped: ReadonlySet<number>): Map<number, Vec3> {
   const moons = new Map<number, number[]>();
   bodies.forEach((body, k) => {
@@ -132,26 +124,52 @@ function moonOffsets(bodies: readonly Body[], swapped: ReadonlySet<number>): Map
   return offsets;
 }
 
-/** The planets that aren't prime and have two moons, whose arrangement the model can't tell. */
-export function twoMoonPlanets(bodies: readonly Body[]): number[] {
-  return bodies.flatMap((body, k) =>
-    !body.prime && bodies.filter((other) => other.parent === k).length === 2 ? [k] : [],
-  );
-}
-
-/** Why a prediction for these bodies may be wrong, if a known gap in the model applies. */
-export function shipUncertainty(bodies: readonly Body[]): string | null {
-  const planets = twoMoonPlanets(bodies).length; // at most two: a system has six bodies at most
-  if (planets === 1) return "a planet with two moons, which the game arranges in one of two ways";
-  if (planets) return "two planets with two moons each, which the game arranges in one of two ways";
-  return null;
+/**
+ * The generator the game seeds with a system's address to place its planets
+ * and moons. It's seeded as seededPRNG seeds it, but for a low word of 0,
+ * which counts as 1, and a carry of 0, which stays 0.
+ */
+function planetPRNG(ua: bigint): PRNG {
+  const low = ua & MASK32;
+  const carry = (swap16(low) ^ low ^ (ua >> 32n)) & MASK32;
+  return new PRNG((carry << 32n) | (low === 0n ? 1n : low));
 }
 
 /**
- * How many draws the generator makes before the first ship's, with the two
- * moons of the planets in `swapped` the other way round.
+ * The planets that aren't prime and whose two moons the game puts the other
+ * way round from moonOffsets' default: the first at the golden angle, the
+ * second at azimuth 0. The game places a planet's moons at the points of a
+ * golden spiral, the first moon at the top point, and turns point k of n to
+ * azimuth (k + draw) mod n times the golden angle, with a draw of the planet's
+ * own; so with two moons, an even draw puts the first at the golden angle. The
+ * draws come after one draw and PLANET_DRAWS for each planet that isn't prime,
+ * one for each such planet with moons, in order. Prime planets' moons come
+ * from draws after those, but no prime planet has attractors.
  */
-export function drawsBeforeShips(ua: bigint, bodies: readonly Body[], swapped: ReadonlySet<number> = new Set()): number {
+export function swappedMoons(ua: bigint, bodies: readonly Body[]): Set<number> {
+  const moons = (k: number) => bodies.filter((body) => body.parent === k).length;
+  const planets = bodies.flatMap((body, k) => (!body.prime && body.parent < 0 ? [k] : []));
+  const rng = planetPRNG(ua);
+  for (let k = 0; k < 1 + PLANET_DRAWS * planets.length; k++) rng.updateSeed();
+  const swapped = new Set<number>();
+  for (const planet of planets) {
+    if (!moons(planet)) continue;
+    const draw = rng.randi();
+    if (moons(planet) === 2 && draw % 2 === 0) swapped.add(planet);
+  }
+  return swapped;
+}
+
+/**
+ * How many draws the generator makes before the first ship's, with the moons
+ * where the game puts them, or with the two moons of the planets in `swapped`
+ * the other way round.
+ */
+export function drawsBeforeShips(
+  ua: bigint,
+  bodies: readonly Body[],
+  swapped: ReadonlySet<number> = swappedMoons(ua, bodies),
+): number {
   const offsets = moonOffsets(bodies, swapped);
   const rng = seededPRNG(ua);
   let draws = 0;
@@ -419,30 +437,21 @@ export function civilianType(type: string, seed: bigint, ua: bigint, outlaw: boo
 }
 
 /**
- * The system's 50 ships. Where a planet has two moons, the model's first
- * guess at their arrangement, with the ships for the others as alternatives.
- * A giant planet layout's bodies aren't modeled, but it only occurs in purple
- * systems, whose bodies are all prime planets and moons and have no attractors.
+ * The system's 50 ships. A giant planet layout's bodies aren't modeled, but it
+ * only occurs in purple systems, whose bodies are all prime planets and moons
+ * and have no attractors.
  */
 export function shipPool(code: bigint, galaxy: number): ShipPool {
   const systemCode = withPlanet(code, 0);
   const attributes = systemAttributes(systemCode, galaxy);
   const { bodies } = planetSeeds(systemCode, galaxy);
   const ua = universalAddress(systemCode, galaxy);
-  const planets = twoMoonPlanets(bodies);
-  // In the Python model's order: the last planet's moons flip first.
-  const arrangements = Array.from({ length: 2 ** planets.length }, (_, n) =>
-    planets.filter((_, i) => (n >> (planets.length - 1 - i)) & 1),
-  );
-  const [first, ...others] = arrangements.map((swapped) => {
-    const start = drawsBeforeShips(ua, bodies, new Set(swapped));
-    const { ships, crashSite } = shipSeeds(ua, start);
-    const exotic = ships[20]!;
-    return { swapped, ships, exotic, exoticSquid: exoticSquid(exotic), crashSite, drawsBeforeShips: start };
-  });
+  const start = drawsBeforeShips(ua, bodies);
+  const { ships, crashSite } = shipSeeds(ua, start);
+  const exotic = ships[20]!;
   const slots = slotTypes(attributes.dominant_race);
   return {
-    ships: first!.ships.map((seed, slot) => {
+    ships: ships.map((seed, slot) => {
       const [base, group] = slots[slot]!;
       const type = group === "civilian" ? civilianType(base, seed, ua, attributes.pirate) : base;
       return {
@@ -456,11 +465,9 @@ export function shipPool(code: bigint, galaxy: number): ShipPool {
         note: SLOT_NOTES[slot] ?? null,
       };
     }),
-    exotic: first!.exotic,
-    exoticSquid: first!.exoticSquid,
-    crashSite: first!.crashSite,
-    drawsBeforeShips: first!.drawsBeforeShips,
-    uncertain: shipUncertainty(bodies),
-    alternatives: others,
+    exotic,
+    exoticSquid: exoticSquid(exotic),
+    crashSite,
+    drawsBeforeShips: start,
   };
 }
