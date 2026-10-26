@@ -3,8 +3,9 @@
 """Writes tests/fixtures/ship-vectors.json: the ship model's output for a few addresses.
 
 tools/captures/ship_model.py predicts a system's 50 ship seeds from its
-address, and whether its exotic is a squid; tests/ships.test.ts replays
-these vectors through the TypeScript port. The addresses are made up, picked by a fixed search so that between
+address, whether its exotic is a squid, and what each civilian ship is,
+solars included; tests/ships.test.ts replays these vectors through the
+TypeScript port. The addresses are made up, picked by a fixed search so that between
 them they cover every kind of body layout and every dominant race the model
 treats differently. CI regenerates the file and fails if it changed.
 
@@ -35,6 +36,7 @@ WANTED = [
     "giant planet layout",
     "another galaxy, with a planet digit",
     "two planets with two moons each",
+    "an outlaw system",
 ]
 
 
@@ -81,6 +83,8 @@ def main() -> int:
             found.add("two planets with two moons each")
         if galaxy != 0 and code >> 44:
             found.add("another galaxy, with a planet digit")
+        if attributes["pirate"]:
+            found.add("an outlaw system")
         return found
 
     rnd = random.Random(20261001)
@@ -102,6 +106,10 @@ def main() -> int:
         ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & MASK32)
         bodies = ship_model.bodies(ua) or []
         prediction, *others = ship_model.predictions(ua)
+        attributes = systemAttributes(code & 0x0FFFFFFFFFFF, galaxy)
+        civilian = ship_model.civilian_types(
+            ua, prediction.ships[:20], attributes["dominant_race"], attributes["pirate"]
+        )
 
         vectors.append(
             {
@@ -114,6 +122,7 @@ def main() -> int:
                 "ships": [f"{s:016X}" for s in prediction.ships],
                 "exoticSquid": ship_model.exotic_squid(prediction.ships[20]),
                 "crash": f"{prediction.crash:016X}",
+                "civilian": civilian,
                 # the other ways a two-moon planet's moons can be arranged
                 "others": [
                     {

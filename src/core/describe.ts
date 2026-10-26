@@ -109,8 +109,8 @@ export interface ShipInfo {
   group: ShipGroup;
   seed: string;
   /**
-   * Its parts and colors, for each model the ship could be built from (two
-   * where it's one or the other); none where the site works out neither.
+   * Its parts and colors, for the model it's built from: one build, or none
+   * where the site works out neither, as for the corvette.
    */
   builds: BuildInfo[];
   /** What a player should know about this slot, if anything. */

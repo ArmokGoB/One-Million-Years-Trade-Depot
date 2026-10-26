@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   basePalettes,
+  civilianType,
   colorName,
   describeSystem,
   distinguishingParts,
@@ -25,6 +26,7 @@ import {
   partsFor,
   shipPool,
   slotTypes,
+  solarRoll,
   SQUID_PART,
   systemAttributes,
   typeModels,
@@ -62,6 +64,8 @@ interface ShipVector {
   ships: string[];
   exoticSquid: boolean;
   crash: string;
+  /** What each of the first 20 ships is: Hauler, Fighter, Explorer, Shuttle or Solar. */
+  civilian: string[];
   /** The other ways a two-moon planet's moons can be arranged. */
   others: { start: number; exotic: string; exoticSquid: boolean; crash: string }[];
 }
@@ -84,6 +88,7 @@ describe("ship pool vectors from the Python model", () => {
       "giant planet layout",
       "another galaxy, with a planet digit",
       "two planets with two moons each",
+      "an outlaw system",
     ]);
   });
 
@@ -97,6 +102,7 @@ describe("ship pool vectors from the Python model", () => {
       expect(pool.uncertain).toBe(v.uncertain);
       expect(pool.ships.map((s) => hex64(s.seed))).toEqual(v.ships);
       expect(pool.ships.map((s) => s.slot)).toEqual([...Array(50).keys()]);
+      expect(pool.ships.slice(0, 20).map((s) => s.type)).toEqual(v.civilian);
       expect(hex64(pool.crashSite)).toBe(v.crash);
       expect(hex64(pool.exotic)).toBe(v.ships[20]);
       expect(pool.exoticSquid).toEqual(v.exoticSquid);
@@ -127,10 +133,10 @@ describe("slot types", () => {
     }, []);
 
   it("gives the civilian slots by dominant race", () => {
-    expect(runs(civilian(1))).toEqual([["Hauler", 7], ["Fighter", 3], ["Explorer", 3], ["Shuttle or solar", 7]]);
-    expect(runs(civilian(2))).toEqual([["Hauler", 3], ["Fighter", 3], ["Explorer", 7], ["Shuttle or solar", 7]]);
-    expect(runs(civilian(3))).toEqual([["Hauler", 3], ["Fighter", 7], ["Explorer", 3], ["Shuttle or solar", 7]]);
-    expect(runs(civilian(0))).toEqual([["Hauler", 5], ["Fighter", 5], ["Explorer", 5], ["Shuttle or solar", 5]]);
+    expect(runs(civilian(1))).toEqual([["Hauler", 7], ["Fighter", 3], ["Explorer", 3], ["Shuttle", 7]]);
+    expect(runs(civilian(2))).toEqual([["Hauler", 3], ["Fighter", 3], ["Explorer", 7], ["Shuttle", 7]]);
+    expect(runs(civilian(3))).toEqual([["Hauler", 3], ["Fighter", 7], ["Explorer", 3], ["Shuttle", 7]]);
+    expect(runs(civilian(0))).toEqual([["Hauler", 5], ["Fighter", 5], ["Explorer", 5], ["Shuttle", 5]]);
   });
 
   it("puts the same ships in slots 20 to 49 whatever the race", () => {
@@ -169,25 +175,51 @@ describe("slot types", () => {
     });
   });
 
-  it("uses the system's dominant race and outlaw flag", () => {
+  it("uses the system's dominant race, and makes some civilian ships solar", () => {
     for (const v of file.vectors) {
       const code = parsePortalCode(v.code);
       const attributes = systemAttributes(withPlanet(code, 0), v.galaxy);
-      expect(shipPool(code, v.galaxy).ships.map((s) => s.type)).toEqual(
-        slotTypes(attributes.dominant_race, attributes.pirate).map(([type]) => type),
-      );
+      const slots = slotTypes(attributes.dominant_race);
+      shipPool(code, v.galaxy).ships.forEach((s, slot) => {
+        expect(s.type === slots[slot]![0] || (slot < 20 && s.type === "Solar"), `${v.what} ${slot}`).toBe(true);
+        expect(s.group).toBe(slots[slot]![1]);
+      });
     }
   });
+});
 
-  it("says which civilian ships an outlaw system may make solar", () => {
-    const outlaw = (race: number) => slotTypes(race, true).slice(0, 20).map(([type]) => type);
-    expect(runs(outlaw(1))).toEqual([
-      ["Hauler or solar", 7],
-      ["Fighter or solar", 3],
-      ["Explorer or solar", 3],
-      ["Solar or shuttle", 7],
-    ]);
-    expect(slotTypes(2, true).slice(20)).toEqual(slotTypes(2).slice(20));
+describe("solar ships", () => {
+  const ua = universalAddress(withPlanet(parsePortalCode("009A039BAE4B"), 0), 0);
+  // Seeds whose roll falls under 0.1, between 0.1 and 0.85, and over 0.85.
+  const seeds = Array.from({ length: 200 }, (_, k) => BigInt(k) * 0x9e3779b97f4a7c15n);
+  const low = seeds.find((seed) => solarRoll(seed, ua) < 0.1)!;
+  const middle = seeds.find((seed) => solarRoll(seed, ua) > 0.2 && solarRoll(seed, ua) < 0.8)!;
+  const high = seeds.find((seed) => solarRoll(seed, ua) > 0.9)!;
+
+  it("come from a roll that's a fraction, the same every time for the same ship and system", () => {
+    for (const seed of seeds) {
+      const roll = solarRoll(seed, ua);
+      expect(roll).toBeGreaterThanOrEqual(0);
+      expect(roll).toBeLessThanOrEqual(1);
+      expect(roll).toBe(Math.fround(roll));
+      expect(solarRoll(seed, ua)).toBe(roll);
+    }
+    expect(solarRoll(low, ua + 1n)).not.toBe(solarRoll(low, ua));
+  });
+
+  it("are shuttles that roll under 0.1, and in an outlaw system under 0.85", () => {
+    expect(civilianType("Shuttle", low, ua, false)).toBe("Solar");
+    expect(civilianType("Shuttle", middle, ua, false)).toBe("Shuttle");
+    expect(civilianType("Shuttle", middle, ua, true)).toBe("Solar");
+    expect(civilianType("Shuttle", high, ua, true)).toBe("Shuttle");
+  });
+
+  it("are other civilian ships that roll under 0.1 only in an outlaw system", () => {
+    for (const type of ["Hauler", "Fighter", "Explorer"]) {
+      expect(civilianType(type, low, ua, false)).toBe(type);
+      expect(civilianType(type, low, ua, true)).toBe("Solar");
+      expect(civilianType(type, middle, ua, true)).toBe(type);
+    }
   });
 
   it("notes the frigate types that don't come from ordinary systems", () => {
@@ -206,9 +238,8 @@ describe("slot types", () => {
 describe("slot models", () => {
   it("are the models each type of ship is built from", () => {
     expect(typeModels("Hauler")).toEqual(["DROPSHIP_PROC"]);
-    expect(typeModels("Explorer or solar")).toEqual(["SCIENTIFIC_PROC", "SAILSHIP_PROC"]);
-    expect(typeModels("Shuttle or solar")).toEqual(["SHUTTLE_PROC", "SAILSHIP_PROC"]);
-    expect(typeModels("Solar or shuttle")).toEqual(["SAILSHIP_PROC", "SHUTTLE_PROC"]);
+    expect(typeModels("Shuttle")).toEqual(["SHUTTLE_PROC"]);
+    expect(typeModels("Solar")).toEqual(["SAILSHIP_PROC"]);
     expect(typeModels("Pirate fighter")).toEqual(["FIGHTER_PROC"]);
     expect(typeModels("Sentinel freighter")).toEqual(["POLICEFREIGHTER"]);
     expect(typeModels("Pirate capital freighter")).toEqual(["PIRATEFREIGHTER"]);
@@ -236,7 +267,7 @@ describe("slot models", () => {
     expect(ships[42]!.paints).toEqual(["PIRATECRUISERLOD0"]);
     expect(ships[44]!.paints).toEqual(["PIRATECRUISERLOD0"]);
     expect(ships[48]!.paints).toEqual(["SWARM"]);
-    expect(typePaints("Shuttle or solar")).toEqual(["SHUTTLE_PROC", "SAILSHIP_PROC"]);
+    expect(typePaints("Solar")).toEqual(["SAILSHIP_PROC"]);
     expect(ships.filter((s) => s.hint).map((s) => [s.slot, s.hint])).toEqual([[35, "POLICE"]]);
   });
 });

@@ -37,6 +37,7 @@ export { planetName, planetNameFromSeed, planetSeedForCode } from "./planet";
 export { MULTIPLIER, PRNG, seededPRNG } from "./prng";
 export { regionName } from "./region";
 export {
+  civilianType,
   CRASH_SITE_MODEL,
   drawsBeforeShips,
   exoticSquid,
@@ -45,6 +46,7 @@ export {
   shipSeeds,
   shipUncertainty,
   slotTypes,
+  solarRoll,
   SQUID_PART,
   twoMoonPlanets,
   typeModels,

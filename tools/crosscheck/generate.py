@@ -8,8 +8,9 @@ every planet digit, all 256 galaxies, and the system indices where the
 generator branches (guide stars, black hole, Atlas Interface, the purple
 window, the ends of the range). Each case also carries the ship pool that
 tools/captures/ship_model.py predicts, which builds on nms_namegen, with
-whether its exotic is a squid, and the start, exotic and crash-site seed of
-every other arrangement of a two-moon planet's moons; how many stars
+whether its exotic is a squid, which civilian ships the game makes solar,
+and the start, exotic and crash-site seed of every other arrangement of a
+two-moon planet's moons; how many stars
 tools/captures/star_model.py gives the system, and the color of each, from
 nms_namegen's star type; the guild and the first run of multi-tools that
 guild_model.py and multitool_model.py give it; the parts parts_model.py
@@ -86,9 +87,14 @@ def main() -> int:
             return f"ERR:{type(exc).__name__}"
 
     def ships(code, galaxy):
-        """The predicted ship pool, compactly: enough to pin every seed (they are consecutive draws)."""
+        """The predicted ship pool, compactly: enough to pin every seed (they are consecutive draws), and the
+        slots of the civilian ships the game makes solar."""
         ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
         prediction, *others = ship_model.predictions(ua)
+        attributes = systemAttributes(code & 0x0FFFFFFFFFFF, galaxy)
+        civilian = ship_model.civilian_types(
+            ua, prediction.ships[:20], attributes["dominant_race"], attributes["pirate"]
+        )
         return {
             "bodies": [[b.size, b.parent, b.prime] for b in ship_model.bodies(ua) or []],
             "start": prediction.start,
@@ -99,6 +105,7 @@ def main() -> int:
             "crash": f"{prediction.crash:016X}",
             "last": f"{prediction.ships[-1]:016X}",
             "others": [[o.start, f"{o.ships[20]:016X}", f"{o.crash:016X}"] for o in others],
+            "solar": [slot for slot, kind in enumerate(civilian) if kind == "Solar"],
         }
 
     def paint(case: int, model: str, seed: int, ua: int) -> list:
