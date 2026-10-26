@@ -5,6 +5,13 @@ A 32-bit multiply-with-carry generator, and the mixer that turns two of its
 32-bit draws into a 64-bit seed (nms_namegen prng.py and system.py
 _bodySeed). The game seeds one of these with a system's universal address
 for the planet positions, the locators and the ships.
+
+The game seeds the generator from a 64-bit seed the same way wherever its
+code has been read: the seed's low word is the first word, 1 if it's 0, and
+the carry is that word with its halves swapped, the word itself and the
+seed's high word, xored, 0 or not (seeded_state()). nms_namegen's
+planetSeeds makes a zero carry 1 instead (namegen_state()). The two differ
+only for a seed whose low word or carry is 0.
 """
 
 from __future__ import annotations
@@ -39,10 +46,18 @@ def swap16(value: int) -> int:
 
 
 def seeded_state(seed: int) -> int:
-    """Generator state the game builds from a 64-bit seed (as nms_namegen's planetSeeds does)."""
+    """Generator state the game builds from a 64-bit seed: the carry in the high word, the word in the low."""
     low = seed & MASK32
-    high = (swap16(low) ^ low ^ (seed >> 32)) & MASK32
-    return ((high or 1) << 32) | low
+    carry = (swap16(low) ^ low ^ (seed >> 32)) & MASK32
+    return (carry << 32) | (low or 1)
+
+
+def namegen_state(seed: int) -> int:
+    """Generator state nms_namegen's planetSeeds builds from a 64-bit seed: a zero carry made 1, not a zero
+    word."""
+    low = seed & MASK32
+    carry = (swap16(low) ^ low ^ (seed >> 32)) & MASK32
+    return ((carry or 1) << 32) | low
 
 
 def step(state: int) -> int:

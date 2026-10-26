@@ -324,9 +324,8 @@ describe("squid exotics", () => {
   const swap16 = (x: bigint) => ((x >> 16n) | (x << 16n)) & M32;
   /** A made-up seed whose first draw is `draw`: the game's seeding, run backwards. */
   function seedWithFirstDraw(draw: number, low = 0x2468ace1n): bigint {
-    const high = (BigInt(draw) - low * MULTIPLIER) & M32;
-    if (high === 0n) throw new Error("the game would make this high word 1; pick another low word");
-    return ((high ^ swap16(low) ^ low) << 32n) | low;
+    const carry = (BigInt(draw) - low * MULTIPLIER) & M32;
+    return ((carry ^ swap16(low) ^ low) << 32n) | low;
   }
   const line = (20 * 2 ** 32) / 21;
   const squid = (draw: number) => exoticSquid(seedWithFirstDraw(draw));
@@ -340,7 +339,7 @@ describe("squid exotics", () => {
     }
   });
 
-  it("are the exotics whose first draw is at least 20/21 of its range: the squid's body weighs 0.05 to 1", () => {
+  it("are the exotics whose first draw is at least 20/21 of its range: the squid's body weighs 1 to 20", () => {
     for (const draw of [0, 1, Math.floor(line) - 1, Math.floor(line)]) expect(squid(draw), String(draw)).toBe(false);
     for (const draw of [Math.ceil(line), Math.ceil(line) + 1, 2 ** 32 - 1]) expect(squid(draw), String(draw)).toBe(true);
   });

@@ -39,15 +39,16 @@ export class PRNG {
 }
 
 /**
- * The generator the game starts from a 64-bit seed: the seed's low word, and
- * a carry from that word with its halves swapped, the word itself and the
- * seed's high word (never zero).
+ * The generator the game starts from a 64-bit seed, wherever its code has
+ * been read: the seed's low word, 1 if it's 0, and a carry from that word with
+ * its halves swapped, the word itself and the seed's high word, 0 or not.
+ * nms_namegen's planetSeeds, which system.ts follows, makes a zero carry 1
+ * instead; the two differ only for a seed whose low word or carry is 0.
  */
 export function seededPRNG(seed: bigint): PRNG {
   const low = seed & MASK32;
-  let high = (swap16(low) ^ low ^ (seed >> 32n)) & MASK32;
-  if (high === 0n) high = 1n;
-  return new PRNG((high << 32n) | low);
+  const carry = (swap16(low) ^ low ^ (seed >> 32n)) & MASK32;
+  return new PRNG((carry << 32n) | (low === 0n ? 1n : low));
 }
 
 /**

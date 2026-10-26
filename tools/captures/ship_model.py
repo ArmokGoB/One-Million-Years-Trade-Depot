@@ -33,7 +33,7 @@ swapped_moons()).
 Whether the exotic is a squid comes from the exotic's own seed: its first
 part, its body, is the squid's (_SCLASSSHIP_SQU) or the other exotics'
 (_SCLASSSHIP_ROY), picked as parts_model.py picks every part. The squid's
-body is a rare option, weighing 0.05 against the other's 1, so the first
+body is a rare option, weighing 1 against the other's 20, so the first
 draw from the seed picks it in the top 1/21 of the draw's range.
 
 The first 20 ships are civilian: haulers, fighters, explorers and shuttles,
@@ -56,7 +56,7 @@ from collections import Counter
 from typing import NamedTuple
 
 import parts_model
-from game_rng import MULTIPLIER, Stream, mix, seeded_state, step, stream_states, swap16
+from game_rng import Stream, mix, namegen_state, seeded_state, step, stream_states
 
 MASK32 = 0xFFFFFFFF
 MASK64 = (1 << 64) - 1
@@ -119,7 +119,7 @@ def bodies(ua: int) -> list[Body] | None:
     register = (((register >> 33) ^ register) * CONST_A) & 0xFFFFFFFFFFFFFFFF
     register = (((register >> 33) ^ register) * CONST_B) & 0xFFFFFFFFFFFFFFFF
     register = (register >> 33) ^ register
-    rng = PRNG(seeded_state(register))
+    rng = PRNG(namegen_state(register))
 
     def seed() -> int:
         low = rng.randi() & MASK32
@@ -163,20 +163,6 @@ def bodies(ua: int) -> list[Body] | None:
     return found
 
 
-def planet_words(ua: int, count: int) -> list[int]:
-    """The first ``count`` draws of the generator the game seeds with the system's address to place its
-    planets and moons. It's seeded as stream_states() seeds it, but for a low word of 0, which counts as 1,
-    and a carry of 0, which stays 0."""
-    low = ua & MASK32
-    word, carry = low or 1, (swap16(low) ^ low ^ (ua >> 32)) & MASK32
-    words = []
-    for _ in range(count):
-        state = word * MULTIPLIER + carry
-        word, carry = state & MASK32, state >> 32
-        words.append(word)
-    return words
-
-
 def swapped_moons(ua: int, system: list[Body]) -> frozenset[int]:
     """The planets that aren't prime and whose two moons the game puts the other way round from
     moon_offsets()' default: the first at the golden angle, the second at azimuth 0. The game places a
@@ -189,7 +175,7 @@ def swapped_moons(ua: int, system: list[Body]) -> frozenset[int]:
     moons = Counter(body.parent for body in system if body.parent >= 0)
     with_moons = [k for k in planets if moons[k]]
     before = 1 + PLANET_DRAWS * len(planets)
-    words = planet_words(ua, before + len(with_moons))[before:]
+    words = [state & MASK32 for state in stream_states(ua, before + len(with_moons))[before:]]
     return frozenset(k for k, word in zip(with_moons, words) if moons[k] == 2 and word % 2 == 0)
 
 
@@ -294,10 +280,7 @@ def solar_roll(seed: int, ua: int) -> float:
     a = ((ua ^ seed) * HASH_MULTIPLIER) & MASK64
     b = (((a >> 47) ^ ua ^ a) * HASH_MULTIPLIER) & MASK64
     hashed = (((b >> 47) ^ b) * HASH_MULTIPLIER) & MASK64
-    low = hashed & MASK32
-    carry = swap16(low) ^ (hashed >> 32) ^ low
-    draw = ((low or 1) * MULTIPLIER + carry) & MASK32
-    return _f32(draw * DRAW_SCALE)
+    return _f32((step(seeded_state(hashed)) & MASK32) * DRAW_SCALE)
 
 
 def civilian_types(ua: int, ships: list[int], dominant_race: int, outlaw: bool) -> list[str]:
