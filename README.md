@@ -115,6 +115,13 @@ hgpaktool -U -f="metadata/gamestate/playerdata/*customisation*" -f="metadata/rea
 python3 tools/build_part_names.py --game EXTRACTED
 ```
 
+To see what a part ID looks like, `tools/render_parts.py` draws a model's parts from its scenes and geometry: each part on a whole ship and alone, and whole ships with each part in its own color. It needs numpy and Pillow, and writes into `renders/`, which git ignores: the pictures are of the game's own models, so they don't go in the repository. Without `--model`, it draws every model, which takes a while.
+
+```sh
+hgpaktool -U -f="*spacecraft/*.scene.mbin" -f="*spacecraft/*.geometry*" -f="*weapons/multitool/*.scene.mbin" -f="*weapons/multitool/*.geometry*" <the game's PCBANKS folder>
+python3 tools/render_parts.py --game EXTRACTED --model SHUTTLE_PROC
+```
+
 The capture mod has its own Python tests, which run on any OS; see [mods/README.md](mods/README.md#development).
 
 Pushes to `main` deploy the site through GitHub Actions.
