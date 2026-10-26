@@ -16,6 +16,7 @@ import {
   parseGalaxyNumber,
   type BuildInfo,
   type ColorInfo,
+  type PartNameInfo,
   type ShipGroup,
   type ShipsInfo,
   type StarColor,
@@ -165,16 +166,56 @@ function paintColors(colors: readonly ColorInfo[], label = "Colors: "): Node[] {
   return [el("span", "visually-hidden", label), ...named];
 }
 
+/** What an explorer's wing is said to be, before its name. */
+const SIDES = { left: "Left: ", right: "Right: " } as const;
+
+/**
+ * The parts the game names, each its name in the game's words over, smaller,
+ * the IDs it's made of, wrapping between parts, never inside one; after
+ * `label`, which says whose they are, or beside it where they fit.
+ */
+function partNames(names: readonly PartNameInfo[], label: string): Node[] {
+  const named = names.map(({ name, side, parts }, i) => {
+    const title = el("span", "part-name__name");
+    if (side) title.append(el("span", "part-name__side", SIDES[side]));
+    title.append(name);
+    const part = el("span", "part-name", title);
+    if (parts.length) {
+      part.append(
+        el("span", "visually-hidden", " ("),
+        el("span", "part-name__ids", partsText(parts)),
+        el("span", "visually-hidden", ")"),
+      );
+    }
+    if (i < names.length - 1) part.append(el("span", "visually-hidden", ", "));
+    return part;
+  });
+  const said = label ? el("span", "part-names__label", label) : el("span", "visually-hidden", "Parts: ");
+  return [said, el("span", "part-names__list", ...named)];
+}
+
+/** "As a hauler: ", "As an explorer: ": which model a line is about, where a ship could be one of two. */
+function asModel(model: string): string {
+  return `As ${/^[aeiou]/i.test(model) ? "an" : "a"} ${model.toLowerCase()}: `;
+}
+
 /**
  * A ship's parts and colors, for each model it could be built from, each said
- * which where there are two: a line of its parts, if it has parts to pick,
- * then a line of its colors, if the game paints it.
+ * which where there are two: the parts the game names, if it names any, then a
+ * line of the parts it doesn't, if it has parts to pick, then a line of its
+ * colors, if the game paints it.
  */
 function buildLines(builds: readonly BuildInfo[]): HTMLElement[] {
-  return builds.flatMap(({ model, parts, colors }) => {
-    const which = builds.length > 1 ? `As a ${model.toLowerCase()}: ` : "";
+  return builds.flatMap(({ model, parts, names, colors }) => {
+    const which = builds.length > 1 ? asModel(model) : "";
     const lines: HTMLElement[] = [];
-    if (parts.length) lines.push(el("dd", "ships__parts", which + partsText(parts)));
+    if (names.length) lines.push(el("dd", "ships__names part-names", ...partNames(names, which)));
+    const named = new Set(names.flatMap((n) => n.parts));
+    const unnamed = parts.filter((part) => !named.has(part));
+    if (unnamed.length) {
+      const label = !names.length ? which : which ? `${which.slice(0, -2)}, other parts: ` : "Other parts: ";
+      lines.push(el("dd", "ships__parts", label + partsText(unnamed)));
+    }
     if (colors.length) {
       const label = which ? `${which.slice(0, -2)}, colors: ` : "Colors: ";
       lines.push(el("dd", "ships__paint paint", ...paintColors(colors, label)));
@@ -386,7 +427,13 @@ function render(d: SystemDescription): void {
     "section",
     "result__section result__next",
     el("h3", "result__heading", "Coming next"),
-    el("p", undefined, "Names for the parts of every ship and multi-tool. ", roadmap, "."),
+    el(
+      "p",
+      undefined,
+      "Names for the parts of shuttles, exotics, Sentinel ships, freighters and multi-tools. ",
+      roadmap,
+      ".",
+    ),
   );
 
   const header = el("header", "result__header", name, region, ...(flags.length ? [flagList] : []), actions);

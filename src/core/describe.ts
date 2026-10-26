@@ -15,6 +15,7 @@ import {
   type PaintModel,
   type Palettes,
 } from "./paint";
+import { namedParts, type Side } from "./partnames";
 import { distinguishingParts, PART_MODELS, partsFor, type PartModel } from "./parts";
 import { planetNameFromSeed } from "./planet";
 import { regionName } from "./region";
@@ -74,12 +75,29 @@ export interface ColorInfo {
   name: string;
 }
 
+/** A part of a ship as the game names it (see namedParts). */
+export interface PartNameInfo {
+  /** As the game names it, in its English, e.g. "Omega Fuselage". */
+  name: string;
+  /** Which of an explorer's wings it is, "left" or "right"; "" for any other part. */
+  side: Side;
+  /** The part IDs it's made of that tell ships apart (see BuildInfo.parts); possibly none. */
+  parts: string[];
+}
+
 /** A model a ship or multi-tool is built from: the parts that tell it apart, and the colors of its paint. */
 export interface BuildInfo {
   /** The model's name (see MODEL_NAMES), e.g. "Shuttle". */
   model: string;
   /** Part IDs as the game lists them, e.g. "_COCKPIT_E" (see distinguishingParts); none for a frigate. */
   parts: string[];
+  /**
+   * The parts the game names, for a fighter, hauler, explorer or solar: one
+   * for each slot the Starship Fabricator fills, but for the few the game
+   * leaves unnamed. Part IDs in `parts` that none of them is made of have no
+   * name.
+   */
+  names: PartNameInfo[];
   /** Its paint's colors, each once, the hull's before the decals' (see paintColors); none if the game paints none. */
   colors: ColorInfo[];
 }
@@ -178,6 +196,18 @@ const seedText = (seed: bigint) => `0x${hex64(seed)}`;
 
 const isPartModel = (model: PaintModel): model is PartModel => (PART_MODELS as string[]).includes(model);
 
+/** A model's parts that tell it apart, and the names the game gives its parts, each with the IDs it's made of. */
+function partsAndNames(model: PaintModel, seed: bigint): Pick<BuildInfo, "parts" | "names"> {
+  if (!isPartModel(model)) return { parts: [], names: [] };
+  const parts = distinguishingParts(model, seed);
+  const names = namedParts(model, seed).map(({ name, side, parts: made }) => ({
+    name,
+    side,
+    parts: parts.filter((part) => made.includes(part)),
+  }));
+  return { parts, names };
+}
+
 /**
  * The colors of a system's ships and multi-tools, each model's palettes made
  * once: a ship's from its own seed, the fleet's from the system's address and
@@ -224,7 +254,7 @@ function describeShips(code: bigint, galaxy: number, painter: Painter): ShipsInf
       seed: seedText(seed),
       builds: paints.map((model) => ({
         model: MODEL_NAMES[model],
-        parts: isPartModel(model) ? distinguishingParts(model, seed) : [],
+        ...partsAndNames(model, seed),
         colors: painter.colors(model, seed, hint),
       })),
       note,

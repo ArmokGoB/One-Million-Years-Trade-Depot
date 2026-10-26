@@ -14,9 +14,10 @@ tools/captures/star_model.py gives the system, and the color of each, from
 nms_namegen's star type; the guild and the first run of multi-tools that
 guild_model.py and multitool_model.py give it; the parts parts_model.py
 picks for one model with the system's first ship seed, each model in turn,
-case by case; and the paint paint_model.py gives one model with that seed,
-its palettes from the system's address or the seed as the model's are, each
-model in turn too.
+case by case; the paint paint_model.py gives one model with that seed, its
+palettes from the system's address or the seed as the model's are, each
+model in turn too; and the names part_names_model.py gives the parts of a
+fighter, hauler, explorer or solar with that seed, each in turn.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -48,6 +49,7 @@ def main() -> int:
     import guild_model  # noqa: E402
     import multitool_model  # noqa: E402
     import paint_model  # noqa: E402
+    import part_names_model  # noqa: E402
     import parts_model  # noqa: E402
     import ship_model  # noqa: E402
     import star_model  # noqa: E402
@@ -123,6 +125,7 @@ def main() -> int:
 
     models = parts_model.models()
     paint_models = paint_model.models()
+    named_models = part_names_model.models()
     out = sys.stdout
     for case in range(args.count):
         code, galaxy = random_case()
@@ -149,8 +152,12 @@ def main() -> int:
             # the parts of one model, in turn, with the system's first ship seed
             model = models[case % len(models)]
             rec["parts"] = [model, parts_model.parts(model, int(rec["ships"]["first"], 16))]
-            # and the paint of one model, in turn, with that seed
+            # the paint of one model, in turn, with that seed
             rec["paint"] = paint(case, paint_models[case % len(paint_models)], int(rec["ships"]["first"], 16), ua)
+            # and the names of one named model's parts, in turn, with that seed: [model, [side, name, parts]]
+            model = named_models[case % len(named_models)]
+            names = part_names_model.names(model, int(rec["ships"]["first"], 16))
+            rec["names"] = [model, [[n.side, n.name, list(n.parts)] for n in names]]
         if isinstance(seeds, dict):
             rec["seeds"] = [f"{s & 0xFFFFFFFFFFFFFFFF:016X}" for s in seeds["planet_seeds"]]
             rec["planet_count"] = seeds["planet_count"]

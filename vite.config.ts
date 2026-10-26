@@ -7,7 +7,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     target: "es2022",
-    // The core carries ~570 KB of name tables and ~120 KB of paint tables (about 230 KB gzipped).
+    // The core carries ~570 KB of name tables, ~120 KB of paint tables and ~26 KB of ship part names
+    // (about 240 KB gzipped).
     chunkSizeWarningLimit: 800,
   },
   test: {

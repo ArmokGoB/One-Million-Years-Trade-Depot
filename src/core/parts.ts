@@ -105,14 +105,20 @@ interface Picked {
   choice: boolean;
 }
 
-/** The parts picked so far, in order, and their IDs, for telling which lists are decided already. */
+/**
+ * The parts picked so far, in order, and their IDs, for telling which lists
+ * are decided already; and every option of every list gone through, picked or
+ * not, less any LOD suffix.
+ */
 interface Listing {
   picked: Picked[];
   ids: Set<string>;
+  offered: Set<string>;
 }
 
 function walk(lists: readonly PartList[], rng: PRNG, out: Listing): void {
   for (const [, options] of lists) {
+    for (const option of options) out.offered.add(unpack(option).part.replace(LOD_SUFFIX, ""));
     if (options.some((option) => out.ids.has(unpack(option).part))) continue; // decided already
     const picked = pick(rng, options);
     if (!picked) continue;
@@ -129,15 +135,29 @@ function walk(lists: readonly PartList[], rng: PRNG, out: Listing): void {
   }
 }
 
-function picks(model: PartModel, seed: bigint): Picked[] {
-  const out: Listing = { picked: [], ids: new Set() };
+function listing(model: PartModel, seed: bigint): Listing {
+  const out: Listing = { picked: [], ids: new Set(), offered: new Set() };
   walk(TABLES.trees[TABLES.models[model]!]!, seededPRNG(seed), out);
-  return out.picked;
+  return out;
+}
+
+function picks(model: PartModel, seed: bigint): Picked[] {
+  return listing(model, seed).picked;
 }
 
 /** The parts the game picks for `model` with `seed`, in the order it lists them. */
 export function partsFor(model: PartModel, seed: bigint): string[] {
   return picks(model, seed).map((p) => p.part);
+}
+
+/**
+ * The parts the game picks for `model` with `seed`, in order, and every option
+ * of every list it goes through on the way, picked or not, less any LOD
+ * suffix: the parts it could have picked instead.
+ */
+export function partsAndOptions(model: PartModel, seed: bigint): { parts: string[]; offered: ReadonlySet<string> } {
+  const out = listing(model, seed);
+  return { parts: out.picked.map((p) => p.part), offered: out.offered };
 }
 
 /**
