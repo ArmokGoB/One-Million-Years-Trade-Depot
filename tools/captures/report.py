@@ -1664,8 +1664,7 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
     from nms_namegen.system import systemAttributes
 
     lines = ["", "Ship seeds predicted from the address alone (tools/captures/ship_model.py)"]
-    matched = other = checked = 0
-    misses: Counter[str] = Counter()
+    matched = checked = 0
     civilian = Counter()  # systems, systems as worked out, solar ships, outlaw systems
     wrong_types: list[str] = []
     for r in sorted(captures.representative_by_system().values(), key=lambda r: (r.galaxy, r.portal)):
@@ -1691,36 +1690,20 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
             if made != worked_out:
                 slots = [f"{k} {a}, not {b}" for k, (a, b) in enumerate(zip(made, worked_out)) if a != b]
                 wrong_types.append(f"    not as worked out: {r.label()}: {'; '.join(slots)}")
-        predictions = ship_model.predictions(r.ua & ~PLANET_BITS)
-        hits = [i for i, p in enumerate(predictions) if p.ships == game and p.crash == int(crash, 16)]
-        prediction = predictions[0]
-        if hits == [0]:
+        prediction = ship_model.predict(r.ua & ~PLANET_BITS)
+        if prediction.ships == game and prediction.crash == int(crash, 16):
             matched += 1
-            note = f" (flagged: {prediction.uncertain})" if prediction.uncertain else ""
-            lines.append(f"  {r.label()}: all {len(game)} ships and the crashed ship match{note}")
-            continue
-        if hits:
-            other += 1
-            lines.append(
-                f"  {r.label()}: all {len(game)} ships and the crashed ship match the other moon arrangement"
-            )
+            lines.append(f"  {r.label()}: all {len(game)} ships and the crashed ship match")
             continue
         same = sum(a == b for a, b in zip(prediction.ships, game))
         found = locate_ship_stream(r.ua, [row[0] for row in ships], crash, STREAM_LIMIT)
         where = f"after {found.offset} draws" if found.offset is not None else "elsewhere"
-        reason = prediction.uncertain or "not explained by the model"
-        misses[reason] += 1
         lines.append(
             f"  {r.label()}: {same}/{len(game)} ships match; predicted the ships after {prediction.start} "
-            f"draws, the game drew them {where} ({reason})"
+            f"draws, the game drew them {where}"
         )
     if checked:
-        summary = f"  {matched} of {checked} systems: every ship seed and the crashed ship's match the model's first guess"
-        if other:
-            summary += f"; {other} more match the other way of arranging a planet's two moons"
-        if misses:
-            summary += "; misses: " + ", ".join(f"{n} with {reason}" for reason, n in misses.most_common())
-        lines.append(summary)
+        lines.append(f"  {matched} of {checked} systems: every ship seed and the crashed ship's match the model's")
     if civilian["systems"]:
         lines.append(
             f"  {civilian['same']} of {civilian['systems']} systems: each of the {ship_model.CIVILIAN_SHIPS} "
@@ -1732,7 +1715,9 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
 
 
 def moon_layout_lines(captures: Captures, namegen: Path, examples: int) -> list[str]:
-    """Which way round each two-moon planet's moons are, wherever a record holds the bodies' positions."""
+    """Which way round each two-moon planet's moons are, wherever a record holds the bodies' positions, against
+    the way ship_model.swapped_moons() works out from the address. Prime planets are left out: the model has
+    no need of their moons."""
     sys.path.insert(0, str(namegen.resolve()))
 
     sources = [(r.ua & ~PLANET_BITS, r.data.get("positions")) for r in captures.records]
@@ -1740,6 +1725,7 @@ def moon_layout_lines(captures: Captures, namegen: Path, examples: int) -> list[
         (int(q["seed"], 16) & ~PLANET_BITS, q.get("positions")) for q in captures.queries if q.get("seed")
     ]
     ways: Counter[str] = Counter()
+    worked_out = 0
     odd: list[str] = []
     seen: set[int] = set()
     for ua, positions in sources:
@@ -1749,19 +1735,31 @@ def moon_layout_lines(captures: Captures, namegen: Path, examples: int) -> list[
         system = ship_model.bodies(ua)
         if not system or len(positions) < len(system):
             continue
-        for planet in ship_model.two_moon_planets(system):
+        swapped = ship_model.swapped_moons(ua, system)
+        moons = Counter(body.parent for body in system if body.parent >= 0)
+        for planet in (k for k, body in enumerate(system) if not body.prime and moons[k] == 2):
             first = next(k for k, body in enumerate(system) if body.parent == planet)
             x, _, z = (a - b for a, b in zip(positions[first], positions[planet]))
             azimuth = math.degrees(math.atan2(z, x)) % 360
             if min(azimuth, 360 - azimuth) < 1:
-                ways["first moon at azimuth 0 (the model's first guess)"] += 1
+                ways["first moon at azimuth 0"] += 1
+                at_golden = False
             elif abs(azimuth - math.degrees(ship_model.GOLDEN_ANGLE)) < 1:
                 ways["first moon at 137.5 degrees"] += 1
+                at_golden = True
             else:
                 ways["neither"] += 1
                 odd.append(f"{ua:016X} planet {planet}: first moon at azimuth {azimuth:.2f}")
-    lines = ["", f"Two-moon planets whose moons' positions were recorded: {sum(ways.values())}"]
+                continue
+            if at_golden == (planet in swapped):
+                worked_out += 1
+            else:
+                odd.append(f"{ua:016X} planet {planet}: first moon at azimuth {azimuth:.2f}, not as worked out")
+    total = sum(ways.values())
+    lines = ["", f"Two-moon planets whose moons' positions were recorded: {total}"]
     lines += [f"  {way}: {n}" for way, n in ways.most_common()]
+    if total:
+        lines.append(f"  as ship_model.swapped_moons() works them out from the address: {worked_out}/{total}")
     lines += [f"    {line}" for line in odd[:examples]]
     return lines
 

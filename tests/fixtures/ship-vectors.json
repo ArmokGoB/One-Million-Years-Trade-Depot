@@ -32,8 +32,8 @@
      true
     ]
    ],
+   "swapped": [],
    "start": 793,
-   "uncertain": null,
    "ships": [
     "413DE234C0820C3D",
     "901C7E98EE8EEF40",
@@ -109,8 +109,7 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "Korvax, a planet with one moon",
@@ -148,8 +147,8 @@
      true
     ]
    ],
+   "swapped": [],
    "start": 1227,
-   "uncertain": null,
    "ships": [
     "D997565F61B17EE5",
     "A0C9CA568029ADAC",
@@ -225,8 +224,7 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "Vy'keen, a planet with two moons",
@@ -264,17 +262,11 @@
      true
     ]
    ],
-   "start": 1172,
-   "uncertain": "a planet with two moons, which the game arranges in one of two ways",
+   "swapped": [
+    1
+   ],
+   "start": 1188,
    "ships": [
-    "4070AA1B6B08AF43",
-    "8C79BE4D399FC990",
-    "EE24A5B5A5099A6E",
-    "7B6D8A35FC2B6103",
-    "52EDC58C41BED1D9",
-    "DC6693F25D47DBFE",
-    "71E3181AE7CEFABA",
-    "9305F0378647ECF2",
     "AA6CF616134CC620",
     "CFB2D63C871BCC58",
     "424510D77AE26CE8",
@@ -309,6 +301,7 @@
     "1D14179144DD0C94",
     "19CEB6BE88A3DE40",
     "EA0532698B378D6A",
+    "4398B1975CA42AA8",
     "B1F942F59D608A27",
     "37589D172BCA40F0",
     "86A235946B189C74",
@@ -316,10 +309,17 @@
     "0153ECAB4FD416EC",
     "050D5EC50FA1BE89",
     "E6C7809B3FA9F1EB",
-    "E4837D78662F00F9"
+    "69FAAF2E95B63DE8",
+    "79A512ED5A4868CC",
+    "C07CC86807A818FA",
+    "B167F3F7594E4FAC",
+    "375705DF30702057",
+    "34DC9D5E42D191D4",
+    "D581271FA7969676",
+    "BC004915915B6647"
    ],
-   "exoticSquid": true,
-   "crash": "4398B1975CA42AA8",
+   "exoticSquid": false,
+   "crash": "E4837D78662F00F9",
    "civilian": [
     "Hauler",
     "Hauler",
@@ -336,19 +336,11 @@
     "Explorer",
     "Shuttle",
     "Shuttle",
-    "Shuttle",
+    "Solar",
     "Shuttle",
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": [
-    {
-     "start": 1188,
-     "exotic": "3DD25F00226F19D0",
-     "exoticSquid": false,
-     "crash": "E4837D78662F00F9"
-    }
    ]
   },
   {
@@ -382,9 +374,40 @@
      true
     ]
    ],
-   "start": 954,
-   "uncertain": "a planet with two moons, which the game arranges in one of two ways",
+   "swapped": [
+    1
+   ],
+   "start": 896,
    "ships": [
+    "FE0BE1297830A4B7",
+    "A4CB87ADD70110F5",
+    "6712F60CF2EBF804",
+    "798DDDAB436562E5",
+    "D4FAC12B371AEB79",
+    "3D5D16B8040D2B55",
+    "7094AD22F656E056",
+    "ACB9AC773E2AFEDD",
+    "6F8178B94DE80FC7",
+    "7161DF6BFB0A8C26",
+    "C41E539723A29D62",
+    "A70BEEC81144AD1A",
+    "81BE977387510961",
+    "D9FEF5FAA6962FCC",
+    "A43555C980F4B040",
+    "6E4D69E7043F4F29",
+    "A6B0B6753DC3BB9B",
+    "6A1425BC94DE4FFA",
+    "E1B02D9EB5F26FCE",
+    "D0BA99DA72C18255",
+    "73A88478F298B71F",
+    "E053E3312F87011C",
+    "CCCE1DC2EA74BC16",
+    "429B2CF4EADB33B3",
+    "31168FDBD6C6F4E7",
+    "688912C3EB8FC3B0",
+    "8BEFCE2D93BA93B2",
+    "EBDBF2179D72C1BB",
+    "FF9736847A1391A9",
     "950CF231B4EF3706",
     "31D42DD977009D17",
     "292940D63DFACD1E",
@@ -398,7 +421,6 @@
     "7271C87EBCCB541F",
     "CDD36DD97F8AB0C8",
     "60DD8ADA8A01D6D9",
-    "A9BD26A12CB6B87A",
     "2238784EFF3BE973",
     "06CADB7842A63DC4",
     "3BAEDFDDE4DBBEFD",
@@ -406,38 +428,10 @@
     "46CDF3209DE40889",
     "9B2340DCFEEB4C07",
     "6D9127886CD36446",
-    "4724ACC9AC274DEE",
-    "5B99C25ACA4B0052",
-    "FB9063DA1B5D29AD",
-    "5835111502425F29",
-    "7BC4DB55CF54D924",
-    "69E477EE83294C65",
-    "02422EB9C60709AE",
-    "E7CD0C595AD76D21",
-    "1141C45514050B0A",
-    "468AA8247E528B8A",
-    "ED6F49C260D75C75",
-    "53E3BF5B4102F6AD",
-    "9573FBCA797F0205",
-    "141B03900F8DE12C",
-    "75261CACD40B3330",
-    "625A9B68A1F16151",
-    "13DC7182613C3B2F",
-    "ADC63A7542C294CF",
-    "8D48CF18808AEBB5",
-    "7B7DE532477E05D2",
-    "53542A228E16498E",
-    "3FADB3B5AEF766BB",
-    "26881012CB50D479",
-    "B1EF07A01EE7E975",
-    "FC13B11C8A3119BF",
-    "AE82F18E901CD716",
-    "EB02719860A04074",
-    "9F05F2A30C77FDE8",
-    "C81B8E010990BA42"
+    "4724ACC9AC274DEE"
    ],
    "exoticSquid": false,
-   "crash": "C16060EA5D5BFC9E",
+   "crash": "A9BD26A12CB6B87A",
    "civilian": [
     "Hauler",
     "Hauler",
@@ -459,14 +453,6 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": [
-    {
-     "start": 896,
-     "exotic": "73A88478F298B71F",
-     "exoticSquid": false,
-     "crash": "A9BD26A12CB6B87A"
-    }
    ]
   },
   {
@@ -485,8 +471,8 @@
      true
     ]
    ],
+   "swapped": [],
    "start": 202,
-   "uncertain": null,
    "ships": [
     "BE0A86B95B35936F",
     "D7B747BE2B01F3C3",
@@ -562,8 +548,7 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "a prime planet with moons",
@@ -591,8 +576,8 @@
      true
     ]
    ],
+   "swapped": [],
    "start": 475,
-   "uncertain": null,
    "ships": [
     "AF34EA82C96576AD",
     "5146395CE33E35E5",
@@ -668,8 +653,7 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "six bodies",
@@ -707,8 +691,8 @@
      false
     ]
    ],
+   "swapped": [],
    "start": 1446,
-   "uncertain": null,
    "ships": [
     "6C2CFFDC9EE1E51A",
     "3B7C93221FB59193",
@@ -784,8 +768,7 @@
     "Solar",
     "Shuttle",
     "Solar"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "purple star",
@@ -808,8 +791,8 @@
      true
     ]
    ],
+   "swapped": [],
    "start": 41,
-   "uncertain": null,
    "ships": [
     "19AFB102B59B876F",
     "898BC805F7259EEE",
@@ -885,16 +868,15 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "giant planet layout",
    "code": "03F4A398F6A8",
    "galaxy": 0,
    "bodies": [],
+   "swapped": [],
    "start": 41,
-   "uncertain": null,
    "ships": [
     "42C0455DE34C1EF2",
     "C19B431D4EF930E0",
@@ -970,8 +952,7 @@
     "Shuttle",
     "Solar",
     "Shuttle"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "another galaxy, with a planet digit",
@@ -1004,8 +985,8 @@
      true
     ]
    ],
+   "swapped": [],
    "start": 1054,
-   "uncertain": null,
    "ships": [
     "6882032A9984DD2A",
     "BCEB4D7E7FF04F80",
@@ -1081,8 +1062,7 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": []
+   ]
   },
   {
    "what": "two planets with two moons each",
@@ -1120,8 +1100,8 @@
      false
     ]
    ],
+   "swapped": [],
    "start": 1406,
-   "uncertain": "two planets with two moons each, which the game arranges in one of two ways",
    "ships": [
     "3A5C86C6958476D2",
     "1C21818A00B9C012",
@@ -1197,26 +1177,6 @@
     "Shuttle",
     "Shuttle",
     "Shuttle"
-   ],
-   "others": [
-    {
-     "start": 1553,
-     "exotic": "7B3B0C1597D32BED",
-     "exoticSquid": false,
-     "crash": "469FBA3673D0F54F"
-    },
-    {
-     "start": 1368,
-     "exotic": "1C21818A00B9C012",
-     "exoticSquid": false,
-     "crash": "02132013CB9A8560"
-    },
-    {
-     "start": 1100,
-     "exotic": "7D147003C6A80EED",
-     "exoticSquid": false,
-     "crash": "6A1E1FC9BC8DC51A"
-    }
    ]
   },
   {
@@ -1255,8 +1215,8 @@
      false
     ]
    ],
+   "swapped": [],
    "start": 1607,
-   "uncertain": "a planet with two moons, which the game arranges in one of two ways",
    "ships": [
     "BF557EF61EECBF5D",
     "6D15B9CE5C9FB9A4",
@@ -1332,14 +1292,6 @@
     "Solar",
     "Solar",
     "Solar"
-   ],
-   "others": [
-    {
-     "start": 1467,
-     "exotic": "1725D6852C2A54A9",
-     "exoticSquid": false,
-     "crash": "8955C21D6B02B9BB"
-    }
    ]
   }
  ]

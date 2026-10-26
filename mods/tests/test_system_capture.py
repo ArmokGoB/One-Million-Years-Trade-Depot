@@ -3939,12 +3939,42 @@ class ShipModelTests(unittest.TestCase):
         self.assertAlmostEqual(pair[1][1], 112896.0, places=3)
         self.assertAlmostEqual(pair[2][1], -112896.0, places=3)
 
-    def test_two_moon_planets_are_flagged_unless_all_prime(self):
-        two = [self.Body(0, -1, False), self.Body(3, 0, False), self.Body(3, 0, False)]
-        self.assertIn("two moons", ship_model.uncertainty(two))
-        self.assertIsNone(ship_model.uncertainty([b._replace(prime=True) for b in two]))
-        self.assertIsNone(ship_model.uncertainty(two[:2]))
-        self.assertEqual(ship_model.two_moon_planets(two), [0])
+    def test_planet_words_count_a_zero_low_word_as_one(self):
+        # Away from a zero word or carry, seeded as the stream the ships come from.
+        words = [state & game_rng.MASK32 for state in game_rng.stream_states(UA, 5)]
+        self.assertEqual(ship_model.planet_words(UA, 5), words)
+        zero_low = 0x0123456700000000  # made up: the carry is the high word alone
+        self.assertEqual(ship_model.planet_words(zero_low, 1), [(game_rng.MULTIPLIER + 0x01234567) & game_rng.MASK32])
+
+    def test_swapped_moons_follow_each_planets_own_draw(self):
+        Body = self.Body
+        # Three planets that aren't prime, the first and third with two moons, the second none, and a
+        # prime planet with two: one draw, three for each of the three planets, then one for each with moons.
+        system = [Body(0, -1, False), Body(3, 0, False), Body(3, 0, False), Body(1, -1, False)]
+        system += [Body(0, -1, False), Body(3, 4, False), Body(3, 4, False)]
+        system += [Body(0, -1, True), Body(3, 7, True), Body(3, 7, True)]
+        seen = set()
+        for k in range(64):
+            ua = ((k + 1) * 0x9E3779B97F4A7C15) & game_rng.MASK64  # made up
+            words = ship_model.planet_words(ua, 1 + 3 * 3 + 2)
+            expected = frozenset(planet for planet, word in zip((0, 4), words[10:]) if word % 2 == 0)
+            self.assertEqual(ship_model.swapped_moons(ua, system), expected, f"{ua:016X}")
+            seen.add(expected)
+        self.assertEqual(len(seen), 4, "each planet's moons come out both ways")
+
+    def test_a_planet_with_one_moon_takes_a_draw_too(self):
+        Body = self.Body
+        system = [Body(0, -1, False), Body(3, 0, False), Body(0, -1, False), Body(3, 2, False), Body(3, 2, False)]
+        for k in range(16):
+            ua = ((k + 1) * 0x9E3779B97F4A7C15) & game_rng.MASK64  # made up
+            words = ship_model.planet_words(ua, 1 + 3 * 2 + 2)
+            self.assertEqual(ship_model.swapped_moons(ua, system), frozenset({2} if words[8] % 2 == 0 else ()))
+
+    def test_ships_start_with_the_moons_where_the_game_puts_them(self):
+        Body = self.Body
+        system = [Body(0, -1, False), Body(3, 0, False), Body(3, 0, False), Body(1, -1, False)]
+        swapped = ship_model.swapped_moons(UA, system)
+        self.assertEqual(ship_model.ships_start(UA, system), ship_model.ships_start(UA, system, swapped))
 
     def test_swapped_moons_trade_azimuths_and_keep_elevations(self):
         two = [self.Body(0, -1, False), self.Body(3, 0, False), self.Body(3, 0, False)]
@@ -4153,18 +4183,20 @@ class NamegenComparisonTests(CaptureTestCase):
             self.assertIn("100.0%", line)
 
     def test_moon_layouts_are_read_from_recorded_positions(self):
-        # Two made-up systems whose second body, a large planet, has two moons (bodies 2 and 3):
-        # the first laid out the way the model guesses, the second the other way round.
+        # Two made-up systems whose second body, a large planet, has two moons (bodies 2 and 3), both
+        # with the first moon at the golden angle as worked out: the first laid out that way, the second
+        # the other way round.
         lookup = LookupTests.lookup.__get__(self)
         planet = (500000.0, 1200.0, -300000.0)
-        for code, galaxy, swapped in (
-            (0x021B7BE06E75, 248, frozenset()),
-            (0x6226B9E3A187, 0, frozenset({1})),
+        for code, galaxy, as_worked_out in (
+            (0x021B7BE06E75, 248, True),
+            (0x6226B9E3A187, 0, False),
         ):
             ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
             system = ship_model.bodies(ua)
-            self.assertEqual(ship_model.two_moon_planets(system), [1])
-            offsets = ship_model.moon_offsets(system, swapped)
+            self.assertEqual([b.parent for b in system].count(1), 2)
+            self.assertEqual(ship_model.swapped_moons(ua, system), frozenset({1}))
+            offsets = ship_model.moon_offsets(system, frozenset({1}) if as_worked_out else frozenset())
             positions = [(1.0e6 * (k + 1), 0.0, 0.0) for k in range(len(system))]
             positions[1] = planet
             for k in (2, 3):
@@ -4180,8 +4212,10 @@ class NamegenComparisonTests(CaptureTestCase):
             lines[1:],
             [
                 "Two-moon planets whose moons' positions were recorded: 2",
-                "  first moon at azimuth 0 (the model's first guess): 1",
                 "  first moon at 137.5 degrees: 1",
+                "  first moon at azimuth 0: 1",
+                "  as ship_model.swapped_moons() works them out from the address: 1/2",
+                "    00022600B9E3A187 planet 1: first moon at azimuth 0.00, not as worked out",
             ],
         )
 

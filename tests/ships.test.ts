@@ -13,6 +13,7 @@ import {
   colorName,
   describeSystem,
   distinguishingParts,
+  drawsBeforeShips,
   exoticSquid,
   firstDraw,
   hex64,
@@ -24,15 +25,18 @@ import {
   parsePortalCode,
   planetSeeds,
   partsFor,
+  PRNG,
   shipPool,
   slotTypes,
   solarRoll,
   SQUID_PART,
+  swappedMoons,
   systemAttributes,
   typeModels,
   typePaints,
   universalAddress,
   withPlanet,
+  type Body,
   type Palettes,
   type PartModel,
   type ShipGroup,
@@ -59,15 +63,14 @@ interface ShipVector {
   code: string;
   galaxy: number;
   bodies: [number, number, boolean][];
+  /** The planets whose two moons are the other way round: the first at the golden angle. */
+  swapped: number[];
   start: number;
-  uncertain: string | null;
   ships: string[];
   exoticSquid: boolean;
   crash: string;
   /** What each of the first 20 ships is: Hauler, Fighter, Explorer, Shuttle or Solar. */
   civilian: string[];
-  /** The other ways a two-moon planet's moons can be arranged. */
-  others: { start: number; exotic: string; exoticSquid: boolean; crash: string }[];
 }
 
 const file = JSON.parse(readFileSync(new URL("./fixtures/ship-vectors.json", import.meta.url), "utf8")) as {
@@ -98,28 +101,72 @@ describe("ship pool vectors from the Python model", () => {
       const pool = shipPool(code, v.galaxy);
       const { bodies } = planetSeeds(withPlanet(code, 0), v.galaxy);
       expect(bodies.map((b) => [b.size, b.parent, b.prime])).toEqual(v.bodies);
+      const ua = universalAddress(withPlanet(code, 0), v.galaxy);
+      expect([...swappedMoons(ua, bodies)].sort((a, b) => a - b)).toEqual(v.swapped);
       expect(pool.drawsBeforeShips).toBe(v.start);
-      expect(pool.uncertain).toBe(v.uncertain);
       expect(pool.ships.map((s) => hex64(s.seed))).toEqual(v.ships);
       expect(pool.ships.map((s) => s.slot)).toEqual([...Array(50).keys()]);
       expect(pool.ships.slice(0, 20).map((s) => s.type)).toEqual(v.civilian);
       expect(hex64(pool.crashSite)).toBe(v.crash);
       expect(hex64(pool.exotic)).toBe(v.ships[20]);
       expect(pool.exoticSquid).toEqual(v.exoticSquid);
-      expect(
-        pool.alternatives.map((a) => ({
-          start: a.drawsBeforeShips,
-          exotic: hex64(a.exotic),
-          exoticSquid: a.exoticSquid,
-          crash: hex64(a.crashSite),
-        })),
-      ).toEqual(v.others);
-      for (const a of pool.alternatives) {
-        expect(a.ships).toHaveLength(50);
-        expect(a.ships[20]).toBe(a.exotic);
-      }
     });
   }
+
+  it("include planets with two moons each way round", () => {
+    const swapped = file.vectors.filter((v) => v.swapped.length).map((v) => v.what);
+    expect(swapped).toContain("Vy'keen, a planet with two moons");
+    expect(file.vectors.find((v) => v.what === "two planets with two moons each")!.swapped).toEqual([]);
+  });
+});
+
+describe("moons", () => {
+  const M32 = 0xffffffffn;
+  /** The draws the game makes as it places a system's planets: its generator seeded with the address. */
+  function planetDraws(ua: bigint, count: number): number[] {
+    const low = ua & M32;
+    const carry = ((((low >> 16n) | (low << 16n)) & M32) ^ low ^ (ua >> 32n)) & M32;
+    const rng = new PRNG((carry << 32n) | (low === 0n ? 1n : low));
+    return Array.from({ length: count }, () => rng.randi());
+  }
+  const planet = (size = 0, prime = false): Body => ({ size, parent: -1, prime });
+  const moon = (parent: number, prime = false): Body => ({ size: 3, parent, prime });
+  // Made-up addresses.
+  const addresses = Array.from({ length: 64 }, (_, k) => BigInt(k + 1) * 0x9e3779b97f4a7c15n);
+
+  it("are the other way round where the planet's own draw is even", () => {
+    // Three planets that aren't prime, the first and third with two moons, the second none, and a prime
+    // planet with two: one draw, three for each of the three planets, then one for each with moons.
+    const bodies = [planet(), moon(0), moon(0), planet(1), planet(), moon(4), moon(4), planet(0, true)];
+    bodies.push(moon(7, true), moon(7, true));
+    const seen = new Set<string>();
+    for (const ua of addresses) {
+      const draws = planetDraws(ua, 1 + 3 * 3 + 2);
+      const expected = [0, 4].filter((k, j) => draws[10 + j]! % 2 === 0);
+      expect([...swappedMoons(ua, bodies)].sort((a, b) => a - b), ua.toString(16)).toEqual(expected);
+      seen.add(expected.join());
+    }
+    expect([...seen].sort()).toEqual(["", "0", "0,4", "4"]);
+  });
+
+  it("take a draw for a planet with one moon too", () => {
+    const bodies = [planet(), moon(0), planet(), moon(2), moon(2)];
+    for (const ua of addresses) {
+      const draws = planetDraws(ua, 1 + 3 * 2 + 2);
+      expect(swappedMoons(ua, bodies).has(2)).toBe(draws[8]! % 2 === 0);
+      expect(swappedMoons(ua, bodies).has(0)).toBe(false);
+    }
+  });
+
+  it("decide how many draws come before the ships", () => {
+    const v = file.vectors.find((v) => v.what === "Vy'keen, a planet with two moons")!;
+    const code = parsePortalCode(v.code);
+    const { bodies } = planetSeeds(withPlanet(code, 0), v.galaxy);
+    const ua = universalAddress(withPlanet(code, 0), v.galaxy);
+    expect(drawsBeforeShips(ua, bodies)).toBe(v.start);
+    expect(drawsBeforeShips(ua, bodies, new Set(v.swapped))).toBe(v.start);
+    expect(drawsBeforeShips(ua, bodies, new Set())).not.toBe(v.start);
+  });
 });
 
 describe("slot types", () => {
@@ -359,30 +406,6 @@ describe("describeSystem", () => {
     expect(d.ships.ships[27]!.builds[0]!.colors.length).toBeGreaterThan(0);
     expect(d.ships.ships[32]!.builds).toEqual([]);
     expect(d.ships.ships[32]!.note).toMatch(/Beachhead expedition/);
-    expect(d.ships.uncertain).toBeNull();
-    expect(d.ships.alternatives).toEqual([]);
-  });
-
-  it("gives the other moon arrangement's exotic and crash-site seeds", () => {
-    const v = file.vectors.find((v) => v.what === "Vy'keen, a planet with two moons")!;
-    const ships = describeSystem(parsePortalCode(v.code), v.galaxy).ships;
-    expect(ships.uncertain).toBe(v.uncertain);
-    expect(ships.alternatives).toEqual(
-      v.others.map((o) => {
-        const exotic = BigInt(`0x${o.exotic}`);
-        const crash = BigInt(`0x${o.crash}`);
-        return {
-          exotic: `0x${o.exotic}`,
-          exoticSquid: o.exoticSquid,
-          exoticParts: distinguishingParts("S-CLASS_PROC", exotic),
-          exoticColors: colorsOf("S-CLASS_PROC", exotic, basePalettes(exotic)),
-          crashSite: `0x${o.crash}`,
-          crashSiteParts: distinguishingParts("SENTINELSHIP_PROC", crash),
-          crashSiteColors: colorsOf("SENTINELSHIP_PROC", crash, basePalettes(crash)),
-        };
-      }),
-    );
-    expect(ships.alternatives).toHaveLength(1);
   });
 
   it("predicts a giant planet system, whose bodies are all prime", () => {
