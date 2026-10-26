@@ -3939,12 +3939,15 @@ class ShipModelTests(unittest.TestCase):
         self.assertAlmostEqual(pair[1][1], 112896.0, places=3)
         self.assertAlmostEqual(pair[2][1], -112896.0, places=3)
 
-    def test_planet_words_count_a_zero_low_word_as_one(self):
-        # Away from a zero word or carry, seeded as the stream the ships come from.
-        words = [state & game_rng.MASK32 for state in game_rng.stream_states(UA, 5)]
-        self.assertEqual(ship_model.planet_words(UA, 5), words)
-        zero_low = 0x0123456700000000  # made up: the carry is the high word alone
-        self.assertEqual(ship_model.planet_words(zero_low, 1), [(game_rng.MULTIPLIER + 0x01234567) & game_rng.MASK32])
+    def test_the_game_counts_a_zero_low_word_as_one_and_nms_namegen_a_zero_carry(self):
+        # Made up: away from a zero word or carry, the two seed the generator alike.
+        self.assertEqual(game_rng.seeded_state(UA), game_rng.namegen_state(UA))
+        zero_low = 0x0123456700000000  # the carry is the high word alone
+        self.assertEqual(game_rng.seeded_state(zero_low), (0x01234567 << 32) | 1)
+        self.assertEqual(game_rng.namegen_state(zero_low), 0x01234567 << 32)
+        zero_carry = 0x00010001  # its halves swapped, xored with itself and a high word of 0
+        self.assertEqual(game_rng.seeded_state(zero_carry), zero_carry)
+        self.assertEqual(game_rng.namegen_state(zero_carry), (1 << 32) | zero_carry)
 
     def test_swapped_moons_follow_each_planets_own_draw(self):
         Body = self.Body
@@ -3956,7 +3959,7 @@ class ShipModelTests(unittest.TestCase):
         seen = set()
         for k in range(64):
             ua = ((k + 1) * 0x9E3779B97F4A7C15) & game_rng.MASK64  # made up
-            words = ship_model.planet_words(ua, 1 + 3 * 3 + 2)
+            words = [state & M32 for state in game_rng.stream_states(ua, 1 + 3 * 3 + 2)]
             expected = frozenset(planet for planet, word in zip((0, 4), words[10:]) if word % 2 == 0)
             self.assertEqual(ship_model.swapped_moons(ua, system), expected, f"{ua:016X}")
             seen.add(expected)
@@ -3967,7 +3970,7 @@ class ShipModelTests(unittest.TestCase):
         system = [Body(0, -1, False), Body(3, 0, False), Body(0, -1, False), Body(3, 2, False), Body(3, 2, False)]
         for k in range(16):
             ua = ((k + 1) * 0x9E3779B97F4A7C15) & game_rng.MASK64  # made up
-            words = ship_model.planet_words(ua, 1 + 3 * 2 + 2)
+            words = [state & M32 for state in game_rng.stream_states(ua, 1 + 3 * 2 + 2)]
             self.assertEqual(ship_model.swapped_moons(ua, system), frozenset({2} if words[8] % 2 == 0 else ()))
 
     def test_ships_start_with_the_moons_where_the_game_puts_them(self):
@@ -3989,9 +3992,8 @@ class ShipModelTests(unittest.TestCase):
     @staticmethod
     def seed_with_first_draw(draw: int, low: int = 0x2468ACE1) -> int:
         """A made-up seed whose first draw is ``draw``: the game's seeding, run backwards."""
-        high = (draw - low * game_rng.MULTIPLIER) & M32
-        assert high, "the game would make this high word 1; pick another low word"
-        return ((high ^ game_rng.swap16(low) ^ low) << 32) | low
+        carry = (draw - low * game_rng.MULTIPLIER) & M32
+        return ((carry ^ game_rng.swap16(low) ^ low) << 32) | low
 
     def test_an_exotic_is_a_squid_when_its_first_draw_is_at_least_20_21_of_the_range(self):
         line = 20 * 2**32 / 21
@@ -4008,7 +4010,9 @@ class PartsModelTests(unittest.TestCase):
     """tools/captures/parts_model.py, with made-up tables; the report checks it against real captures."""
 
     TABLES = {
-        "models": {"PLAIN": 0, "RARE": 1, "NEVER": 2, "NESTED": 3, "DECIDED": 5, "DETAIL": 6},
+        "models": {
+            "PLAIN": 0, "RARE": 1, "NEVER": 2, "NESTED": 3, "DECIDED": 5, "DETAIL": 6, "WHOLE": 7, "PASSED": 8,
+        },
         "trees": [
             [["_A_", ["_A_1", "_A_2", "_A_3"]]],
             [["_B_", ["_B_1", ["_B_XRARE", 1]]]],
@@ -4022,8 +4026,16 @@ class PartsModelTests(unittest.TestCase):
             [["_A_", ["_A_1"]], ["_B_", ["_B_1", "_A_1"]], ["_C_", ["_C_1", "_C_2", "_C_3"]]],
             # A part's level-of-detail copies, the second in a child list, then another child list.
             [["_H_", ["_H_ALOD0"]], ["_I_", [["_I_1", 0, [], [["_H_", ["_H_ALOD1"]], ["_J_", ["_J_1", "_J_2"]]]]]]],
+            # Two normal options and two rare ones, alternating.
+            [["_W_", ["_W_1", ["_W_2XRARE", 1], "_W_3", ["_W_4XRARE", 1]]]],
+            # Child lists, and a scene, that offer options never picked only, then another list.
+            [
+                ["_P_", [["_P_1", 0, [9, 4], [["_Q_", [["_Q_1XNEVER", 2]]], ["_R_", [["_R_1XNEVER", 2]]]]]]],
+                ["_A_", ["_A_1", "_A_2", "_A_3"]],
+            ],
+            [["_S_", [["_S_1XNEVER", 2], ["_S_2XNEVER", 2]]]],
         ],
-    }
+    }  # fmt: skip
 
     def setUp(self):
         patcher = mock.patch.object(parts_model, "tables", return_value=self.TABLES)
@@ -4036,10 +4048,26 @@ class PartsModelTests(unittest.TestCase):
         for draw, part in ((0, "_A_1"), (2**32 // 3, "_A_1"), (2**32 // 3 + 1, "_A_2"), (M32, "_A_3")):
             self.assertEqual(parts_model.parts("PLAIN", self.seed_with_first_draw(draw)), [part], draw)
 
-    def test_a_rare_option_weighs_0_05_against_1(self):
+    def test_a_rare_option_weighs_1_against_20(self):
         line = 20 * 2**32 / 21
         self.assertEqual(parts_model.parts("RARE", self.seed_with_first_draw(math.floor(line))), ["_B_1"])
         self.assertEqual(parts_model.parts("RARE", self.seed_with_first_draw(math.ceil(line))), ["_B_XRARE"])
+
+    def test_weights_are_whole_numbers(self):
+        # The draw times the total weight of 42, over 2^32: 2^31 falls exactly on 21, where the second
+        # normal option starts after 20 for the first and 1 for the first rare one.
+        for draw, part in ((2**31 - 1, "_W_2XRARE"), (2**31, "_W_3"), (M32, "_W_4XRARE")):
+            self.assertEqual(parts_model.parts("WHOLE", self.seed_with_first_draw(draw)), [part], draw)
+
+    def test_lists_of_options_never_picked_take_no_draws_and_still_count_as_offered(self):
+        seed = 0x0123456789ABCDEF
+        stream = game_rng.Stream(seed)
+        stream.word()  # _P_1, the only option; no seed for its child lists, nor for its first scene's
+        scene = game_rng.Stream(game_rng.mix(stream.word() | (stream.word() << 32)))
+        expected = ["_P_1", f"_E_{1 + scene.below(4)}", f"_A_{1 + stream.below(3)}"]
+        parts, offered = parts_model.parts_and_options("PASSED", seed)
+        self.assertEqual(parts, expected)
+        self.assertLessEqual({"_Q_1XNEVER", "_R_1XNEVER", "_S_1XNEVER", "_S_2XNEVER"}, offered)
 
     def test_a_list_of_options_never_picked_is_skipped(self):
         self.assertNotIn("_N_XNEVER", parts_model.parts("NEVER", 0x0123456789ABCDEF))

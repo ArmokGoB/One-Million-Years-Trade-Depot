@@ -28,8 +28,8 @@
 
 import rawTables from "./data/paint-tables.json";
 import type { PartModel } from "./parts";
-import { PRNG } from "./prng";
-import { MASK32, mix64, swap16 } from "./u64";
+import { PRNG, seededPRNG } from "./prng";
+import { mix64 } from "./u64";
 
 /** A color's red, green and blue, from 0 to 1. */
 export type RGB = readonly [number, number, number];
@@ -138,9 +138,7 @@ const UNIT = 1 / 4294967295;
 
 /**
  * The generator the paint and the palettes draw from: the game's
- * multiply-with-carry generator (see prng.ts), seeded from a 64-bit seed
- * slightly differently from seededPRNG: a zero low word counts as one, and
- * the carry isn't made non-zero.
+ * multiply-with-carry generator, seeded as seededPRNG seeds it.
  */
 class Stream {
   private rng: PRNG;
@@ -150,10 +148,7 @@ class Stream {
   }
 
   static seeded(seed: bigint): Stream {
-    const low = seed & MASK32;
-    const high = (seed >> 32n) & MASK32;
-    const carry = swap16(low) ^ high ^ low;
-    return new Stream((carry << 32n) | (low === 0n ? 1n : low));
+    return new Stream(seededPRNG(seed).seed);
   }
 
   next(): number {

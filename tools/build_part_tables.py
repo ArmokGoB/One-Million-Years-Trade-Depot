@@ -178,7 +178,7 @@ class Builder:
 
     def convert(self, lists: list[dict]) -> list:
         out = []
-        for k, lst in enumerate(lists):
+        for lst in lists:
             options = []
             for o in lst["options"]:
                 if o["chance"]:
@@ -194,10 +194,6 @@ class Builder:
                 # Several detail levels of one part as options of one list, as a living ship has: how the game
                 # picks among those isn't modeled.
                 raise DescriptorError(f"{lst['type']}: options that are the same part: {listed}")
-            if all(weight_class(o["name"]) == NEVER for o in lst["options"]) and k + 1 < len(lists):
-                # parts_model.py skips such a list without a draw; with another list after it, whether the game
-                # takes a draw for it would matter, and no capture has shown that yet.
-                print(f"warning: {lst['type']}, never picked, comes before {lists[k + 1]['type']}", file=sys.stderr)
             out.append([lst["type"], options])
         return out
 

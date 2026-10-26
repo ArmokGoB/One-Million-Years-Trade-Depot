@@ -30,9 +30,9 @@
 import { universalAddress, withPlanet } from "./address";
 import type { PaintModel } from "./paint";
 import { partsFor, type PartModel } from "./parts";
-import { PRNG, seededPRNG } from "./prng";
+import { seededPRNG } from "./prng";
 import { planetSeeds, systemAttributes, type Body } from "./system";
-import { mix64, swap16 } from "./u64";
+import { mix64 } from "./u64";
 
 /** Base radius of a planet's attractor shell, by size (0 large, 1 medium, 2 small, 3 moon). */
 const BASE_RADIUS: readonly number[] = [195072, 147456, 96768, 23040];
@@ -125,17 +125,6 @@ function moonOffsets(bodies: readonly Body[], swapped: ReadonlySet<number>): Map
 }
 
 /**
- * The generator the game seeds with a system's address to place its planets
- * and moons. It's seeded as seededPRNG seeds it, but for a low word of 0,
- * which counts as 1, and a carry of 0, which stays 0.
- */
-function planetPRNG(ua: bigint): PRNG {
-  const low = ua & MASK32;
-  const carry = (swap16(low) ^ low ^ (ua >> 32n)) & MASK32;
-  return new PRNG((carry << 32n) | (low === 0n ? 1n : low));
-}
-
-/**
  * The planets that aren't prime and whose two moons the game puts the other
  * way round from moonOffsets' default: the first at the golden angle, the
  * second at azimuth 0. The game places a planet's moons at the points of a
@@ -149,7 +138,7 @@ function planetPRNG(ua: bigint): PRNG {
 export function swappedMoons(ua: bigint, bodies: readonly Body[]): Set<number> {
   const moons = (k: number) => bodies.filter((body) => body.parent === k).length;
   const planets = bodies.flatMap((body, k) => (!body.prime && body.parent < 0 ? [k] : []));
-  const rng = planetPRNG(ua);
+  const rng = seededPRNG(ua);
   for (let k = 0; k < 1 + PLANET_DRAWS * planets.length; k++) rng.updateSeed();
   const swapped = new Set<number>();
   for (const planet of planets) {
@@ -237,8 +226,8 @@ export function firstDraw(seed: bigint): number {
 
 /**
  * Whether the exotic with this seed is a squid: whether its first part, its
- * body, is the squid's. The squid's body is a rare option, weighing 0.05
- * against the other exotics' body's 1, so the first draw from the seed picks
+ * body, is the squid's. The squid's body is a rare option, weighing 1
+ * against the other exotics' body's 20, so the first draw from the seed picks
  * it in the top 1/21 of its range.
  */
 export function exoticSquid(seed: bigint): boolean {
@@ -403,7 +392,6 @@ const SOLAR_CHANCE = Math.fround(0.1);
 const SOLAR_CHANCE_OUTLAW_SHUTTLE = Math.fround(0.85);
 /** What the game hashes a ship's seed and its system's address with. */
 const HASH_MULTIPLIER = 0x9ddfea08eb382d69n;
-const MASK32 = 0xffffffffn;
 const MASK64 = 0xffffffffffffffffn;
 /** What the game multiplies a draw by to make a fraction of it: 1 / (2^32 - 1). */
 const DRAW_SCALE = 1 / 4294967295;
@@ -418,10 +406,7 @@ export function solarRoll(seed: bigint, ua: bigint): number {
   const a = ((ua ^ seed) * HASH_MULTIPLIER) & MASK64;
   const b = (((a >> 47n) ^ ua ^ a) * HASH_MULTIPLIER) & MASK64;
   const hashed = (((b >> 47n) ^ b) * HASH_MULTIPLIER) & MASK64;
-  const low = hashed & MASK32;
-  const carry = (((low >> 16n) | (low << 16n)) & MASK32) ^ (hashed >> 32n) ^ low;
-  const draw = ((low || 1n) * 0x5a76f899n + carry) & MASK32;
-  return Math.fround(Number(draw) * DRAW_SCALE);
+  return Math.fround(seededPRNG(hashed).randi() * DRAW_SCALE);
 }
 
 /**
