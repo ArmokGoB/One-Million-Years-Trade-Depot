@@ -8,8 +8,9 @@ For each model (FIGHTER_PROC, SHUTTLE_PROC, MULTITOOL, ...), it writes into the 
 - <MODEL>-parts-NN.png: every part ID the model's tables offer (src/core/data/part-tables.json), in the tables'
   order, each three times: in orange over the rest of a whole model built around it, in gray (from a made-up
   seed, every list on the way to the part picking the option that leads to it); then alone, from the front left
-  and from the back right. A part with no geometry of its own is drawn with the parts it brings; one with none of
-  those either, or that no model built around it has, is listed on the last sheet.
+  and from the back right, the left one only of a pair either side of the middle. A part with no geometry of its
+  own is drawn with the parts it brings; one with none of those either, or that no model built around it has, is
+  listed on the last sheet.
 - <MODEL>-ships-NN.png: whole models built from made-up seeds as the game builds them, each part in its own
   color, with a key of the part IDs.
 - <MODEL>-parts.json: for each part ID it drew, the scenes it brings in and the size and middle of what's drawn
@@ -448,6 +449,21 @@ def bounds_of(tris: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return flat.min(0), flat.max(0)
 
 
+def left_side(tris: np.ndarray) -> np.ndarray | None:
+    """The left half of a part made of two mirror images either side of the middle, such as a pair of wings,
+    or None for any other part."""
+    x = tris[:, :, 0]
+    left, right = (x > 0).all(1), (x < 0).all(1)
+    if not left.any() or not right.any() or not (left | right).all():
+        return None
+    (llo, lhi), (rlo, rhi) = bounds_of(tris[left]), bounds_of(tris[right])
+    mirrored_lo, mirrored_hi = np.array([-rhi[0], rlo[1], rlo[2]]), np.array([-rlo[0], rhi[1], rhi[2]])
+    tolerance = 0.05 * (lhi - llo).max()
+    if (abs(llo - mirrored_lo) > tolerance).any() or (abs(lhi - mirrored_hi) > tolerance).any():
+        return None
+    return tris[left]
+
+
 def font(size: int) -> ImageFont.ImageFont:
     try:
         return ImageFont.load_default(size=size)
@@ -540,6 +556,9 @@ def part_sheets(game: Game, model: str, out: Path, size: int) -> list[Path]:
         note += f", with {', '.join(sorted(mine - {listed}))}" if mine != {listed} else ""
         if facts[listed]["scenes"]:
             note += "; brings " + ", ".join(facts[listed]["scenes"])
+        half = left_side(alone)
+        if half is not None:  # a pair: the left one alone is bigger
+            alone, note = half, f"{note}; alone, the left one of the pair"
         d.text((4, 18), fit(d, note, 3 * size, small), fill=(90, 90, 90), font=small)
         tile.paste(picture(tris, colors, "front left", size, on_top=own), (2, 32))
         alone_colors = np.repeat(HIGHLIGHT[None], len(alone), 0)
