@@ -68,7 +68,8 @@
   --font-text: "Matrixtype", system-ui, sans-serif;
   --font-stencil: "Facade-Ouest", sans-serif-condensed, sans-serif;
 
-  /* MatrixType's sizes: its dots 2, 3 and 4 pixels apart. */
+  /* MatrixType's sizes: its dots 1, 2, 3 and 4 pixels apart. */
+  --type-fine: calc(8rem / 15); /* 8.53px */
   --type-read: calc(16rem / 15); /* 17.07px */
   --type-sign: 1.6rem; /* 25.6px */
   --type-lede: calc(32rem / 15); /* 34.13px */
@@ -637,6 +638,42 @@ a:hover {
 .ships__paint {
   flex-basis: 100%;
   margin: 0.25rem 0 0;
+}
+.ships__names {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}
+
+/* The parts the game names: each name in the game's words over, at MatrixType's
+ * smallest size, the IDs it's made of, wrapping between parts, never inside one;
+ * beside what they're of where there's room, under it where there isn't. */
+.part-names {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.5em;
+}
+.part-names__list {
+  display: flex;
+  flex: 1 1 15rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.375rem 1.25rem;
+  min-width: 0;
+}
+.part-names__label,
+.part-name__side {
+  color: var(--ink-muted);
+}
+.part-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.part-name__ids {
+  font-size: var(--type-fine);
+  line-height: 1.5;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
 }
 
 /* The colors of a ship's or multi-tool's paint, by name: a chip of each color

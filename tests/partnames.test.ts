@@ -33,7 +33,7 @@ describe("part name vectors from the Python model", () => {
 });
 
 describe("named parts", () => {
-  it("name every slot of a fighter, explorer and solar, and of a hauler but for one wing the game leaves unnamed", () => {
+  it("name every slot of a ship but for one hauler wing the game leaves unnamed", () => {
     for (const v of file.vectors) {
       expect(v.names.length, `${v.model} ${v.seed}`).toBe(v.model === "DROPSHIP_PROC" ? v.names.length : 3);
     }
@@ -54,7 +54,8 @@ describe("named parts", () => {
 
   it("give an explorer with a matched pair of wings the same wing on both sides", () => {
     const paired = file.vectors.filter(
-      (v) => v.model === "SCIENTIFIC_PROC" && partsFor(v.model, BigInt(`0x${v.seed}`)).some((p) => /^_WINGS_SYM1?$/.test(p)),
+      (v) =>
+        v.model === "SCIENTIFIC_PROC" && partsFor(v.model, BigInt(`0x${v.seed}`)).some((p) => /^_WINGS_SYM1?$/.test(p)),
     );
     expect(paired.length).toBeGreaterThanOrEqual(2);
     for (const v of paired) {

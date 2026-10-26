@@ -17,6 +17,7 @@ import {
   hex64,
   hexColor,
   MULTIPLIER,
+  namedParts,
   paint,
   paintColors,
   parsePortalCode,
@@ -34,6 +35,16 @@ import {
   type PartModel,
   type ShipGroup,
 } from "../src/core";
+
+/** The names the game gives a starship's parts, each with the parts that tell ships apart it's made of. */
+function namesOf(model: PartModel, seed: bigint) {
+  const parts = distinguishingParts(model, seed);
+  return namedParts(model, seed).map(({ name, side, parts: made }) => ({
+    name,
+    side,
+    parts: parts.filter((part) => made.includes(part)),
+  }));
+}
 
 /** A starship's colors as the site works them out: its paint, with palettes from `palettes`. */
 function colorsOf(model: PartModel, seed: bigint, palettes: Palettes, hint = "") {
@@ -281,11 +292,16 @@ describe("describeSystem", () => {
         {
           model: "Hauler",
           parts: distinguishingParts("DROPSHIP_PROC", seed(0)),
+          names: namesOf("DROPSHIP_PROC", seed(0)),
           colors: colorsOf("DROPSHIP_PROC", seed(0), basePalettes(seed(0))),
         },
       ],
       note: null,
     });
+    // A hauler's cockpit, thrusters and wings, each by name; nothing else of its parts is named.
+    expect(d.ships.ships[0]!.builds[0]!.names.map((n) => n.side)).toEqual(["", "", ""]);
+    // The exotic's aren't named: the game's Starship Fabricator doesn't build exotics.
+    expect(d.ships.ships[20]!.builds[0]!.names).toEqual([]);
     expect(d.ships.exoticParts).toEqual(distinguishingParts("S-CLASS_PROC", seed(20)));
     expect(d.ships.exoticColors).toEqual(colorsOf("S-CLASS_PROC", seed(20), basePalettes(seed(20))));
     expect(d.ships.crashSiteParts).toEqual(distinguishingParts("SENTINELSHIP_PROC", crash));
@@ -302,6 +318,7 @@ describe("describeSystem", () => {
       {
         model: "Combat frigate",
         parts: [],
+        names: [],
         colors: paintColors(paint("COMBATFRIGATELOD0", [], seed(27), system)).map((color) => ({
           hex: hexColor(color),
           name: colorName(color),

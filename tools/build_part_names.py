@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Builds src/core/data/part-names.json from the game's starship outfitting tables.
+"""Builds src/core/data/part-names.json from the game's Starship Fabricator tables.
 
-The game names the parts of the ships it lets a player build at a space station's outfitting: fighters,
-haulers, explorers and solars. Its modular customisation table (cGcModularCustomisationDataTable) gives each
-of those ship types its slots (fuselage or cockpit, wings, thrusters, sail, and the reactor, which isn't a
-part) and the components a slot takes. A component is an item, named in the game's product tables, and
-descriptor groups (cGcCustomisationDescriptorGroups): each group a set of the part IDs the ship's descriptor
-lists, and the component's rule for its groups, all of them or any one. Salvaging a ship gives its
+The game names the parts of the ships a player can build at a space station's Starship Fabricator: fighters,
+haulers, explorers and solars (its tables have shuttles too, switched off and unnamed). Its modular
+customisation table (cGcModularCustomisationDataTable) gives each of those ship types its slots (fuselage or
+cockpit, wings, thruster, sail, and the reactor, which isn't a part) and the components a slot takes. A
+component is an item, named in the game's product tables, and descriptor groups
+(cGcCustomisationDescriptorGroups): each group a set of the part IDs a ship's descriptor lists, and the
+component's rule for its groups, all of them or any one. Salvaging a ship at Starship Outfitting gives its
 components.
 
 This script keeps each ship type's slots that hold parts, each with its components: the component's name,
@@ -16,20 +17,21 @@ parts tables have them, less those the ship type's descriptors don't have (see b
 must have built src/core/data/part-tables.json first). tools/captures/part_names_model.py and
 src/core/partnames.ts name a ship's parts from the result.
 
-Some of the outfitting's explorer parts are ones the game's generator never picks (xNEVER), and so never
+Some of the Fabricator's explorer parts are ones the game's generator never picks (xNEVER), and so never
 fit a generated explorer as they are. This script names them as the generated parts they look like:
 
-- The outfitting builds an explorer's right wing from copies of the generator's right-wing scenes that let
-  its subwings differ from the left wing's: the same nodes, meshes and materials as the generator's, but for
-  the names of the subwings (_SubWingR_A for _SubWingL_A, and so on). A part that brings in such a copy
-  stands for the generator's part that brings in the original, in the same list (LOOKALIKES).
+- The Fabricator builds an explorer's right wing from copies of the generator's right-wing scenes, which let
+  its subwings differ from the left wing's. A copy has the original's nodes, with the same mesh ranges, and
+  its materials, byte for byte, but for the names of the subwings (_SubWingR_A for _SubWingL_A, and so on).
+  A part that brings in such a copy stands for the generator's part that brings in the original, in the
+  same list (LOOKALIKES).
 - In a list whose options the generator never picks, it picks nothing; an option of such a list named
   NULL, which brings in nothing, stands for that, and isn't required.
 
 And it adds one rule the tables don't say. About half the explorers the game generates have a matched pair
 of wings: their descriptor picks _WINGS_SYM (or _WINGS_SYM1), and one wing for both sides, where an explorer
-built at the outfitting has _WINGS_ASYM (_WINGS_ASYM1) and a wing for each side, which may be the same one.
-Such an explorer is named as the outfitting's explorer with the same wing on both sides: as if it had
+built at the Fabricator has _WINGS_ASYM (_WINGS_ASYM1) and a wing for each side, which may be the same one.
+Such an explorer is named as the Fabricator's explorer with the same wing on both sides: as if it had
 _WINGS_ASYM (_WINGS_ASYM1), its right wing its left one (PAIRS).
 
 The tables are the game's own, which this repository doesn't hold. Extract them from the game's PCBANKS
@@ -78,7 +80,7 @@ GROUP_SIZE = 0x108  # cGcCustomisationDescriptorGroup: Descriptors at 0x40, Grou
 PRODUCT_SIZE = 0x300  # cGcProductData: ID at 0x150, NameLower at 0x270
 ENTRY_SIZE = 0x130  # cTkLocalisationEntry: Id at 0, English at 0x40
 
-# The ship types the site names parts of, by the scene the outfitting builds them from, and the key the
+# The ship types the site names parts of, by the scene the Fabricator builds them from, and the key the
 # parts tables have for it.
 MODELS = {
     "MODELS/COMMON/SPACECRAFT/FIGHTERS/FIGHTER_PROC.SCENE.MBIN": "FIGHTER_PROC",
@@ -88,9 +90,9 @@ MODELS = {
 }
 # The explorer's wing slots, by slot ID: the sides the site tells apart.
 SIDES = {"SCI_L_WING": "left", "SCI_R_WING": "right"}
-# A matched pair of wings, and what an explorer built at the outfitting has instead (see above).
+# A matched pair of wings, and what an explorer built at the Fabricator has instead (see above).
 PAIRS = {"SCIENTIFIC_PROC": [["_WINGS_SYM", "_WINGS_ASYM"], ["_WINGS_SYM1", "_WINGS_ASYM1"]]}
-# The outfitting's explorer parts that bring in copies of the generator's right-wing scenes, and the
+# The Fabricator's explorer parts that bring in copies of the generator's right-wing scenes, and the
 # generator's parts that bring in the originals (see above): WINGSBRIGHT_XNEVER.SCENE.MBIN for
 # WINGSBRIGHT.SCENE.MBIN, SUBWINGSA_RIGHTXNEVER.SCENE.MBIN for SUBWINGSA_RIGHT.SCENE.MBIN, and so on.
 LOOKALIKES = {
@@ -201,7 +203,7 @@ def english(files: Files, wanted: set[str]) -> dict[str, str]:
 
 
 def configs(data: bytes) -> dict[str, list[tuple[str, list[tuple[str, int, list[str]]]]]]:
-    """The outfitting's slots of each ship type the site names parts of, by model: each slot's ID and its
+    """The Fabricator's slots of each ship type the site names parts of, by model: each slot's ID and its
     components, each its item, its salvage rule (0 all groups, 1 any one) and its descriptor groups."""
     out = {}
     for i in range(CONFIG_COUNT):
@@ -210,7 +212,7 @@ def configs(data: bytes) -> dict[str, list[tuple[str, list[tuple[str, int, list[
         if model is None:
             continue
         if not data[c + 0x280]:
-            raise TableError(f"the outfitting has {model} switched off")
+            raise TableError(f"the Fabricator has {model} switched off")
         slots = []
         for s in array(data, c + 0x250, SLOT_SIZE):
             items = []
@@ -222,7 +224,7 @@ def configs(data: bytes) -> dict[str, list[tuple[str, list[tuple[str, int, list[
             slots.append((text(data, s + 0xC0, 0x10), items))
         out[model] = slots
     if set(out) != set(MODELS.values()):
-        raise TableError(f"the outfitting has no {', '.join(sorted(set(MODELS.values()) - set(out)))}")
+        raise TableError(f"the Fabricator has no {', '.join(sorted(set(MODELS.values()) - set(out)))}")
     return out
 
 
@@ -253,7 +255,8 @@ def main() -> int:
                     raise TableError(f"{model}: {copy} no longer a copy the generator never picks of {original}")
 
             def parts(group: list[str]) -> list[str]:
-                """The group's parts as the generator picks them, less those it has no list for."""
+                """The group's part IDs, a copy's as its original's, less empty ones and those the descriptors
+                don't offer."""
                 out: list[str] = []
                 for part in (lookalikes.get(p, p) for p in group):
                     if part in offered and part not in empty and part not in out:
@@ -284,12 +287,12 @@ def main() -> int:
         return 1
 
     about = (
-        "Derived from the game's outfitting tables by tools/build_part_names.py. For each ship type, its slots "
-        "that hold parts, each [side ('left', 'right' or none), components], a component [its name in the "
+        "Derived from the game's Starship Fabricator tables by tools/build_part_names.py. For each ship type, its "
+        "slots that hold parts, each [side ('left', 'right' or none), components], a component [its name in the "
         "game's English ('' for none), 0 if all its groups must fit or 1 if any one, its groups: each a list "
-        "of part IDs, as the generator picks them, the explorer's lookalikes included]. Pairs: an explorer with "
-        "the first part of a pair has a matched pair of wings, and is named as if it had the second, its right "
-        "wing its left one."
+        "of part IDs, those of the explorer's copied parts as the originals', empty options and those the "
+        "descriptors don't offer left out]. Pairs: an explorer with the first part of a pair has a matched pair "
+        "of wings, and is named as if it had the second, its right wing its left one."
     )
 
     def compact(value) -> str:

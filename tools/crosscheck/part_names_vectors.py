@@ -44,13 +44,19 @@ CASES = {
     ],
     "SCIENTIFIC_PROC": [
         ("a matched pair of wings", lambda seed: "_WINGS_SYM" in parts_model.parts("SCIENTIFIC_PROC", seed)),
-        ("a matched pair on the other cockpit", lambda seed: "_WINGS_SYM1" in parts_model.parts("SCIENTIFIC_PROC", seed)),
+        (
+            "a matched pair on the other cockpit",
+            lambda seed: "_WINGS_SYM1" in parts_model.parts("SCIENTIFIC_PROC", seed),
+        ),
         ("a right wing named by a lookalike", lambda seed: "_WINGSR_B4" in parts_model.parts("SCIENTIFIC_PROC", seed)),
         (
             "a right wing named by a lookalike on the other cockpit",
             lambda seed: "_WINGSRIGHT_K4" in parts_model.parts("SCIENTIFIC_PROC", seed),
         ),
-        ("a left wing with an empty accessory list", lambda seed: "_WINGSL_G" in parts_model.parts("SCIENTIFIC_PROC", seed)),
+        (
+            "a left wing with an empty accessory list",
+            lambda seed: "_WINGSL_G" in parts_model.parts("SCIENTIFIC_PROC", seed),
+        ),
     ],
 }
 

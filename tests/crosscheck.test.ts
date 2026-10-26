@@ -17,6 +17,8 @@ import {
   legacyPalettes,
   MULTITOOL_MODELS,
   multitoolRun,
+  NAMED_MODELS,
+  namedParts,
   PAINT_MODELS,
   paint,
   paletteSource,
@@ -72,6 +74,11 @@ interface Case {
    * layers as "option:palette:alternative:color"], the color as hex, empty for none and for a layer not painted.
    */
   paint?: [PaintModel, string, string[][]];
+  /**
+   * tools/captures/part_names_model.py's names of one fighter's, hauler's, explorer's or solar's parts with
+   * that seed: [model, each named slot as [side, name, the parts it's made of]].
+   */
+  names?: [PartModel, [string, string, string[]][]];
 }
 
 /** The port's paint in the shape generate.py writes. */
@@ -139,6 +146,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     const standardCounts = new Map<number, number>();
     const partModels = new Set<string>();
     const paintModels = new Set<string>();
+    const namedModels = new Set<string>();
     for (const line of lines) {
       const c = JSON.parse(line) as Case;
       const code = parsePortalCode(c.code);
@@ -197,6 +205,13 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
         same(layers, () => paintCase(model, hint, seed, ua), `${tag} ${model} paint`, mismatches);
         paintModels.add(model);
       }
+      if (c.names !== undefined && !isErr(c.ships)) {
+        const [model, names] = c.names;
+        const seed = BigInt(`0x${(c.ships as ShipCase).first}`);
+        const port = () => namedParts(model, seed).map((n) => [n.side, n.name, n.parts]);
+        same(names, port, `${tag} ${model} names`, mismatches);
+        namedModels.add(model);
+      }
     }
     expect(lines.length).toBeGreaterThan(0);
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
@@ -207,6 +222,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     expect([...standardCounts.keys()].sort(), "cases with 2, 3 and 4 standard multi-tools").toEqual([2, 3, 4]);
     expect([...partModels].sort(), "models whose parts were compared").toEqual([...PART_MODELS].sort());
     expect([...paintModels].sort(), "models whose paint was compared").toEqual([...PAINT_MODELS].sort());
+    expect([...namedModels].sort(), "models whose names were compared").toEqual([...NAMED_MODELS].sort());
     expect(mismatches.slice(0, 20)).toEqual([]);
   }, 300_000); // 20,000 cases take seconds, mostly the ship pools
 });

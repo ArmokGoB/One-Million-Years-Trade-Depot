@@ -55,6 +55,7 @@ jobs:
           python tools/crosscheck/multitool_vectors.py
           python tools/crosscheck/parts_vectors.py
           python tools/crosscheck/paint_vectors.py
+          python tools/crosscheck/part_names_vectors.py
           git diff --exit-code -- src/core/data tests/fixtures
       - name: Generate 20,000 reference cases
         run: python tools/crosscheck/generate.py --namegen nms_namegen --count 20000 > crosscheck.jsonl

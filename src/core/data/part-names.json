@@ -1,5 +1,5 @@
 {
-"about":"Derived from the game's outfitting tables by tools/build_part_names.py. For each ship type, its slots that hold parts, each [side ('left', 'right' or none), components], a component [its name in the game's English ('' for none), 0 if all its groups must fit or 1 if any one, its groups: each a list of part IDs, as the generator picks them, the explorer's lookalikes included]. Pairs: an explorer with the first part of a pair has a matched pair of wings, and is named as if it had the second, its right wing its left one.",
+"about":"Derived from the game's Starship Fabricator tables by tools/build_part_names.py. For each ship type, its slots that hold parts, each [side ('left', 'right' or none), components], a component [its name in the game's English ('' for none), 0 if all its groups must fit or 1 if any one, its groups: each a list of part IDs, those of the explorer's copied parts as the originals', empty options and those the descriptors don't offer left out]. Pairs: an explorer with the first part of a pair has a matched pair of wings, and is named as if it had the second, its right wing its left one.",
 "pairs":{"SCIENTIFIC_PROC":[["_WINGS_SYM","_WINGS_ASYM"],["_WINGS_SYM1","_WINGS_ASYM1"]]},
 "models":{
 "FIGHTER_PROC":[
