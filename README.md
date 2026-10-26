@@ -16,7 +16,6 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 - The parts of each fighter, hauler, explorer and solar by the names the game gives them at a space station's Starship Fabricator, each with the part IDs it's made of
 - The parts that set each ship apart, by the game's IDs for them: those of every civilian ship, the exotic, every freighter, the Sentinels' ship and freighter, and the pirates' fighters and capital freighter
 - The colors the game paints each of those ships with, and most frigates and the swarm's frigate and drone, every color named in words
-- Whether the system's exotic is a squid
 - The system's own multi-tools: the seeds, parts and colors of its 2 to 4 standard ones, and of its royal, Sentinel and Atlas one
 - A shareable link for every lookup
 
