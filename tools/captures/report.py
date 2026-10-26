@@ -1658,18 +1658,39 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
 
 
 def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
-    """Each system's ship seeds as ship_model.py predicts them from the address, against the game's."""
+    """Each system's ship seeds as ship_model.py predicts them from the address, against the game's, and
+    what it makes each civilian ship from its seed, against what the game made it."""
     sys.path.insert(0, str(namegen.resolve()))
+    from nms_namegen.system import systemAttributes
 
     lines = ["", "Ship seeds predicted from the address alone (tools/captures/ship_model.py)"]
     matched = other = checked = 0
     misses: Counter[str] = Counter()
+    civilian = Counter()  # systems, systems as worked out, solar ships, outlaw systems
+    wrong_types: list[str] = []
     for r in sorted(captures.representative_by_system().values(), key=lambda r: (r.galaxy, r.portal)):
         ships, crash = r.data.get("ships"), r.data.get("crashShip")
         if not ships or not crash:
             continue
         checked += 1
         game = [int(row[0], 16) for row in ships]
+        try:
+            attrs = systemAttributes(r.system_code, r.galaxy)
+        except Exception:  # the generator raises on some addresses
+            attrs = None
+        if attrs is not None and len(ships) > ship_model.CIVILIAN_SHIPS:
+            made = [SHIP_LABELS.get(r.session.name("shipClass", row[2]) or "", "?") for row in ships]
+            made = made[: ship_model.CIVILIAN_SHIPS]
+            worked_out = ship_model.civilian_types(
+                r.ua & ~PLANET_BITS, game[: len(made)], attrs["dominant_race"], attrs["pirate"]
+            )
+            civilian["systems"] += 1
+            civilian["same"] += made == worked_out
+            civilian["solar"] += made.count("Solar")
+            civilian["outlaw"] += bool(attrs["pirate"])
+            if made != worked_out:
+                slots = [f"{k} {a}, not {b}" for k, (a, b) in enumerate(zip(made, worked_out)) if a != b]
+                wrong_types.append(f"    not as worked out: {r.label()}: {'; '.join(slots)}")
         predictions = ship_model.predictions(r.ua & ~PLANET_BITS)
         hits = [i for i, p in enumerate(predictions) if p.ships == game and p.crash == int(crash, 16)]
         prediction = predictions[0]
@@ -1700,6 +1721,13 @@ def ship_model_lines(captures: Captures, namegen: Path) -> list[str]:
         if misses:
             summary += "; misses: " + ", ".join(f"{n} with {reason}" for reason, n in misses.most_common())
         lines.append(summary)
+    if civilian["systems"]:
+        lines.append(
+            f"  {civilian['same']} of {civilian['systems']} systems: each of the {ship_model.CIVILIAN_SHIPS} "
+            f"civilian ships the type ship_model.civilian_types() works out from its seed "
+            f"({civilian['solar']} solar ships; {civilian['outlaw']} outlaw systems)"
+        )
+        lines += wrong_types
     return lines
 
 

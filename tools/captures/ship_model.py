@@ -32,18 +32,31 @@ part, its body, is the squid's (_SCLASSSHIP_SQU) or the other exotics'
 (_SCLASSSHIP_ROY), picked as parts_model.py picks every part. The squid's
 body is a rare option, weighing 0.05 against the other's 1, so the first
 draw from the seed picks it in the top 1/21 of the draw's range.
+
+The first 20 ships are civilian: haulers, fighters, explorers and shuttles,
+as many of each as the dominant race's weights in the game's solar
+generation globals give (CIVILIAN), in that order. Then the game makes some
+of them solar ships, its pirates' class: for each, it hashes the ship's
+seed with the system's universal address, seeds a generator with the hash
+and compares its first draw, as a fraction, with a chance from the same
+globals: PirateClassShipOverrideProbability, 0.1, for a shuttle, and in an
+outlaw system for any other civilian ship; PirateClassShipOverride-
+ProbabilityPirateSystem, 0.85, for a shuttle in an outlaw system. Outside
+outlaw systems, haulers, fighters and explorers are never made solar.
 """
 
 from __future__ import annotations
 
 import itertools
 import math
+import struct
 from typing import NamedTuple
 
 import parts_model
-from game_rng import Stream, mix, seeded_state, step, stream_states
+from game_rng import MULTIPLIER, Stream, mix, seeded_state, step, stream_states, swap16
 
 MASK32 = 0xFFFFFFFF
+MASK64 = (1 << 64) - 1
 
 # Base radius of a planet's attractor shell, by PlanetSize (0 large, 1 medium, 2 small, 3 moon).
 BASE_RADIUS = {0: 195072.0, 1: 147456.0, 2: 96768.0, 3: 23040.0}
@@ -55,6 +68,15 @@ STATION_DRAWS = 38
 TAIL_DRAWS = 3
 SHIPS = 50
 CRASH_BEFORE = 42  # the crashed ship's seed is drawn before this ship
+
+# How many haulers, fighters and explorers come first, by dominant race (0 for none); shuttles fill up to 20.
+CIVILIAN = {0: (5, 5, 5), 1: (7, 3, 3), 2: (3, 3, 7), 3: (3, 7, 3)}
+CIVILIAN_SHIPS = 20
+# The chances that the game makes a civilian ship solar (see above), as single-precision numbers.
+SOLAR_CHANCE = 0.10000000149011612  # 0.1 in single precision
+SOLAR_CHANCE_OUTLAW_SHUTTLE = 0.8500000238418579  # 0.85 in single precision
+HASH_MULTIPLIER = 0x9DDFEA08EB382D69  # the hash of a ship's seed with its system's address
+DRAW_SCALE = 1 / 4294967295  # what a draw is multiplied by to make a fraction of it
 
 # The first part of an exotic's model: the squid's body, or the other exotics'.
 SQUID_PART = "_SCLASSSHIP_SQU"
@@ -253,3 +275,36 @@ def first_draw(seed: int) -> int:
 def exotic_squid(seed: int) -> bool:
     """Whether the exotic with this seed is a squid: whether its first part is the squid's body."""
     return parts_model.parts(EXOTIC_MODEL, seed)[0] == SQUID_PART
+
+
+def _f32(value: float) -> float:
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def solar_roll(seed: int, ua: int) -> float:
+    """The number the game compares with a chance to decide whether the civilian ship with ``seed`` in the
+    system at ``ua`` is a solar ship: the first draw of a generator seeded with the two hashed together, as a
+    single-precision fraction."""
+    a = ((ua ^ seed) * HASH_MULTIPLIER) & MASK64
+    b = (((a >> 47) ^ ua ^ a) * HASH_MULTIPLIER) & MASK64
+    hashed = (((b >> 47) ^ b) * HASH_MULTIPLIER) & MASK64
+    low = hashed & MASK32
+    carry = swap16(low) ^ (hashed >> 32) ^ low
+    draw = ((low or 1) * MULTIPLIER + carry) & MASK32
+    return _f32(draw * DRAW_SCALE)
+
+
+def civilian_types(ua: int, ships: list[int], dominant_race: int, outlaw: bool) -> list[str]:
+    """What the game makes each of the system's first 20 ships, from their seeds: Hauler, Fighter, Explorer,
+    Shuttle or Solar."""
+    haulers, fighters, explorers = CIVILIAN.get(dominant_race, CIVILIAN[0])
+    types = ["Hauler"] * haulers + ["Fighter"] * fighters + ["Explorer"] * explorers
+    types += ["Shuttle"] * (CIVILIAN_SHIPS - len(types))
+    out = []
+    for kind, seed in zip(types, ships):
+        if kind == "Shuttle":
+            chance = SOLAR_CHANCE_OUTLAW_SHUTTLE if outlaw else SOLAR_CHANCE
+        else:
+            chance = SOLAR_CHANCE if outlaw else 0.0
+        out.append("Solar" if chance and solar_roll(seed, ua) < chance else kind)
+    return out

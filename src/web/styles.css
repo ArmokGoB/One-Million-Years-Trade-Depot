@@ -645,8 +645,7 @@ a:hover {
 }
 
 /* The parts the game names: each name in the game's words over, at MatrixType's
- * smallest size, the IDs it's made of, wrapping between parts, never inside one;
- * beside what they're of where there's room, under it where there isn't. */
+ * smallest size, the IDs it's made of, wrapping between parts, never inside one. */
 .part-names {
   display: flex;
   flex-wrap: wrap;
@@ -660,7 +659,6 @@ a:hover {
   gap: 0.375rem 1.25rem;
   min-width: 0;
 }
-.part-names__label,
 .part-name__side {
   color: var(--ink-muted);
 }

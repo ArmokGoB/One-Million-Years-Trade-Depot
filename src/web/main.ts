@@ -171,10 +171,9 @@ const SIDES = { left: "Left: ", right: "Right: " } as const;
 
 /**
  * The parts the game names, each its name in the game's words over, smaller,
- * the IDs it's made of, wrapping between parts, never inside one; after
- * `label`, which says whose they are, or beside it where they fit.
+ * the IDs it's made of, wrapping between parts, never inside one.
  */
-function partNames(names: readonly PartNameInfo[], label: string): Node[] {
+function partNames(names: readonly PartNameInfo[]): Node[] {
   const named = names.map(({ name, side, parts }, i) => {
     const title = el("span", "part-name__name");
     if (side) title.append(el("span", "part-name__side", SIDES[side]));
@@ -190,36 +189,23 @@ function partNames(names: readonly PartNameInfo[], label: string): Node[] {
     if (i < names.length - 1) part.append(el("span", "visually-hidden", ", "));
     return part;
   });
-  const said = label ? el("span", "part-names__label", label) : el("span", "visually-hidden", "Parts: ");
-  return [said, el("span", "part-names__list", ...named)];
-}
-
-/** "As a hauler: ", "As an explorer: ": which model a line is about, where a ship could be one of two. */
-function asModel(model: string): string {
-  return `As ${/^[aeiou]/i.test(model) ? "an" : "a"} ${model.toLowerCase()}: `;
+  return [el("span", "visually-hidden", "Parts: "), el("span", "part-names__list", ...named)];
 }
 
 /**
- * A ship's parts and colors, for each model it could be built from, each said
- * which where there are two: the parts the game names, if it names any, then a
+ * A ship's parts and colors: the parts the game names, if it names any, then a
  * line of the parts it doesn't, if it has parts to pick, then a line of its
  * colors, if the game paints it.
  */
 function buildLines(builds: readonly BuildInfo[]): HTMLElement[] {
-  return builds.flatMap(({ model, parts, names, colors }) => {
-    const which = builds.length > 1 ? asModel(model) : "";
+  return builds.flatMap(({ parts, names, colors }) => {
     const lines: HTMLElement[] = [];
-    if (names.length) lines.push(el("dd", "ships__names part-names", ...partNames(names, which)));
+    if (names.length) lines.push(el("dd", "ships__names part-names", ...partNames(names)));
     const named = new Set(names.flatMap((n) => n.parts));
     const unnamed = parts.filter((part) => !named.has(part));
-    if (unnamed.length) {
-      const label = !names.length ? which : which ? `${which.slice(0, -2)}, other parts: ` : "Other parts: ";
-      lines.push(el("dd", "ships__parts", label + partsText(unnamed)));
-    }
-    if (colors.length) {
-      const label = which ? `${which.slice(0, -2)}, colors: ` : "Colors: ";
-      lines.push(el("dd", "ships__paint paint", ...paintColors(colors, label)));
-    }
+    const other = names.length ? "Other parts: " : "";
+    if (unnamed.length) lines.push(el("dd", "ships__parts", other + partsText(unnamed)));
+    if (colors.length) lines.push(el("dd", "ships__paint paint", ...paintColors(colors)));
     return lines;
   });
 }

@@ -103,6 +103,8 @@ interface ShipCase {
   last: string;
   /** [start, exotic, crash] for each other arrangement of a two-moon planet's moons. */
   others: [number, string, string][];
+  /** The slots of the civilian ships the game makes solar. */
+  solar: number[];
 }
 
 /** The port's ship pool in the shape generate.py writes, key order included. */
@@ -118,6 +120,7 @@ function shipCase(code: bigint, galaxy: number): ShipCase {
     crash: hex64(pool.crashSite),
     last: hex64(pool.ships[49]!.seed),
     others: pool.alternatives.map((a) => [a.drawsBeforeShips, hex64(a.exotic), hex64(a.crashSite)]),
+    solar: pool.ships.flatMap((s, slot) => (s.type === "Solar" ? [slot] : [])),
   };
 }
 
@@ -140,6 +143,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     const mismatches: string[] = [];
     let shipPools = 0;
     let squids = 0;
+    let solars = 0;
     const starCounts = [0, 0, 0, 0];
     const sunsSeen = new Set<string>();
     const guilds = new Map<string, number>();
@@ -169,6 +173,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
         if (!isErr(c.ships)) {
           shipPools += 1;
           if (c.ships.squid) squids += 1;
+          solars += c.ships.solar.length;
         }
       }
       if (c.stars !== undefined) {
@@ -216,6 +221,7 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     expect(lines.length).toBeGreaterThan(0);
     expect(shipPools, "cases with a predicted ship pool").toBeGreaterThan(lines.length / 2);
     expect(squids, "cases whose exotic is a squid").toBeGreaterThan(0);
+    expect(solars, "civilian ships made solar").toBeGreaterThan(shipPools);
     expect(starCounts.slice(1), "cases with one, two and three stars").not.toContain(0);
     expect([...sunsSeen].sort(), "star colors seen").toEqual(["Blue", "Green", "Purple", "Red", "Yellow"]);
     expect([...guilds.keys()].sort(), "cases with each guild").toEqual(["Explorers", "Mercenaries", "Merchants"]);

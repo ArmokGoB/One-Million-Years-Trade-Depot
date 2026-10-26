@@ -20,7 +20,8 @@
 //
 // Whether the exotic is a squid comes from the exotic's own seed: see
 // exoticSquid(). What each ship is built from, and so which parts it can
-// have, comes from its slot: see slotTypes() and parts.ts.
+// have, comes from its slot, and for a civilian ship from whether the game
+// makes it solar: see slotTypes(), civilianType() and parts.ts.
 
 import { universalAddress, withPlanet } from "./address";
 import type { PaintModel } from "./paint";
@@ -63,9 +64,8 @@ export interface Ship {
   type: string;
   group: ShipGroup;
   /**
-   * The models the ship in this slot is built from, whose parts parts.ts
-   * picks: one, two where the slot holds one or the other (a shuttle or a
-   * solar, say), none for ships without picked parts, such as frigates.
+   * The model the ship in this slot is built from, whose parts parts.ts
+   * picks; none for ships without picked parts, such as frigates.
    */
   models: readonly PartModel[];
   /**
@@ -229,7 +229,7 @@ export function exoticSquid(seed: bigint): boolean {
 
 // --- What each slot holds, as seen in every system recorded so far ---
 
-/** Haulers, fighters and explorers from slot 0 on, by dominant race; shuttles or solars fill up to slot 19. */
+/** Haulers, fighters and explorers from slot 0 on, by dominant race; shuttles fill up to slot 19. */
 const CIVILIAN_BY_RACE: Record<number, readonly [number, number, number]> = {
   0: [5, 5, 5], // uncharted: no dominant race
   1: [7, 3, 3], // Gek
@@ -336,49 +336,86 @@ const PAINT_ONLY_MODELS: Record<string, PaintModel> = {
   "Swarm drone": "SWARM",
 };
 
-/** Each name of a type that holds one or the other ("Shuttle or solar"), capitalized. */
-function typeNames(type: string): string[] {
-  return type.split(" or ").map((name) => name.charAt(0).toUpperCase() + name.slice(1));
-}
-
-/** The models a ship of this type ("Fighter", "Shuttle or solar", ...) is built from, if it has picked parts. */
+/** The model a ship of this type ("Fighter", "Solar", ...) is built from, if it has picked parts. */
 export function typeModels(type: string): PartModel[] {
-  return typeNames(type).flatMap((name) => {
-    const model = TYPE_MODELS[name];
-    return model ? [model] : [];
-  });
+  const model = TYPE_MODELS[type];
+  return model ? [model] : [];
 }
 
-/** The models whose paint the site works out for a ship of this type: its models, or a frigate's closest detail. */
+/** The model whose paint the site works out for a ship of this type: its model, or a frigate's closest detail. */
 export function typePaints(type: string): PaintModel[] {
-  return typeNames(type).flatMap((name) => {
-    const model = TYPE_MODELS[name] ?? PAINT_ONLY_MODELS[name];
-    return model ? [model] : [];
-  });
+  const model = TYPE_MODELS[type] ?? PAINT_ONLY_MODELS[type];
+  return model ? [model] : [];
 }
 
 /** The slot of the Sentinel ship, which the game paints with the texture hint POLICE. */
 const SENTINEL_SLOT = 35;
 
 /**
- * The type the game puts in each of the 50 slots. Only the first 20, the
- * civilian ships, vary: with the dominant race (0 for an uncharted system),
- * and with whether outlaws control the system. The game makes some of them
- * solar ships, in a way not worked out yet: about 1 in 10 shuttles, and in
- * outlaw systems most shuttles and about 1 in 10 of the other civilian ships.
+ * The type the game puts in each of the 50 slots, before it makes some of the
+ * civilian ships solar (see civilianType). Only the first 20, the civilian
+ * ships, vary, with the dominant race (0 for an uncharted system): as many
+ * haulers, fighters and explorers as the race's weights in the game's solar
+ * generation globals give, then shuttles.
  */
-export function slotTypes(dominantRace: number, outlaw = false): (readonly [string, ShipGroup])[] {
+export function slotTypes(dominantRace: number): (readonly [string, ShipGroup])[] {
   const [haulers, fighters, explorers] = CIVILIAN_BY_RACE[dominantRace] ?? CIVILIAN_BY_RACE[0]!;
-  const maybeSolar = (type: string) => (outlaw ? `${type} or solar` : type);
   const civilian = [
-    ...Array<string>(haulers).fill(maybeSolar("Hauler")),
-    ...Array<string>(fighters).fill(maybeSolar("Fighter")),
-    ...Array<string>(explorers).fill(maybeSolar("Explorer")),
+    ...Array<string>(haulers).fill("Hauler"),
+    ...Array<string>(fighters).fill("Fighter"),
+    ...Array<string>(explorers).fill("Explorer"),
   ];
-  while (civilian.length < 20) civilian.push(outlaw ? "Solar or shuttle" : "Shuttle or solar");
+  while (civilian.length < 20) civilian.push("Shuttle");
   return Array.from({ length: SHIP_COUNT }, (_, slot) =>
     slot < 20 ? ([civilian[slot]!, "civilian"] as const) : FIXED_SLOTS[slot]!,
   );
+}
+
+// --- Which civilian ships the game makes solar ---
+
+/**
+ * How likely the game is to make a civilian ship solar, its pirates' class,
+ * from its solar generation globals, in single precision:
+ * PirateClassShipOverrideProbability for a shuttle, and in an outlaw system
+ * for any other civilian ship; PirateClassShipOverrideProbabilityPirateSystem
+ * for a shuttle in an outlaw system. Outside outlaw systems the game never
+ * makes a hauler, fighter or explorer solar.
+ */
+const SOLAR_CHANCE = Math.fround(0.1);
+const SOLAR_CHANCE_OUTLAW_SHUTTLE = Math.fround(0.85);
+/** What the game hashes a ship's seed and its system's address with. */
+const HASH_MULTIPLIER = 0x9ddfea08eb382d69n;
+const MASK32 = 0xffffffffn;
+const MASK64 = 0xffffffffffffffffn;
+/** What the game multiplies a draw by to make a fraction of it: 1 / (2^32 - 1). */
+const DRAW_SCALE = 1 / 4294967295;
+
+/**
+ * The number the game compares with a chance to decide whether the civilian
+ * ship with `seed`, in the system at universal address `ua`, is solar: the
+ * first draw of a generator seeded with the two hashed together, as a
+ * single-precision fraction.
+ */
+export function solarRoll(seed: bigint, ua: bigint): number {
+  const a = ((ua ^ seed) * HASH_MULTIPLIER) & MASK64;
+  const b = (((a >> 47n) ^ ua ^ a) * HASH_MULTIPLIER) & MASK64;
+  const hashed = (((b >> 47n) ^ b) * HASH_MULTIPLIER) & MASK64;
+  const low = hashed & MASK32;
+  const carry = (((low >> 16n) | (low << 16n)) & MASK32) ^ (hashed >> 32n) ^ low;
+  const draw = ((low || 1n) * 0x5a76f899n + carry) & MASK32;
+  return Math.fround(Number(draw) * DRAW_SCALE);
+}
+
+/**
+ * What the game makes the civilian ship with `seed` whose slot holds `type`
+ * (see slotTypes): that type, or "Solar" if its roll (see solarRoll) comes in
+ * under its chance.
+ */
+export function civilianType(type: string, seed: bigint, ua: bigint, outlaw: boolean): string {
+  let chance = 0;
+  if (type === "Shuttle") chance = outlaw ? SOLAR_CHANCE_OUTLAW_SHUTTLE : SOLAR_CHANCE;
+  else if (outlaw) chance = SOLAR_CHANCE;
+  return chance > 0 && solarRoll(seed, ua) < chance ? "Solar" : type;
 }
 
 /**
@@ -403,18 +440,22 @@ export function shipPool(code: bigint, galaxy: number): ShipPool {
     const exotic = ships[20]!;
     return { swapped, ships, exotic, exoticSquid: exoticSquid(exotic), crashSite, drawsBeforeShips: start };
   });
-  const types = slotTypes(attributes.dominant_race, attributes.pirate);
+  const slots = slotTypes(attributes.dominant_race);
   return {
-    ships: first!.ships.map((seed, slot) => ({
-      slot,
-      seed,
-      type: types[slot]![0],
-      group: types[slot]![1],
-      models: typeModels(types[slot]![0]),
-      paints: typePaints(types[slot]![0]),
-      hint: slot === SENTINEL_SLOT ? "POLICE" : "",
-      note: SLOT_NOTES[slot] ?? null,
-    })),
+    ships: first!.ships.map((seed, slot) => {
+      const [base, group] = slots[slot]!;
+      const type = group === "civilian" ? civilianType(base, seed, ua, attributes.pirate) : base;
+      return {
+        slot,
+        seed,
+        type,
+        group,
+        models: typeModels(type),
+        paints: typePaints(type),
+        hint: slot === SENTINEL_SLOT ? "POLICE" : "",
+        note: SLOT_NOTES[slot] ?? null,
+      };
+    }),
     exotic: first!.exotic,
     exoticSquid: first!.exoticSquid,
     crashSite: first!.crashSite,
