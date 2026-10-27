@@ -299,28 +299,32 @@ def short(scene_path: str) -> str:
 
 
 def model_triangles(
-    game: Game, model: str, picked: set[str], options: set[str]
-) -> tuple[list[tuple[str, np.ndarray]], dict[str, list[str]]]:
+    game: Game, model: str, picked: set[str], options: set[str], chains: bool = False
+) -> tuple[list[tuple], dict[str, list[str]]]:
     """The model's triangles, with LOD 0 meshes only, by the picked part they belong to (the nearest picked
     option above them; '' for none), and the scenes each picked part brings in. ``picked`` holds part IDs as the
     game lists them, ``options`` every option ID of the model's tables as its descriptors have them; a scene
-    node named for an option that isn't picked is left out, with everything under it."""
-    out: list[tuple[str, np.ndarray]] = []
+    node that stands for an option that isn't picked (option_of()) is left out, with everything under it. With
+    ``chains``, each batch is with every picked part above it, nearest last, instead."""
+    out: list[tuple] = []
     brought: dict[str, list[str]] = {}
 
-    def walk(path: str, node: dict, world: np.ndarray, owner: str, depth: int) -> None:
-        name = node["name"].upper()
-        if name in options:
-            listed = parts_model.LOD_SUFFIX.sub("", name)
+    def walk(path: str, node: dict, world: np.ndarray, base: np.ndarray, chain: tuple, jointed: bool, depth: int):
+        option = option_of(node["name"], options)
+        if option is not None:
+            listed = parts_model.LOD_SUFFIX.sub("", option)
             if listed not in picked:
                 return
-            owner = listed
+            chain = (*chain, listed)
+        owner = chain[-1] if chain else ""
         m = world @ matrix(node)
         if node["type"] == "MESH" and node["attributes"].get("LODLEVEL", "0") == "0" and not effect(node):
             t = game.triangles(path, node)
             if t is not None and len(t):
-                pts = np.c_[t.reshape(-1, 3), np.ones(len(t) * 3)] @ m.T
-                out.append((owner, pts[:, :3].reshape(-1, 3, 3)))
+                # A mesh under a joint is skinned to it: its vertices are where they rest, in its scene's space.
+                place = base if jointed else m
+                pts = np.c_[t.reshape(-1, 3), np.ones(len(t) * 3)] @ place.T
+                out.append((chain if chains else owner, pts[:, :3].reshape(-1, 3, 3)))
         if node["type"] == "REFERENCE" and depth < MAX_DEPTH:
             ref = node["attributes"].get("SCENEGRAPH", "")
             root = game.scene(ref) if ref and not any(s in ref.upper() for s in SKIPPED_SCENES) else None
@@ -329,15 +333,22 @@ def model_triangles(
                 if short(ref) not in scenes:
                     scenes.append(short(ref))
                 for c in root["children"]:
-                    walk(ref, c, m, owner, depth + 1)
+                    walk(ref, c, m, m, chain, False, depth + 1)
         if depth < MAX_DEPTH:
             for c in node["children"]:
-                walk(path, c, m, owner, depth + 1)
+                walk(path, c, m, base, chain, jointed or node["type"] == "JOINT", depth + 1)
 
     root = game.scene(MODELS[model])
     if root is not None:
-        walk(MODELS[model], root, np.eye(4), "", 0)
+        walk(MODELS[model], root, np.eye(4), np.eye(4), (), False, 0)
     return out, brought
+
+
+def option_of(name: str, options: set[str]) -> str | None:
+    """The option ID a scene node stands for, if any: its name upper-cased, or else cut to 15 or 31 characters, as
+    the IDs of a few long names are (_SClassShip_Royal is _SCLASSSHIP_ROY)."""
+    name = name.upper()
+    return next((key for key in (name, name[:15], name[:31]) if key in options), None)
 
 
 def effect(node: dict) -> bool:
