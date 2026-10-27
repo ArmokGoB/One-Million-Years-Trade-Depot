@@ -8,9 +8,9 @@ For each model (FIGHTER_PROC, SHUTTLE_PROC, MULTITOOL, ...), it writes into the 
 - <MODEL>-parts-NN.png: every part ID the model's tables offer (src/core/data/part-tables.json), in the tables'
   order, each three times: in orange over the rest of a whole model built around it, in gray (from a made-up
   seed, every list on the way to the part picking the option that leads to it); then alone, from the front left
-  and from the back right, the left one only of a pair either side of the middle. A part with no geometry of its
-  own is drawn with the parts it brings; one with none of those either, or that no model built around it has, is
-  listed on the last sheet.
+  and from the back right, or, for a pair either side of the middle, the left one of it from the front left. A
+  part with no geometry of its own is drawn with the parts it brings; one with none of those either, or that no
+  model built around it has, is listed on the last sheet.
 - <MODEL>-ships-NN.png: whole models built from made-up seeds as the game builds them, each part in its own
   color, with a key of the part IDs.
 - <MODEL>-parts.json: for each part ID it drew, the scenes it brings in and the size and middle of what's drawn
@@ -75,8 +75,9 @@ ARRAY_FLAGS = (0xAAAAAA01, 0x101)  # how scenes, and geometry files, mark an arr
 GL_HALF_FLOAT, GL_FLOAT = 0x140B, 0x1406  # the component types of a vertex layout
 # Scenes inside a model that aren't parts of it: a cockpit's interior.
 SKIPPED_SCENES = ("INTERIOR",)
-# Materials of effects rather than solid parts: engine jets and glows, scan planes.
-EFFECTS = ("ENGINEJET", "GLOW", "SCANPLANE", "TRAIL", "FLAME")
+# Materials of what isn't a solid part: engine jets and glows, scan planes, a freighter's shield bubble, light
+# cones, shadow stand-ins.
+EFFECTS = ("ENGINEJET", "GLOW", "SCANPLANE", "TRAIL", "FLAME", "SHIELD", "LIGHTCONE", "VFX", "SHADOW")
 MAX_DEPTH = 60
 ATTEMPTS = 40  # seeds to try for a ship with a part on it
 
@@ -590,14 +591,16 @@ def part_sheets(game: Game, model: str, out: Path, size: int) -> list[Path]:
         note += f", with {', '.join(sorted(mine - {listed}))}" if mine != {listed} else ""
         if facts[listed]["scenes"]:
             note += "; brings " + ", ".join(facts[listed]["scenes"])
+        # Alone: from the front left, then from the back right; for a pair, the left one from the front left.
         half = left_side(alone)
-        if half is not None:  # a pair: the left one alone is bigger
-            alone, note = half, f"{note}; alone, the left one of the pair"
+        second, second_view = (alone, "back right") if half is None else (half, "front left")
+        if half is not None:
+            note += "; then the left one of the pair"
         d.text((4, 18), fit(d, note, 3 * size, small), fill=(90, 90, 90), font=small)
         tile.paste(picture(tris, colors, "front left", size, on_top=own), (2, 32))
-        alone_colors = np.repeat(HIGHLIGHT[None], len(alone), 0)
-        for j, name in enumerate(("front left", "back right"), start=1):
-            tile.paste(picture(alone, alone_colors, name, size), (2 + j * (size + 2), 32))
+        for j, (part_tris, name) in enumerate(((alone, "front left"), (second, second_view)), start=1):
+            part_colors = np.repeat(HIGHLIGHT[None], len(part_tris), 0)
+            tile.paste(picture(part_tris, part_colors, name, size), (2 + j * (size + 2), 32))
         tiles.append(tile)
 
     if empty:  # a last tile, listing the parts with nothing to draw
