@@ -8,9 +8,9 @@ For each model (FIGHTER_PROC, SHUTTLE_PROC, MULTITOOL, ...), it writes into the 
 - <MODEL>-parts-NN.png: every part ID the model's tables offer (src/core/data/part-tables.json), in the tables'
   order, each three times: in orange over the rest of a whole model built around it, in gray (from a made-up
   seed, every list on the way to the part picking the option that leads to it); then alone, from the front left
-  and from the back right, the left one only of a pair either side of the middle. A part with no geometry of its
-  own is drawn with the parts it brings; one with none of those either, or that no model built around it has, is
-  listed on the last sheet.
+  and from the back right, or, for a pair either side of the middle, the left one of it from the front left. A
+  part with no geometry of its own is drawn with the parts it brings; one with none of those either, or that no
+  model built around it has, is listed on the last sheet.
 - <MODEL>-ships-NN.png: whole models built from made-up seeds as the game builds them, each part in its own
   color, with a key of the part IDs.
 - <MODEL>-parts.json: for each part ID it drew, the scenes it brings in and the size and middle of what's drawn
@@ -75,10 +75,12 @@ ARRAY_FLAGS = (0xAAAAAA01, 0x101)  # how scenes, and geometry files, mark an arr
 GL_HALF_FLOAT, GL_FLOAT = 0x140B, 0x1406  # the component types of a vertex layout
 # Scenes inside a model that aren't parts of it: a cockpit's interior.
 SKIPPED_SCENES = ("INTERIOR",)
-# Materials of effects rather than solid parts: engine jets and glows, scan planes.
-EFFECTS = ("ENGINEJET", "GLOW", "SCANPLANE", "TRAIL", "FLAME")
+# Materials of what isn't a solid part: engine jets and glows, scan planes, a freighter's shield bubble, light
+# cones, shadow stand-ins.
+EFFECTS = ("ENGINEJET", "GLOW", "SCANPLANE", "TRAIL", "FLAME", "SHIELD", "LIGHTCONE", "VFX", "SHADOW")
 MAX_DEPTH = 60
 ATTEMPTS = 40  # seeds to try for a ship with a part on it
+LOOKS = 8  # of those, ships to look at for something to draw under a part with nothing of its own
 
 HIGHLIGHT = np.array([0.95, 0.45, 0.1])  # orange
 GRAY = np.array([0.8, 0.8, 0.83])
@@ -195,8 +197,10 @@ class Geometry:
         (stride,) = struct.unpack_from("<i", self.meta, at + 0x1C)
         return {"elements": elements, "stride": stride}
 
-    def triangles(self, name: str, mesh_hash: int | None) -> np.ndarray | None:
-        """The mesh's triangles, as (n, 3, 3) positions in its own space."""
+    def triangles(self, name: str, mesh_hash: int | None, count: int | None) -> np.ndarray | None:
+        """The mesh's triangles, as (n, 3, 3) positions in its own space. ``count`` is how many indices its scene
+        node draws (BATCHCOUNT), which with the size of its index data says how wide each is, 2 or 4 bytes, as
+        NMSDK reads them; the geometry file's own flag is only for a mesh without one that fits."""
         mesh = self.by_hash.get(mesh_hash & 0xFFFFFFFF) if mesh_hash is not None else None
         mesh = mesh or self.by_name.get(name.upper())
         if mesh is None:
@@ -204,9 +208,16 @@ class Geometry:
         layout = self.position_layout
         pos_at, pos_len = mesh["pos"]
         pos = positions(self.stream[pos_at : pos_at + pos_len], layout, pos_len // layout["stride"])
+        size = mesh["isize"]
+        if count and size // count in (2, 4):  # any padding after them is under a whole index
+            width = size // count
+        else:
+            width = 2 if self.indices16 or size % 4 else 4
+            count = size // width
         start = mesh["data"] + mesh["vsize"]
-        dtype = np.uint16 if self.indices16 else np.uint32
-        idx = np.frombuffer(self.stream[start : start + mesh["isize"]], dtype=dtype).astype(np.int64)
+        data = self.stream[start : start + count * width]
+        dtype = np.uint16 if width == 2 else np.uint32
+        idx = np.frombuffer(data, dtype=dtype, count=len(data) // width).astype(np.int64)
         idx = idx[: len(idx) // 3 * 3].reshape(-1, 3)
         return pos[idx[(idx < len(pos)).all(1)]]
 
@@ -236,15 +247,21 @@ class Game:
         self.scenes: dict[str, dict | None] = {}
         self.geometry: dict[str, Geometry | None] = {}
         self.missing: set[str] = set()  # the files asked for that weren't there
+        self.unreadable: dict[str, str] = {}  # what couldn't be read, and why
 
     def scene(self, path: str) -> dict | None:
         key = path.replace("\\", "/").upper()
         key = key if key.endswith(".MBIN") else key + ".MBIN"
         if key not in self.scenes:
             data = self.files.read(key)
-            self.scenes[key] = scene_node(data, HEADER) if data else None
+            self.scenes[key] = None
             if data is None:
                 self.missing.add(key)
+            else:
+                try:
+                    self.scenes[key] = scene_node(data, HEADER)
+                except (FormatError, ValueError, struct.error, IndexError) as e:
+                    self.unreadable[key] = str(e) or type(e).__name__
         return self.scenes[key]
 
     def triangles(self, scene_path: str, node: dict) -> np.ndarray | None:
@@ -254,17 +271,25 @@ class Game:
         if not path:
             return None
         key = path.replace("\\", "/").upper()
-        if key not in self.geometry:
-            meta = self.files.read(key)
-            stream_key = key.replace(".GEOMETRY.MBIN", ".GEOMETRY.DATA.MBIN")
-            stream = self.files.read(stream_key)
-            self.geometry[key] = Geometry(meta, stream) if meta else None
-            self.missing.update(k for k, data in ((key, meta), (stream_key, stream)) if data is None)
-        geometry = self.geometry[key]
-        if geometry is None:
+        try:
+            if key not in self.geometry:
+                self.geometry[key] = None
+                meta = self.files.read(key)
+                stream_key = key.replace(".GEOMETRY.MBIN", ".GEOMETRY.DATA.MBIN")
+                stream = self.files.read(stream_key)
+                self.missing.update(k for k, data in ((key, meta), (stream_key, stream)) if data is None)
+                self.geometry[key] = Geometry(meta, stream) if meta else None
+            geometry = self.geometry[key]
+            if geometry is None:
+                return None
+            attributes = node["attributes"]
+            mesh_hash, count = attributes.get("HASH", ""), attributes.get("BATCHCOUNT", "")
+            return geometry.triangles(
+                node["name"], int(mesh_hash) if mesh_hash.isdigit() else None, int(count) if count.isdigit() else None
+            )
+        except (FormatError, ValueError, struct.error, IndexError) as e:
+            self.unreadable[f"{key} {node['name']}"] = str(e) or type(e).__name__
             return None
-        h = node["attributes"].get("HASH", "")
-        return geometry.triangles(node["name"], int(h) if h.isdigit() else None)
 
 
 def short(scene_path: str) -> str:
@@ -276,28 +301,32 @@ def short(scene_path: str) -> str:
 
 
 def model_triangles(
-    game: Game, model: str, picked: set[str], options: set[str]
-) -> tuple[list[tuple[str, np.ndarray]], dict[str, list[str]]]:
+    game: Game, model: str, picked: set[str], options: set[str], chains: bool = False
+) -> tuple[list[tuple], dict[str, list[str]]]:
     """The model's triangles, with LOD 0 meshes only, by the picked part they belong to (the nearest picked
     option above them; '' for none), and the scenes each picked part brings in. ``picked`` holds part IDs as the
     game lists them, ``options`` every option ID of the model's tables as its descriptors have them; a scene
-    node named for an option that isn't picked is left out, with everything under it."""
-    out: list[tuple[str, np.ndarray]] = []
+    node that stands for an option that isn't picked (option_of()) is left out, with everything under it. With
+    ``chains``, each batch is with every picked part above it, nearest last, instead."""
+    out: list[tuple] = []
     brought: dict[str, list[str]] = {}
 
-    def walk(path: str, node: dict, world: np.ndarray, owner: str, depth: int) -> None:
-        name = node["name"].upper()
-        if name in options:
-            listed = parts_model.LOD_SUFFIX.sub("", name)
+    def walk(path: str, node: dict, world: np.ndarray, base: np.ndarray, chain: tuple, jointed: bool, depth: int):
+        option = option_of(node["name"], options)
+        if option is not None:
+            listed = parts_model.LOD_SUFFIX.sub("", option)
             if listed not in picked:
                 return
-            owner = listed
+            chain = (*chain, listed)
+        owner = chain[-1] if chain else ""
         m = world @ matrix(node)
         if node["type"] == "MESH" and node["attributes"].get("LODLEVEL", "0") == "0" and not effect(node):
             t = game.triangles(path, node)
-            if t is not None and len(t):
-                pts = np.c_[t.reshape(-1, 3), np.ones(len(t) * 3)] @ m.T
-                out.append((owner, pts[:, :3].reshape(-1, 3, 3)))
+            if t is not None and len(t) and not (option is not None and stand_in(node, t)):
+                # A mesh under a joint is skinned to it: its vertices are where they rest, in its scene's space.
+                place = base if jointed else m
+                pts = np.c_[t.reshape(-1, 3), np.ones(len(t) * 3)] @ place.T
+                out.append((chain if chains else owner, pts[:, :3].reshape(-1, 3, 3)))
         if node["type"] == "REFERENCE" and depth < MAX_DEPTH:
             ref = node["attributes"].get("SCENEGRAPH", "")
             root = game.scene(ref) if ref and not any(s in ref.upper() for s in SKIPPED_SCENES) else None
@@ -306,15 +335,38 @@ def model_triangles(
                 if short(ref) not in scenes:
                     scenes.append(short(ref))
                 for c in root["children"]:
-                    walk(ref, c, m, owner, depth + 1)
+                    walk(ref, c, m, m, chain, False, depth + 1)
         if depth < MAX_DEPTH:
             for c in node["children"]:
-                walk(path, c, m, owner, depth + 1)
+                walk(path, c, m, base, chain, jointed or node["type"] == "JOINT", depth + 1)
 
     root = game.scene(MODELS[model])
     if root is not None:
-        walk(MODELS[model], root, np.eye(4), "", 0)
+        walk(MODELS[model], root, np.eye(4), np.eye(4), (), False, 0)
     return out, brought
+
+
+def under(part: str, holder: str, parent: dict[str, str]) -> bool:
+    """Whether a picked part is somewhere under another, by the parents picked_with() gives."""
+    while part:
+        part = parent.get(part, "")
+        if part == holder:
+            return True
+    return False
+
+
+def option_of(name: str, options: set[str]) -> str | None:
+    """The option ID a scene node stands for, if any: its name upper-cased, or else cut to 15 or 31 characters, as
+    the IDs of a few long names are (_SClassShip_Royal is _SCLASSSHIP_ROY)."""
+    name = name.upper()
+    return next((key for key in (name, name[:15], name[:31]) if key in options), None)
+
+
+def stand_in(node: dict, tris: np.ndarray) -> bool:
+    """Whether an option's mesh is just a box in lambert1, Maya's default material, as _CargoC_A1's is. Such boxes
+    hold the option's parts, or nothing, and look like markers for where it goes rather than parts of it."""
+    material = node["attributes"].get("MATERIAL", "").replace("\\", "/").rsplit("/", 1)[-1].upper()
+    return material.startswith("LAMBERT1.") and len(tris) == 12
 
 
 def effect(node: dict) -> bool:
@@ -514,25 +566,27 @@ def part_sheets(game: Game, model: str, out: Path, size: int) -> list[Path]:
         listed = parts_model.LOD_SUFFIX.sub("", part)
         if listed in facts or listed in empty:
             continue
-        # A part picked first from another list can keep the way to this one closed: then try other seeds.
+        # A part picked first from another list can keep the way to this one closed: then try other seeds. A part
+        # with nothing of its own is drawn with the parts picked under it; when they draw nothing either, as an
+        # empty option doesn't, look at a few more ships.
         rnd = random.Random(f"{model} {part}")
+        found, looked = None, 0
         for attempt in range(ATTEMPTS):
             picked, parent = picked_with(model, seed if attempt == 0 else rnd.getrandbits(64), force)
-            if listed in picked:
+            if listed not in picked:
+                continue
+            batches, brought = model_triangles(game, model, {p.upper() for p in picked}, options)
+            if any(o == listed for o, _ in batches):
+                mine = {listed}
+            else:
+                mine = {o for o, _ in batches if under(o, listed, parent)}
+            found, looked = (batches, brought, mine), looked + 1
+            if mine or looked == LOOKS or not any(under(p, listed, parent) for p in picked):
                 break
-        batches, brought = model_triangles(game, model, {p.upper() for p in picked}, options)
-
-        def under(p: str) -> bool:
-            while p:
-                p = parent.get(p, "")
-                if p == listed:
-                    return True
-            return False
-
-        mine = {listed} if any(o == listed for o, _ in batches) else {o for o, _ in batches if under(o)}
-        if listed not in picked or not mine:
+        if found is None or not found[2]:
             empty.append(listed)
             continue
+        batches, brought, mine = found
         tris = np.concatenate([t for _, t in batches])
         own = np.concatenate([np.full(len(t), o in mine) for o, t in batches])
         colors = np.where(own[:, None], HIGHLIGHT, GRAY)
@@ -556,14 +610,16 @@ def part_sheets(game: Game, model: str, out: Path, size: int) -> list[Path]:
         note += f", with {', '.join(sorted(mine - {listed}))}" if mine != {listed} else ""
         if facts[listed]["scenes"]:
             note += "; brings " + ", ".join(facts[listed]["scenes"])
+        # Alone: from the front left, then from the back right; for a pair, the left one from the front left.
         half = left_side(alone)
-        if half is not None:  # a pair: the left one alone is bigger
-            alone, note = half, f"{note}; alone, the left one of the pair"
+        second, second_view = (alone, "back right") if half is None else (half, "front left")
+        if half is not None:
+            note += "; then the left one of the pair"
         d.text((4, 18), fit(d, note, 3 * size, small), fill=(90, 90, 90), font=small)
         tile.paste(picture(tris, colors, "front left", size, on_top=own), (2, 32))
-        alone_colors = np.repeat(HIGHLIGHT[None], len(alone), 0)
-        for j, name in enumerate(("front left", "back right"), start=1):
-            tile.paste(picture(alone, alone_colors, name, size), (2 + j * (size + 2), 32))
+        for j, (part_tris, name) in enumerate(((alone, "front left"), (second, second_view)), start=1):
+            part_colors = np.repeat(HIGHLIGHT[None], len(part_tris), 0)
+            tile.paste(picture(part_tris, part_colors, name, size), (2 + j * (size + 2), 32))
         tiles.append(tile)
 
     if empty:  # a last tile, listing the parts with nothing to draw
@@ -644,6 +700,9 @@ def main() -> int:
         if game.missing:
             some = ", ".join(sorted(game.missing)[:3])
             print(f"  {len(game.missing)} files it brings in weren't there, so it's drawn without them: {some}")
+        if game.unreadable:
+            some = "; ".join(f"{what}: {why}" for what, why in sorted(game.unreadable.items())[:3])
+            print(f"  {len(game.unreadable)} scenes or meshes couldn't be read, so it's drawn without them: {some}")
         game.clear()
     return 0
 
