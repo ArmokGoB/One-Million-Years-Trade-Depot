@@ -80,6 +80,7 @@ SKIPPED_SCENES = ("INTERIOR",)
 EFFECTS = ("ENGINEJET", "GLOW", "SCANPLANE", "TRAIL", "FLAME", "SHIELD", "LIGHTCONE", "VFX", "SHADOW")
 MAX_DEPTH = 60
 ATTEMPTS = 40  # seeds to try for a ship with a part on it
+LOOKS = 8  # of those, ships to look at for something to draw under a part with nothing of its own
 
 HIGHLIGHT = np.array([0.95, 0.45, 0.1])  # orange
 GRAY = np.array([0.8, 0.8, 0.83])
@@ -321,7 +322,7 @@ def model_triangles(
         m = world @ matrix(node)
         if node["type"] == "MESH" and node["attributes"].get("LODLEVEL", "0") == "0" and not effect(node):
             t = game.triangles(path, node)
-            if t is not None and len(t):
+            if t is not None and len(t) and not (option is not None and stand_in(node, t)):
                 # A mesh under a joint is skinned to it: its vertices are where they rest, in its scene's space.
                 place = base if jointed else m
                 pts = np.c_[t.reshape(-1, 3), np.ones(len(t) * 3)] @ place.T
@@ -345,11 +346,27 @@ def model_triangles(
     return out, brought
 
 
+def under(part: str, holder: str, parent: dict[str, str]) -> bool:
+    """Whether a picked part is somewhere under another, by the parents picked_with() gives."""
+    while part:
+        part = parent.get(part, "")
+        if part == holder:
+            return True
+    return False
+
+
 def option_of(name: str, options: set[str]) -> str | None:
     """The option ID a scene node stands for, if any: its name upper-cased, or else cut to 15 or 31 characters, as
     the IDs of a few long names are (_SClassShip_Royal is _SCLASSSHIP_ROY)."""
     name = name.upper()
     return next((key for key in (name, name[:15], name[:31]) if key in options), None)
+
+
+def stand_in(node: dict, tris: np.ndarray) -> bool:
+    """Whether an option's mesh is just a box in lambert1, Maya's default material, as _CargoC_A1's is. Such boxes
+    hold the option's parts, or nothing, and look like markers for where it goes rather than parts of it."""
+    material = node["attributes"].get("MATERIAL", "").replace("\\", "/").rsplit("/", 1)[-1].upper()
+    return material.startswith("LAMBERT1.") and len(tris) == 12
 
 
 def effect(node: dict) -> bool:
@@ -549,25 +566,27 @@ def part_sheets(game: Game, model: str, out: Path, size: int) -> list[Path]:
         listed = parts_model.LOD_SUFFIX.sub("", part)
         if listed in facts or listed in empty:
             continue
-        # A part picked first from another list can keep the way to this one closed: then try other seeds.
+        # A part picked first from another list can keep the way to this one closed: then try other seeds. A part
+        # with nothing of its own is drawn with the parts picked under it; when they draw nothing either, as an
+        # empty option doesn't, look at a few more ships.
         rnd = random.Random(f"{model} {part}")
+        found, looked = None, 0
         for attempt in range(ATTEMPTS):
             picked, parent = picked_with(model, seed if attempt == 0 else rnd.getrandbits(64), force)
-            if listed in picked:
+            if listed not in picked:
+                continue
+            batches, brought = model_triangles(game, model, {p.upper() for p in picked}, options)
+            if any(o == listed for o, _ in batches):
+                mine = {listed}
+            else:
+                mine = {o for o, _ in batches if under(o, listed, parent)}
+            found, looked = (batches, brought, mine), looked + 1
+            if mine or looked == LOOKS or not any(under(p, listed, parent) for p in picked):
                 break
-        batches, brought = model_triangles(game, model, {p.upper() for p in picked}, options)
-
-        def under(p: str) -> bool:
-            while p:
-                p = parent.get(p, "")
-                if p == listed:
-                    return True
-            return False
-
-        mine = {listed} if any(o == listed for o, _ in batches) else {o for o, _ in batches if under(o)}
-        if listed not in picked or not mine:
+        if found is None or not found[2]:
             empty.append(listed)
             continue
+        batches, brought, mine = found
         tris = np.concatenate([t for _, t in batches])
         own = np.concatenate([np.full(len(t), o in mine) for o, t in batches])
         colors = np.where(own[:, None], HIGHLIGHT, GRAY)
