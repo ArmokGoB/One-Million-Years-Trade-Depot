@@ -195,8 +195,10 @@ class Geometry:
         (stride,) = struct.unpack_from("<i", self.meta, at + 0x1C)
         return {"elements": elements, "stride": stride}
 
-    def triangles(self, name: str, mesh_hash: int | None) -> np.ndarray | None:
-        """The mesh's triangles, as (n, 3, 3) positions in its own space."""
+    def triangles(self, name: str, mesh_hash: int | None, count: int | None) -> np.ndarray | None:
+        """The mesh's triangles, as (n, 3, 3) positions in its own space. ``count`` is how many indices its scene
+        node draws (BATCHCOUNT), which with the size of its index data says how wide each is, 2 or 4 bytes, as
+        NMSDK reads them; the geometry file's own flag is only for a mesh without one that fits."""
         mesh = self.by_hash.get(mesh_hash & 0xFFFFFFFF) if mesh_hash is not None else None
         mesh = mesh or self.by_name.get(name.upper())
         if mesh is None:
@@ -204,9 +206,16 @@ class Geometry:
         layout = self.position_layout
         pos_at, pos_len = mesh["pos"]
         pos = positions(self.stream[pos_at : pos_at + pos_len], layout, pos_len // layout["stride"])
+        size = mesh["isize"]
+        if count and size // count in (2, 4):  # any padding after them is under a whole index
+            width = size // count
+        else:
+            width = 2 if self.indices16 or size % 4 else 4
+            count = size // width
         start = mesh["data"] + mesh["vsize"]
-        dtype = np.uint16 if self.indices16 else np.uint32
-        idx = np.frombuffer(self.stream[start : start + mesh["isize"]], dtype=dtype).astype(np.int64)
+        data = self.stream[start : start + count * width]
+        dtype = np.uint16 if width == 2 else np.uint32
+        idx = np.frombuffer(data, dtype=dtype, count=len(data) // width).astype(np.int64)
         idx = idx[: len(idx) // 3 * 3].reshape(-1, 3)
         return pos[idx[(idx < len(pos)).all(1)]]
 
@@ -236,15 +245,21 @@ class Game:
         self.scenes: dict[str, dict | None] = {}
         self.geometry: dict[str, Geometry | None] = {}
         self.missing: set[str] = set()  # the files asked for that weren't there
+        self.unreadable: dict[str, str] = {}  # what couldn't be read, and why
 
     def scene(self, path: str) -> dict | None:
         key = path.replace("\\", "/").upper()
         key = key if key.endswith(".MBIN") else key + ".MBIN"
         if key not in self.scenes:
             data = self.files.read(key)
-            self.scenes[key] = scene_node(data, HEADER) if data else None
+            self.scenes[key] = None
             if data is None:
                 self.missing.add(key)
+            else:
+                try:
+                    self.scenes[key] = scene_node(data, HEADER)
+                except (FormatError, ValueError, struct.error, IndexError) as e:
+                    self.unreadable[key] = str(e) or type(e).__name__
         return self.scenes[key]
 
     def triangles(self, scene_path: str, node: dict) -> np.ndarray | None:
@@ -254,17 +269,25 @@ class Game:
         if not path:
             return None
         key = path.replace("\\", "/").upper()
-        if key not in self.geometry:
-            meta = self.files.read(key)
-            stream_key = key.replace(".GEOMETRY.MBIN", ".GEOMETRY.DATA.MBIN")
-            stream = self.files.read(stream_key)
-            self.geometry[key] = Geometry(meta, stream) if meta else None
-            self.missing.update(k for k, data in ((key, meta), (stream_key, stream)) if data is None)
-        geometry = self.geometry[key]
-        if geometry is None:
+        try:
+            if key not in self.geometry:
+                self.geometry[key] = None
+                meta = self.files.read(key)
+                stream_key = key.replace(".GEOMETRY.MBIN", ".GEOMETRY.DATA.MBIN")
+                stream = self.files.read(stream_key)
+                self.missing.update(k for k, data in ((key, meta), (stream_key, stream)) if data is None)
+                self.geometry[key] = Geometry(meta, stream) if meta else None
+            geometry = self.geometry[key]
+            if geometry is None:
+                return None
+            attributes = node["attributes"]
+            mesh_hash, count = attributes.get("HASH", ""), attributes.get("BATCHCOUNT", "")
+            return geometry.triangles(
+                node["name"], int(mesh_hash) if mesh_hash.isdigit() else None, int(count) if count.isdigit() else None
+            )
+        except (FormatError, ValueError, struct.error, IndexError) as e:
+            self.unreadable[f"{key} {node['name']}"] = str(e) or type(e).__name__
             return None
-        h = node["attributes"].get("HASH", "")
-        return geometry.triangles(node["name"], int(h) if h.isdigit() else None)
 
 
 def short(scene_path: str) -> str:
@@ -644,6 +667,9 @@ def main() -> int:
         if game.missing:
             some = ", ".join(sorted(game.missing)[:3])
             print(f"  {len(game.missing)} files it brings in weren't there, so it's drawn without them: {some}")
+        if game.unreadable:
+            some = "; ".join(f"{what}: {why}" for what, why in sorted(game.unreadable.items())[:3])
+            print(f"  {len(game.unreadable)} scenes or meshes couldn't be read, so it's drawn without them: {some}")
         game.clear()
     return 0
 
