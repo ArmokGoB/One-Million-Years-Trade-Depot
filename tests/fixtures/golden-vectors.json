@@ -1,5 +1,5 @@
 {
- "_source": "nms_namegen test/fixtures/golden_vectors.json (https://github.com/hadsh/nms_namegen, commit 52ad48affaa4089c8f487a470a888dc9b7a650aa), MIT License; codes and seeds rewritten as hex strings by tools/convert_golden_vectors.py.",
+ "_source": "nms_namegen test/fixtures/golden_vectors.json (https://github.com/hadsh/nms_namegen, commit 52ad48affaa4089c8f487a470a888dc9b7a650aa), MIT License; codes and seeds rewritten as hex strings by tools/convert_golden_vectors.py; region, system and planet names from tools/captures/name_model.py, the game's, which differ in 38 vector(s).",
  "vectors": [
   {
    "code": "036355853006",
@@ -899,7 +899,7 @@
    "galaxy": 0,
    "region": "Fowliu Boundary",
    "system": "Utsuchio XVIII",
-   "planet": "Razi Alpha",
+   "planet": "Razi F49",
    "sysattr": {
     "planet_count": 3,
     "prime_planet_count": 1,
@@ -1923,7 +1923,7 @@
   {
    "code": "09F0FFC0E0E8",
    "galaxy": 0,
-   "region": "Cassal",
+   "region": "Cossal Quadrant",
    "system": "Vioren-Aktma III",
    "planet": "Dudleig Prime",
    "sysattr": {
@@ -3060,7 +3060,7 @@
    "galaxy": 1,
    "region": "Cesclar Anomaly",
    "system": "Dumeyndn",
-   "planet": "Tricolu Alpha",
+   "planet": "Aimi 43/L3",
    "sysattr": {
     "planet_count": 1,
     "prime_planet_count": 1,
@@ -4146,7 +4146,7 @@
    "code": "05BB67CA2F88",
    "galaxy": 1,
    "region": "Tumileenri",
-   "system": "Mititano",
+   "system": "Mitibano",
    "planet": "Sogdiad Z16",
    "sysattr": {
     "planet_count": 5,
@@ -4396,7 +4396,7 @@
    "code": "07C5B02D9C55",
    "galaxy": 1,
    "region": "The Arm of Gesegova",
-   "system": "Ranqlewut",
+   "system": "Ranqlewuto",
    "planet": "Sats 58/Y3",
    "sysattr": {
     "planet_count": 5,
@@ -4784,7 +4784,7 @@
    "galaxy": 1,
    "region": "Acdowlin Sector",
    "system": "Liibal-Glon",
-   "planet": "Gidongrin",
+   "planet": "Gidonerin Alpha",
    "sysattr": {
     "planet_count": 3,
     "prime_planet_count": 1,
@@ -5039,7 +5039,7 @@
    "code": "012B70582947",
    "galaxy": 1,
    "region": "Mepashe Shallows",
-   "system": "Riqueens",
+   "system": "Riqulens",
    "planet": "Plebech N15",
    "sysattr": {
     "planet_count": 3,
@@ -5167,7 +5167,7 @@
    "galaxy": 5,
    "region": "Mastrozezi Adjunct",
    "system": "Gujohi",
-   "planet": "Kobe 48/C9",
+   "planet": "Hyastlef VII",
    "sysattr": {
     "planet_count": 5,
     "prime_planet_count": 1,
@@ -5340,7 +5340,7 @@
    "galaxy": 5,
    "region": "Diywalir",
    "system": "Iwonju XVIII",
-   "planet": "Ofiassf E30",
+   "planet": "Deiaeven Aich",
    "sysattr": {
     "planet_count": 4,
     "prime_planet_count": 2,
@@ -7008,7 +7008,7 @@
   {
    "code": "0BE283E38B16",
    "galaxy": 5,
-   "region": "Cumaik Cluster",
+   "region": "Rumaik Mass",
    "system": "Orlami",
    "planet": "Ulderaca Minor",
    "sysattr": {
@@ -7054,7 +7054,7 @@
    "galaxy": 5,
    "region": "Segathe Adjunct",
    "system": "Akitakaha",
-   "planet": "Juliaq XVI",
+   "planet": "Juliaq",
    "sysattr": {
     "planet_count": 3,
     "prime_planet_count": 2,
@@ -7636,7 +7636,7 @@
    "galaxy": 5,
    "region": "The Arm of Nozaanjem",
    "system": "Ledalu-Spont",
-   "planet": "Irianus XIX",
+   "planet": "Iriatus XIX",
    "sysattr": {
     "planet_count": 2,
     "prime_planet_count": 2,
@@ -8071,7 +8071,7 @@
    "galaxy": 9,
    "region": "Secihsfe Band",
    "system": "Oichiz-Syse",
-   "planet": "Hiwaz 58/C6",
+   "planet": "Neapolis",
    "sysattr": {
     "planet_count": 1,
     "prime_planet_count": 1,
@@ -8813,7 +8813,7 @@
   {
    "code": "0683DEB7403C",
    "galaxy": 9,
-   "region": "Zeziass",
+   "region": "Zezioss",
    "system": "Inhamael VIII",
    "planet": "New Reen",
    "sysattr": {
@@ -9327,7 +9327,7 @@
   {
    "code": "01D0B01C2DC7",
    "galaxy": 9,
-   "region": "Ajnaaudaw Mass",
+   "region": "Ajna'aud Terminus",
    "system": "Huvisto-Lini XV",
    "planet": "Emswor Alpha",
    "sysattr": {
@@ -9373,7 +9373,7 @@
    "code": "0989EB353C5E",
    "galaxy": 9,
    "region": "Jaujavall Spur",
-   "system": "Itnass",
+   "system": "Itnoss-Rifell",
    "planet": "Onmat 30/L2",
    "sysattr": {
     "planet_count": 4,
@@ -10306,7 +10306,7 @@
   {
    "code": "0C367B6F23BA",
    "galaxy": 42,
-   "region": "Fehuass Nebula",
+   "region": "Fehuess Adjunct",
    "system": "Hunabella XI",
    "planet": "Eckaych",
    "sysattr": {
@@ -10810,7 +10810,7 @@
    "galaxy": 42,
    "region": "Liangum Void",
    "system": "Intsevo-Jioki",
-   "planet": "Clovianusc Iboso",
+   "planet": "Gihwo S26",
    "sysattr": {
     "planet_count": 2,
     "prime_planet_count": 1,
@@ -11276,7 +11276,7 @@
    "galaxy": 42,
    "region": "Cuyourtz",
    "system": "Zaifung",
-   "planet": "Aassauri Sigma",
+   "planet": "Aossauri Sigma",
    "sysattr": {
     "planet_count": 0,
     "prime_planet_count": 6,
@@ -12418,7 +12418,7 @@
    "galaxy": 42,
    "region": "Gapatve Conflux",
    "system": "Kimizaw",
-   "planet": "Yorushamsg Yoak",
+   "planet": "Ocitic Prime",
    "sysattr": {
     "planet_count": 5,
     "prime_planet_count": 1,
@@ -12723,7 +12723,7 @@
   {
    "code": "0A1AF320236C",
    "galaxy": 42,
-   "region": "Ejkairsse Adjunct",
+   "region": "Ejka'irse Adjunct",
    "system": "Ayingb",
    "planet": "Cucasest X",
    "sysattr": {
@@ -13274,7 +13274,7 @@
   {
    "code": "08D91379CC55",
    "galaxy": 255,
-   "region": "Ownailanosb",
+   "region": "Ownalannuw",
    "system": "Yaxize",
    "planet": "Ethi L30",
    "sysattr": {
@@ -13473,7 +13473,7 @@
    "galaxy": 255,
    "region": "Yauris Quadrant",
    "system": "Andaba-Miv",
-   "planet": "Iarnasse Major",
+   "planet": "Anjos 34/I3",
    "sysattr": {
     "planet_count": 6,
     "prime_planet_count": 0,
@@ -15039,7 +15039,7 @@
    "galaxy": 255,
    "region": "Uptanab",
    "system": "Bluchev",
-   "planet": "Suji 84/T7",
+   "planet": "Leib XIV",
    "sysattr": {
     "planet_count": 3,
     "prime_planet_count": 1,
@@ -15341,7 +15341,7 @@
   {
    "code": "00007E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Zeberbato",
    "planet": "Rusissour E23",
    "sysattr": {
@@ -15650,7 +15650,7 @@
   {
    "code": "00017E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Nogorec",
    "planet": "Wedna Gamma",
    "sysattr": {
@@ -15964,7 +15964,7 @@
   {
    "code": "03E77E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Lutaygand VII",
    "planet": "Acussen",
    "sysattr": {
@@ -16253,7 +16253,7 @@
   {
    "code": "03E87E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Nichnye-Poyta VIII",
    "planet": "Ragabae IV",
    "sysattr": {
@@ -16557,7 +16557,7 @@
   {
    "code": "03E97E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Atyreny",
    "planet": "Ilvirgin III",
    "sysattr": {
@@ -16855,7 +16855,7 @@
   {
    "code": "04287E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Bovkara",
    "planet": "Ueno 71/M3",
    "sysattr": {
@@ -16984,7 +16984,7 @@
    "galaxy": 0,
    "region": "Thoslo Quadrant",
    "system": "Iijint-Kusa",
-   "planet": "Yexisrape XIV",
+   "planet": "Yexisrase",
    "sysattr": {
     "planet_count": 0,
     "prime_planet_count": 6,
@@ -17158,7 +17158,7 @@
   {
    "code": "04297E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Pochka-Musg",
    "planet": "Anshett",
    "sysattr": {
@@ -17326,7 +17326,7 @@
    "galaxy": 0,
    "region": "Sea of Ohkwibe",
    "system": "Derabuio",
-   "planet": "Litimonat Bayas",
+   "planet": "Litimonat Gaur",
    "sysattr": {
     "planet_count": 0,
     "prime_planet_count": 4,
@@ -17450,7 +17450,7 @@
   {
    "code": "042A7E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Agestra",
    "planet": "Maru 19/X4",
    "sysattr": {
@@ -17744,7 +17744,7 @@
   {
    "code": "00777E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Sobyuch-Nuw",
    "planet": "Aupactus Atota",
    "sysattr": {
@@ -17876,7 +17876,7 @@
    "code": "007781801801",
    "galaxy": 0,
    "region": "Thoslo Quadrant",
-   "system": "Andongq-Buze",
+   "system": "Andoneq VIII",
    "planet": "Stvalaba XIII",
    "sysattr": {
     "planet_count": 6,
@@ -18047,7 +18047,7 @@
   {
    "code": "00787E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
+   "region": "Myatxigh Cloud",
    "system": "Tushach",
    "planet": "Tomouthax",
    "sysattr": {
@@ -18361,8 +18361,8 @@
   {
    "code": "00797E7FE7FE",
    "galaxy": 0,
-   "region": "Myatnigh Band",
-   "system": "Kakoid-Nigle",
+   "region": "Myatxigh Cloud",
+   "system": "Kakoid-Bigle",
    "planet": "Zabde VIII",
    "sysattr": {
     "planet_count": 4,

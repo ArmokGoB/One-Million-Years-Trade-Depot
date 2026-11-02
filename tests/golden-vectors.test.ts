@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Replays nms_namegen's 443 golden vectors (MIT; see THIRD_PARTY_NOTICES.md)
-// through the TypeScript port. Every field must match bit for bit.
+// through the TypeScript port. Every field must match bit for bit. Their
+// names are the game's, from tools/captures/name_model.py (see
+// tools/convert_golden_vectors.py).
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";

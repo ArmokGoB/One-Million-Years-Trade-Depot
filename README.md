@@ -38,9 +38,9 @@ The rest is checked against what the [capture mod](mods/README.md) recorded in t
 
 | Field | Agrees |
 |---|---|
-| System names | 132 of 140 |
-| Region names | 178 of 179 |
-| Planet names | 8,276 of 8,606 |
+| System names | 135 of 140; the other 5 look like names players gave |
+| Region names | all 154 |
+| Planet names | all 8,105 |
 | Order of bodies, outlaw flag, giant planet layout | all 146 systems |
 | Economy, wealth and conflict | all 120 charted systems |
 | Number of stars | all 66 systems counted |
@@ -54,7 +54,6 @@ The rest is checked against what the [capture mod](mods/README.md) recorded in t
 
 Known gaps:
 
-- The game appears to change a letter of names with an offensive word in them, and the site doesn't. That looks like the reason for 33 of the first 80 planet names that differed.
 - What decides a giant planet's biome isn't known, so the site doesn't say which kind a system has.
 - Each multi-tool's class isn't known.
 - The site shows the multi-tools the game makes as you arrive from space. Loading a save on a planet makes it build another set, from that planet's address, which the site doesn't show.
@@ -68,6 +67,7 @@ The rest is this project's own. Each module ports a Python model in [`tools/capt
 
 | Module | Model | Works out |
 |---|---|---|
+| `namegen.ts` | `name_model.py` | region, system and planet names, where the game's generator differs from nms_namegen's |
 | `ships.ts` | `ship_model.py` | the ship list, following the generator past the space station and the planets' spawn points |
 | `stars.ts` | `star_model.py` | how many stars, and each one's color |
 | `guild.ts` | `guild_model.py` | the region's guild |

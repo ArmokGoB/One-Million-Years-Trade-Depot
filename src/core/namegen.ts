@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Procedural name generation (regions, systems, planets).
-// Ported from nms_namegen (MIT) generator.py; see THIRD_PARTY_NOTICES.md.
-// The letter tables are nms_namegen's data, flattened by tools/build_name_tables.py.
+// Procedural name generation (regions, systems, planets), as the game does it:
+// nms_namegen's generator (MIT, generator.py; see THIRD_PARTY_NOTICES.md) with
+// the differences tools/captures/name_model.py lists, which this ports. The
+// letter tables are nms_namegen's data, flattened by tools/build_name_tables.py.
 
 import rawTables from "./data/name-tables.json";
 import type { PRNG } from "./prng";
@@ -23,7 +24,6 @@ interface Entry {
 const DATA = rawTables as NameTablesFile;
 const ALPHASETS: readonly string[] = DATA.alphasets;
 const WEIGHTS: readonly number[] = DATA.weights.map((s) => Math.fround(Number(s)));
-const FIRST_CHARS: readonly Set<string>[] = DATA.firstChars.map((s) => new Set(s));
 const decoded: (Map<string, Entry> | undefined)[] = [];
 
 function table(alphaset: number): Map<string, Entry> {
@@ -57,10 +57,8 @@ function getCharactersFromAlphaset(rng: PRNG, cache1: number): string {
   return alphaset.slice(r, r + 3);
 }
 
+/** The letters that may follow `st` in `alphaset`, or null when none does. */
 function getStringWeights(st: string, alphaset: number): Entry | null {
-  const first = st[0];
-  if (first === undefined) throw new RangeError("IndexError: string index out of range");
-  if (!FIRST_CHARS[alphaset]?.has(first)) throw new Error(`KeyError: '${first}'`);
   return table(alphaset).get(st) ?? null;
 }
 
@@ -69,124 +67,140 @@ function insertVowel(name: string, rng: PRNG, index: number): string {
   return name.slice(0, index) + vowel + name.slice(index);
 }
 
-function getConsecutiveConsonants(name: string): number {
-  let consonance = 0;
+/** Where a run of more than three consonants starts, or -1. A 'y' after three starts a new run. */
+function consonantRun(name: string): number {
+  let run = 0;
   for (let i = 0; i < name.length; i++) {
     const c = name[i]!;
-    if (consonance < 3) {
-      if (!isIn(c, "aeiou")) consonance += 1;
-      else consonance = 0;
-    } else {
+    if (run === 3) {
       if (!isIn(c, "aeiouy")) return i - 3;
-      consonance = 0;
+      run = 0;
     }
+    run = isVowel(c) ? 0 : run + 1;
   }
   return -1;
 }
 
-export function generateName(rng: PRNG, alphasetIndex: number, minLength: number, maxLength: number): string {
-  let alternateCharGetter = false;
-  let name = getCharactersFromAlphaset(rng, alphasetIndex);
-  if (rng.randi() & 0x01) alternateCharGetter = true;
+/**
+ * Words the game changes a letter of, in ROT13: each with the place of the
+ * letter it changes and the letters it picks from (see name_model.py).
+ */
+// prettier-ignore
+const FILTER: readonly [string, number, string][] = [
+  ["nany", 1, "tdwzx"], ["nahf", 1, "tdwzx"], ["nff", 0, "eo"], ["ovgpu", 3, "ao"], ["oybj", 0, "caog"],
+  ["obare", 0, "lvsz"], ["pyvg", 3, "cpfn"], ["pbpx", 0, "smlth"], ["phpx", 3, "aeiou"], ["phz", 0, "rgsn"],
+  ["phag", 1, "eio"], ["qvpx", 2, "aeol"], ["qbat", 3, "teo"], ["snt", 0, "nmtz"], ["srypu", 0, "njkmp"],
+  ["shpx", 0, "zlbw"], ["tbbx", 3, "lnrb"], ["uvgyre", 0, "vmpl"], ["ubzb", 1, "eiu"], ["wvmm", 0, "zrwl"],
+  ["xvxr", 2, "rbl"], ["xhag", 3, "aeo"], ["ybir", 2, "mpbt"], ["zvatr", 3, "amlz"], ["zbat", 3, "aoik"],
+  ["anmv", 0, "ryvn"], ["arte", 0, "rvlt"], ["avt", 0, "rvxb"], ["betl", 2, "vlos"], ["cnrqb", 0, "tmvs"],
+  ["cnxv", 2, "ntr"], ["crqb", 0, "tmvs"], ["cravf", 0, "klsr"], ["cvff", 2, "cokl"], ["cbea", 0, "tvbr"],
+  ["cevpx", 0, "stbc"], ["chff", 0, "brsl"], ["dhrr", 2, "nlr"], ["encr", 2, "cnys"], ["frzra", 2, "tzrv"],
+  ["frk", 0, "tdrp"], ["funt", 3, "nml"], ["fuvg", 3, "nvsl"], ["fynt", 3, "dnvy"], ["fyhg", 2, "aeo"],
+  ["fcnm", 3, "nlr"], ["fcvp", 3, "nlr"], ["fchax", 1, "lh"], ["gneq", 0, "jcgwz"], ["gvg", 2, "nmbc"],
+  ["gheq", 3, "nbtp"], ["gjng", 1, "ehi"], ["jnax", 3, "aei"], ["juber", 0, "csa"], ["jbt", 0, "cslv"],
+  ["jbc", 0, "csld"]
+];
+const rot13 = (s: string) => s.replace(/[a-z]/g, (c) => String.fromCharCode(((c.charCodeAt(0) - 97 + 13) % 26) + 97));
+const WORDS = FILTER.map(([word, at, letters]) => [rot13(word), at, letters] as const);
 
-  let register = rng.random(maxLength - minLength + 0x01);
-  register = register + minLength - 0x03;
-  let add = register;
-
-  if (register > 0) {
-    let target = 0;
-    let index = 0;
-    let tries = 8;
-    let i = 0;
-    while (i < register) {
-      const charWeights = getStringWeights(name.slice(i, i + 3), alphasetIndex);
-      target = rng.randi() * TINY_DOUBLE;
-      if (charWeights === null) {
-        tries -= 1;
-        i -= 1;
-        alphasetIndex = (alphasetIndex + 1) & 0x08000007;
-        if (alphasetIndex < 0) alphasetIndex = -alphasetIndex;
-
-        if (tries === 0) {
-          if (add < 3) break;
-          const temp = getCharactersFromAlphaset(rng, alphasetIndex);
-          if (isVowel(name[i + 2]) && isVowel(temp[0])) {
-            name += "'";
-          } else if (!isVowel(temp[0])) {
-            name += VOWELS[rng.random(5) & 0xff]!;
-          }
-          name += temp;
-          tries = 1;
-          i += 2;
-          add -= 3;
-        }
-      } else {
-        if (alternateCharGetter) {
-          target *= charWeights.weights.length - 1;
-          index = Math.trunc(Math.sign(target) * 0.5 + target);
-        } else {
-          let weight = 0.0;
-          let j = 0;
-          for (; j < charWeights.weights.length; j++) {
-            weight += charWeights.weights[j]!;
-            if (weight >= target) break;
-          }
-          // Python's loop variable stays on the last index when nothing breaks.
-          if (j === charWeights.weights.length) j -= 1;
-          index = j;
-        }
-        name += charWeights.chars[index]!;
-        add -= 1;
+/** `name` with a letter of each word of FILTER in it changed, a draw from `rng` for each. */
+function filtered(name: string, rng: PRNG): string {
+  const letters = [...name];
+  for (let start = 0; start < letters.length; start++) {
+    for (const [word, at, choices] of WORDS) {
+      if (letters.slice(start, start + word.length).join("") === word) {
+        letters[start + at] = choices[rng.random(choices.length)]!;
+        break;
       }
-
-      if (name.length > 63) name = name.slice(0, 64);
-      i += 1;
     }
   }
+  return letters.join("");
+}
 
+/** The game keeps at most this many letters of a name. */
+const LONGEST = 63;
+
+/** Which entry a draw picks, in single precision, as the game holds the weights. */
+function pick(weights: readonly number[], target: number, alternate: boolean): number {
+  if (alternate) {
+    const place = Math.fround(Math.fround(weights.length - 1) * target);
+    return Math.trunc(Math.fround(place + 0.5));
+  }
+  let total = 0;
+  for (let j = 0; j < weights.length; j++) {
+    total = Math.fround(total + weights[j]!);
+    if (total >= target) return j;
+  }
+  return weights.length - 1;
+}
+
+/**
+ * One part of a name, as the game makes it: nms_namegen's generator with the
+ * game's differences, which tools/captures/name_model.py lists.
+ */
+export function generateName(rng: PRNG, alphasetIndex: number, minLength: number, maxLength: number): string {
+  const own = alphasetIndex;
+  let name = getCharactersFromAlphaset(rng, alphasetIndex);
+  const alternate = (rng.randi() & 0x01) === 1;
+  const length = rng.random(maxLength - minLength + 1) + minLength - 3;
+  let left = length;
+  let tries = 8;
+  let place = 0;
+  while (place < length) {
+    const target = Math.fround(rng.randi() * TINY_DOUBLE);
+    const entry = getStringWeights(name.slice(-3), alphasetIndex);
+    if (entry !== null) {
+      name = (name + entry.chars[pick(entry.weights, target, alternate)]!).slice(0, LONGEST);
+      left -= 1;
+      place += 1;
+      continue;
+    }
+    tries -= 1;
+    alphasetIndex = (alphasetIndex + 1) & 7;
+    if (tries > 0) continue;
+    if (left < 3) break;
+    const three = getCharactersFromAlphaset(rng, own);
+    const before = isVowel(name[place + 2]);
+    if (before && isVowel(three[0])) name += "'";
+    else if (!before && !isVowel(three[0])) name += VOWELS[rng.random(5)]!;
+    name = (name + three).slice(0, LONGEST);
+    left -= 3;
+    tries = 1;
+    place += 3;
+  }
+
+  // A vowel after the first letter, where the first two are hard to say.
   const first = name[0]!;
   const second = name[1]!;
+  const sayable =
+    (first === "s" && isIn(second, "hklmnprtwy")) ||
+    (second === "h" && isIn(first, "ctw")) ||
+    (second === "l" && isIn(first, "bcfgps")) ||
+    (second === "r" && isIn(first, "bcdfgkpt")) ||
+    (second === "w" && isIn(first, "dgt")) ||
+    (second === "y" && isIn(first, "hmr"));
+  if (!isVowel(first) && !isVowel(second) && !sayable) name = insertVowel(name, rng, 1);
 
-  // Insert a vowel at the start where needed.
-  if (!isIn(first, "aeiou") && !isIn(second, "aeiou")) {
-    if (first !== "s" || !isIn(second, "hklmnprtwy")) {
-      const allowedCluster =
-        (second === "h" && isIn(first, "ctw")) ||
-        (second === "l" && isIn(first, "bcfgps")) ||
-        (second === "r" && isIn(first, "bcdfgkpt")) ||
-        (second === "w" && isIn(first, "dgt")) ||
-        (second === "y" && isIn(first, "hmr"));
-      if (!allowedCluster) name = insertVowel(name, rng, 1);
-    }
+  // A vowel before the last letter, where the last two are hard to say.
+  const last = name[name.length - 1]!;
+  const before = name[name.length - 2]!;
+  const hard =
+    (last === "b" && isIn(before, "gn")) ||
+    (last === "d" && isIn(before, "bdfghkmpst")) ||
+    (last === "g" && before === "l") ||
+    (last === "p" && isIn(before, "bdhkt")) ||
+    (last === "r" && isIn(before, "bfg")) ||
+    (last === "t" && before === "g") ||
+    (last === "w" && !isVowel(before));
+  if ((before !== "g" || isVowel(last)) && hard) name = insertVowel(name, rng, name.length - 1);
+
+  // A vowel in a long run of consonants.
+  let run = consonantRun(name);
+  if (run !== -1) {
+    run += rng.random(3) + 1;
+    name = insertVowel(name, rng, run);
   }
-
-  // Insert a vowel at the end where needed.
-  if (name.length > 1) {
-    const ult = name[name.length - 1]!;
-    const penult = name[name.length - 2]!;
-    if (penult !== "g" || isIn(ult, "aeiou")) {
-      if (
-        (ult === "b" && isIn(penult, "gn")) ||
-        (ult === "d" && isIn(penult, "bdfghkmpst")) ||
-        (ult === "g" && penult === "l") ||
-        (ult === "p" && isIn(penult, "bdhkt")) ||
-        (ult === "r" && isIn(penult, "bfg")) ||
-        (ult === "t" && penult === "g") ||
-        (ult === "w" && !isIn(penult, "aeiou"))
-      ) {
-        name = insertVowel(name, rng, name.length - 1);
-      }
-    }
-  }
-
-  // Break up long consonant runs.
-  let consonanceIndex = getConsecutiveConsonants(name);
-  if (consonanceIndex !== -1) {
-    consonanceIndex += rng.random(3) + 1;
-    name = insertVowel(name, rng, consonanceIndex);
-  }
-
-  return name;
+  return filtered(name, rng);
 }
 
 const ROMAN_NUMERALS = [
