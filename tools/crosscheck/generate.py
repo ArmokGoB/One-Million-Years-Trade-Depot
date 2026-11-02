@@ -12,12 +12,15 @@ which planets have their two moons the other way round, whether its exotic
 is a squid and which civilian ships the game makes solar; how many stars
 tools/captures/star_model.py gives the system, and the color of each, from
 nms_namegen's star type; the guild and the first run of multi-tools that
-guild_model.py and multitool_model.py give it; the parts parts_model.py
-picks for one model with the system's first ship seed, each model in turn,
-case by case; the paint paint_model.py gives one model with that seed, its
-palettes from the system's address or the seed as the model's are, each
-model in turn too; and the names part_names_model.py gives the parts of a
-fighter, hauler, explorer or solar with that seed, each in turn.
+guild_model.py and multitool_model.py give it, a day's rotation of
+multi-tools, the day changing case by case, and, for an address with a
+planet digit, the multi-tools made from the planet's address; the parts
+parts_model.py picks for one model with the system's first ship seed, each
+model in turn, case by case; the paint paint_model.py gives one model with
+that seed, its palettes from the system's address or the seed as the
+model's are, each model in turn too; and the names part_names_model.py
+gives the parts of a fighter, hauler, explorer or solar with that seed,
+each in turn.
 
 Usage:
     python3 tools/crosscheck/generate.py --namegen /path/to/nms_namegen --count 20000 > crosscheck.jsonl
@@ -152,6 +155,14 @@ def main() -> int:
             "guild": guild_model.guild(ua),
             "multitools": [[name, f"{seed:016X}"] for name, seed in multitool_model.first_run(ua)],
         }
+        # The rotation on a day that changes case by case, from the system's address and from its planet's,
+        # with the code's planet digit, as the game makes a set with the player at that planet.
+        day = (case * 7919) % 50_000
+        rec["rotation"] = [day, [f"{seed:016X}" for _, seed in multitool_model.rotation(ua, day)]]
+        if planet := (code >> 44) & 0xF:
+            at = ua | (planet << 52)
+            run = multitool_model.first_run(at) + multitool_model.rotation(at, day)
+            rec["planet_multitools"] = [[name, f"{seed:016X}"] for name, seed in run]
         if isinstance(rec["sysattr"], dict):
             # the color of each star, from nms_namegen's star type
             rec["suns"] = star_model.star_colors(rec["sysattr"]["star_type"], rec["stars"])

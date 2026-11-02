@@ -2151,7 +2151,9 @@ class ToolTests(ModelHelpers, CaptureTestCase):
             text,
         )
         self.assertIn("  multi-tools per set: 3 x2", text)
-        self.assertIn("  systems recorded more than once: 1; with the same set each time: 1", text)
+        self.assertIn(
+            "  systems recorded more than once: 1; with the same set each time: 1; the same but for the last 3: 1", text
+        )
         self.assertIn("  seeds in more than one system's set: 0", text)
         self.assertIn(
             "  03E9F3545C3E galaxy 1 Shown-Name: MULTITOOL 5EED000000000001 (2 parts), "
@@ -3809,28 +3811,43 @@ class ReportTests(CaptureTestCase):
     def test_sets_and_offers_against_the_multi_tool_model(self):
         session = report.Session({"enums": {}}, "test")
         ua = (0x0AB << 40) | (3 << 32) | 0xF3545C3E  # made up
+        planet = ua | (2 << 52)  # its planet 2's address
+        at, day = 1_790_000_000, multitool_model.day_of(1_790_000_000)  # made up
         folder = "MODELS/COMMON/WEAPONS/MULTITOOL/"
-        run = multitool_model.first_run(ua)
-        tools = [{"name": f"{folder}{name}.SCENE.MBIN", "seed": f"{seed:016X}"} for name, seed in run]
-        tools += [{"name": f"{folder}MULTITOOL.SCENE.MBIN", "seed": f"{0x5EED + n:016X}"} for n in range(3)]
-        pool = {"t": "pool", "system": f"{ua:016X}", "tools": tools}
+
+        def tools(made):
+            return [{"name": f"{folder}{name}.SCENE.MBIN", "seed": f"{seed:016X}"} for name, seed in made]
+
+        own = tools(multitool_model.first_run(ua) + multitool_model.rotation(ua, day))
+        pool = {"t": "pool", "at": at, "system": f"{ua:016X}", "tools": own}
+        # The next day, made from planet 2's address with the player there, after a multi-tool of the player's.
+        theirs = tools([("STAFFMULTITOOL", report.MASK64)])
+        at_planet = theirs + tools(multitool_model.first_run(planet) + multitool_model.rotation(planet, day + 1))
+        next_day = dict(pool, at=at + multitool_model.DAY_SECONDS, tools=at_planet)
+        stale = dict(pool, at=at + 2 * multitool_model.DAY_SECONDS)  # with the rotation of two days before
         elsewhere = dict(pool, system=f"{ua + 1:016X}")  # not that system's set
-        captures = report.Captures(sessions=[session], pools=[(pool, session), (elsewhere, session)])
-        lines = report.pool_lines(captures)
+        sets = [(each, session) for each in (pool, next_day, stale, elsewhere)]
+        lines = report.pool_lines(report.Captures(sessions=[session], pools=sets))
         self.assertIn(
-            "  first run worked out from the address (multitool_model.py): 1/2 systems; followed by 3 more, as in "
-            "every set so far: 1/1",
+            "  first run worked out from the address (multitool_model.py): 3/4 sets, 1 from a planet's (where the "
+            "player was as the game generated the system); after other multi-tools the game built: 1",
             lines,
         )
+        self.assertIn("  then the rotation worked out from the address and the day (multitool_model.py): 2/3", lines)
         self.assertIn("    not as worked out: 00ABF3545C3F galaxy 3", lines)
-        offers = [
-            ({"t": "item", "system": f"{ua:016X}", "where": 2, "itemType": 1, "model": tools[1]}, session),
-            ({"t": "item", "system": f"{ua:016X}", "where": 2, "itemType": 1, "model": tools[-1]}, session),
-        ]
+
+        def offer(tool, when=at, where=ua):
+            item = {"t": "item", "at": when, "system": f"{where:016X}", "where": 2, "itemType": 1, "model": tool}
+            return item, session
+
+        made_up = tools([("MULTITOOL", 0x5EED)])[0]
+        offers = [offer(own[1]), offer(own[-1]), offer(made_up), offer(at_planet[1], where=planet)]
+        offers.append(offer(own[-2], when=at + 3 * multitool_model.DAY_SECONDS))  # a terminal not restocked since
         lines = report.item_lines(report.Captures(sessions=[session], items=offers))
         self.assertIn(
-            "  standard multi-tools of the system's first run worked out from the address: 1/2, by place in it: "
-            "2 x1, other x1",
+            "  the system's own multi-tools worked out from the address and the day (multitool_model.py): 4/5, by place "
+            "in its set: other x1, rotation 2, 3 day(s) old x1, rotation 3 x1, standard 1 (planet 2's) x1, "
+            "standard 2 x1",
             lines,
         )
 
@@ -3890,6 +3907,22 @@ class GuildAndMultitoolModelTests(unittest.TestCase):
             low, high = stream.word(), stream.word()
             self.assertEqual(seed, game_rng.mix((high << 32) | low), f"{name}: the next two draws, mixed")
         self.assertEqual(f"{run[3][1]:016X}", "A8C3E4807478F556")
+
+    def test_a_systems_rotation_of_multi_tools(self):
+        ua = (0x0AB << 40) | (3 << 32) | 0xF3545C3E  # made up
+        day = multitool_model.day_of(1_790_000_000)
+        self.assertEqual(day, 20717, "whole days since 1970 UTC")
+        run = multitool_model.rotation(ua, day)
+        self.assertEqual([name for name, _ in run], ["MULTITOOL"] * 3)
+        seed = multitool_model.day_hash(ua, day)
+        stream = game_rng.Stream(seed)
+        for _, tool_seed in run:
+            low, high = stream.word(), stream.word()
+            self.assertEqual(tool_seed, game_rng.mix((high << 32) | low), "two draws each, mixed")
+        self.assertEqual(f"{seed:016X}", "96B1A33F2C545A5B")
+        self.assertEqual(f"{run[0][1]:016X}", "2E538A563BAD6C20")
+        self.assertNotEqual(multitool_model.rotation(ua, day + 1), run, "it changes with the day")
+        self.assertNotEqual(multitool_model.rotation(ua | (2 << 52), day), run, "and with the planet digit")
 
 
 class ShipModelTests(unittest.TestCase):

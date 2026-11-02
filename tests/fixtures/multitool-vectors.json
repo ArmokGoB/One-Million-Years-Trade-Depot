@@ -25,7 +25,68 @@
      "ATLASMULTITOOL",
      "FE422283E7EBE7EE"
     ]
-   ]
+   ],
+   "day": 0,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "C418CCE1E3E4B795"
+    ],
+    [
+     "MULTITOOL",
+     "DA888FB0E30579FD"
+    ],
+    [
+     "MULTITOOL",
+     "B710B59D7F31654A"
+    ]
+   ],
+   "planet": {
+    "run": [
+     [
+      "MULTITOOL",
+      "C91D6CF3B7C29C12"
+     ],
+     [
+      "MULTITOOL",
+      "A6568F0EC2648DD4"
+     ],
+     [
+      "MULTITOOL",
+      "AFC8D5D5E544413D"
+     ],
+     [
+      "MULTITOOL",
+      "1A8A7341E30A4E5E"
+     ],
+     [
+      "ROYALMULTITOOL",
+      "18A66D0F6473E6CE"
+     ],
+     [
+      "SENTINELMULTITOOL",
+      "47AF1B557E4491CB"
+     ],
+     [
+      "ATLASMULTITOOL",
+      "1F650164CEFD9768"
+     ]
+    ],
+    "rotation": [
+     [
+      "MULTITOOL",
+      "63CB37D2B7519444"
+     ],
+     [
+      "MULTITOOL",
+      "80A7EFB891469AEC"
+     ],
+     [
+      "MULTITOOL",
+      "D8D7EDD20DD92933"
+     ]
+    ]
+   }
   },
   {
    "code": "00EE971406F4",
@@ -50,6 +111,21 @@
     [
      "ATLASMULTITOOL",
      "DFEF618D87E660D0"
+    ]
+   ],
+   "day": 1,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "9E0A92CBBC704F79"
+    ],
+    [
+     "MULTITOOL",
+     "47BFADE29E08BCC3"
+    ],
+    [
+     "MULTITOOL",
+     "14C739127E5E34AE"
     ]
    ]
   },
@@ -76,6 +152,21 @@
     [
      "ATLASMULTITOOL",
      "6D0A0563AEF0C76E"
+    ]
+   ],
+   "day": 20000,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "EEBBFFB662E3F084"
+    ],
+    [
+     "MULTITOOL",
+     "0615CBED9010225B"
+    ],
+    [
+     "MULTITOOL",
+     "C3E467A0A19B29D2"
     ]
    ]
   },
@@ -107,6 +198,21 @@
      "ATLASMULTITOOL",
      "85192D64B07CA15D"
     ]
+   ],
+   "day": 20717,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "07DC1599565EFB0B"
+    ],
+    [
+     "MULTITOOL",
+     "D6EBD746C3E2624B"
+    ],
+    [
+     "MULTITOOL",
+     "DFFEBACC3BA8A032"
+    ]
    ]
   },
   {
@@ -136,6 +242,21 @@
     [
      "ATLASMULTITOOL",
      "E008738F6AD343CA"
+    ]
+   ],
+   "day": 20718,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "539B237EA3EF7692"
+    ],
+    [
+     "MULTITOOL",
+     "D9061EE51BA71B66"
+    ],
+    [
+     "MULTITOOL",
+     "FB211383C3864EF6"
     ]
    ]
   },
@@ -167,7 +288,68 @@
      "ATLASMULTITOOL",
      "7FAF831A89296839"
     ]
-   ]
+   ],
+   "day": 20759,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "89C03EF1163D8ABF"
+    ],
+    [
+     "MULTITOOL",
+     "F99238D181358E2C"
+    ],
+    [
+     "MULTITOOL",
+     "A46D51EB56D19416"
+    ]
+   ],
+   "planet": {
+    "run": [
+     [
+      "MULTITOOL",
+      "A36A196015D7E71B"
+     ],
+     [
+      "MULTITOOL",
+      "A3CCA88D7BAC31DD"
+     ],
+     [
+      "MULTITOOL",
+      "D6135704B9E7426B"
+     ],
+     [
+      "MULTITOOL",
+      "E6AD21CFA8C3E7F2"
+     ],
+     [
+      "ROYALMULTITOOL",
+      "6B41EAA847196BD2"
+     ],
+     [
+      "SENTINELMULTITOOL",
+      "7E68967822E5157E"
+     ],
+     [
+      "ATLASMULTITOOL",
+      "114C01E4BC4EEE8F"
+     ]
+    ],
+    "rotation": [
+     [
+      "MULTITOOL",
+      "5E4386E1E3F8C317"
+     ],
+     [
+      "MULTITOOL",
+      "2E380E5F81C26A73"
+     ],
+     [
+      "MULTITOOL",
+      "38F1F15DC34887EA"
+     ]
+    ]
+   }
   },
   {
    "code": "5030A6CB3D5A",
@@ -201,7 +383,60 @@
      "ATLASMULTITOOL",
      "14FF5D70DE102710"
     ]
-   ]
+   ],
+   "day": 40000,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "DA191DF1D4246560"
+    ],
+    [
+     "MULTITOOL",
+     "88490B4E861812FF"
+    ],
+    [
+     "MULTITOOL",
+     "41BA56E1B36DCE48"
+    ]
+   ],
+   "planet": {
+    "run": [
+     [
+      "MULTITOOL",
+      "5FFF5A0BB1C9C2A6"
+     ],
+     [
+      "MULTITOOL",
+      "650C0066E806C7CC"
+     ],
+     [
+      "ROYALMULTITOOL",
+      "FA1D92A91144F9C3"
+     ],
+     [
+      "SENTINELMULTITOOL",
+      "77CD1EBA6E0CCD46"
+     ],
+     [
+      "ATLASMULTITOOL",
+      "2EAE4FC280C17F07"
+     ]
+    ],
+    "rotation": [
+     [
+      "MULTITOOL",
+      "83B8EB52B73E9843"
+     ],
+     [
+      "MULTITOOL",
+      "CF853DE6B3EA5A8B"
+     ],
+     [
+      "MULTITOOL",
+      "33098EC993FDAB46"
+     ]
+    ]
+   }
   },
   {
    "code": "015CF3F35DCC",
@@ -234,6 +469,21 @@
     [
      "ATLASMULTITOOL",
      "5E370EFA92A24D5A"
+    ]
+   ],
+   "day": 99999,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "6699581CEB46EFD0"
+    ],
+    [
+     "MULTITOOL",
+     "BF06905EE229322B"
+    ],
+    [
+     "MULTITOOL",
+     "B2CA5BA6D1E79DD0"
     ]
    ]
   },
@@ -268,6 +518,21 @@
     [
      "ATLASMULTITOOL",
      "5305A699B8DBA5BA"
+    ]
+   ],
+   "day": 1048579,
+   "rotation": [
+    [
+     "MULTITOOL",
+     "B68983CC4E6E9530"
+    ],
+    [
+     "MULTITOOL",
+     "5BB02EC177F0CFA4"
+    ],
+    [
+     "MULTITOOL",
+     "3906E32DADF7678E"
     ]
    ]
   }

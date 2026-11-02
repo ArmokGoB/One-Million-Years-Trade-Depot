@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Writes tests/fixtures/multitool-vectors.json: the first run of a few systems' multi-tools.
+"""Writes tests/fixtures/multitool-vectors.json: a few systems' own multi-tools.
 
-tools/captures/multitool_model.py works out the first run of a system's own
-multi-tools from its address; tests/multitools.test.ts replays these vectors
+tools/captures/multitool_model.py works out a system's own multi-tools from
+its address and the day; tests/multitools.test.ts replays these vectors
 through the TypeScript port. The addresses are made up, picked by a fixed
 search: three systems with each number of standard multi-tools, from
-several galaxies, purple systems and planet digits among them. CI
-regenerates the file and fails if it changed.
+several galaxies, purple systems and planet digits among them. Each vector
+has the first run and a day's rotation made from the system's address, on
+a day of its own, and, for an address with a planet digit, both made from
+the planet's address too. CI regenerates the file and fails if it changed.
 
 Usage:
     python3 tools/crosscheck/multitool_vectors.py
@@ -22,6 +24,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT_DEFAULT = ROOT / "tests" / "fixtures" / "multitool-vectors.json"
 EACH = 3
+# Days for the rotations, in whole days since 1970 UTC, from the epoch to far ahead.
+DAYS = (0, 1, 20_000, 20_717, 20_718, 20_759, 40_000, 99_999, 2**20 + 3)
 
 sys.path.insert(0, str(ROOT / "tools" / "captures"))
 import multitool_model  # noqa: E402
@@ -46,12 +50,23 @@ def main() -> int:
         if len(chosen[standard]) < EACH:
             chosen[standard].append((code, galaxy))
 
+    def listed(made: list[tuple[str, int]]) -> list[list[str]]:
+        return [[name, f"{seed:016X}"] for name, seed in made]
+
     vectors = []
     for found in chosen.values():
         for code, galaxy in found:
             ua = (((code >> 32) & 0xFFF) << 40) | (galaxy << 32) | (code & 0xFFFFFFFF)
-            run = [[name, f"{seed:016X}"] for name, seed in multitool_model.first_run(ua)]
-            vectors.append({"code": f"{code:012X}", "galaxy": galaxy, "run": run})
+            day = DAYS[len(vectors) % len(DAYS)]
+            vector = {"code": f"{code:012X}", "galaxy": galaxy, "run": listed(multitool_model.first_run(ua))}
+            vector.update(day=day, rotation=listed(multitool_model.rotation(ua, day)))
+            if planet := code >> 44:
+                at = ua | (planet << 52)  # the planet's address, as the game makes a set with the player there
+                vector["planet"] = {
+                    "run": listed(multitool_model.first_run(at)),
+                    "rotation": listed(multitool_model.rotation(at, day)),
+                }
+            vectors.append(vector)
 
     payload = {
         "_source": "tools/captures/multitool_model.py over made-up addresses, written by "

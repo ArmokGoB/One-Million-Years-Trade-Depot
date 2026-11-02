@@ -15,7 +15,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 - The system's ship list: 50 slots, each with its seed and type, the exotic included, plus the ship at its Sentinel crash sites. Some slots are frigates you won't meet there, such as Recon and Cursed, which are known only as expedition rewards.
 - Each ship's parts, by the game's part IDs: every civilian ship, the exotic, every freighter, the Sentinels' ship and freighter, and the pirates' fighters and capital freighter. Fighters, haulers, explorers and solars also get the names the Starship Fabricator gives their parts.
 - The colors the game paints those ships with, and most frigates and the swarm's frigate and drone, each color named in words
-- The system's own multi-tools: 2 to 4 standard ones and a royal, a Sentinel and an Atlas one, each with its seed, parts and colors
+- The system's own multi-tools: 2 to 4 standard ones, a royal, a Sentinel and an Atlas one, and three more standard ones that change every day at midnight UTC, each with its seed, parts and colors
 - A shareable link for every lookup
 
 It takes a 12-digit portal address (`009A039BAE4B`) or signal booster coordinates (`064A:0082:01B9:009A`), plus the galaxy's number, from 1 (Euclid) to 256. Both examples are the Pilgrim Star, which the site shows until you look up another system.
@@ -49,13 +49,14 @@ The rest is checked against what the [capture mod](mods/README.md) recorded in t
 | Paint | all 1,564 ships, freighters, frigates and multi-tools |
 | System palettes | all 140 systems |
 | Guild envoy | all 43 recorded |
-| Multi-tool seeds | 66 of 67 systems' sets; all 45 multi-tools on offer |
+| Multi-tool seeds | all 69 sets, the daily three included; all 45 multi-tools on offer |
 
 Known gaps:
 
 - The game appears to change a letter of names with an offensive word in them, and the site doesn't. That looks like the reason for 33 of the first 80 planet names that differed.
 - What decides a giant planet's biome isn't known, so the site doesn't say which kind a system has.
-- The seed of each system's three other standard multi-tools isn't known; they're probably settlements' stock. Nor is each multi-tool's class. One recorded set began with four multi-tools of other kinds, and its seeds weren't the ones the address gives.
+- Each multi-tool's class isn't known.
+- The site shows the multi-tools the game makes as you arrive from space. Loading a save on a planet makes it build another set, from that planet's address, which the site doesn't show.
 - The part names haven't been checked against what the game shows. About 1 hauler in 260 has wings that make a component the game doesn't name.
 
 ## How it works
@@ -69,7 +70,7 @@ The rest is this project's own. Each module ports a Python model in [`tools/capt
 | `ships.ts` | `ship_model.py` | the ship list, following the generator past the space station and the planets' spawn points |
 | `stars.ts` | `star_model.py` | how many stars, and each one's color |
 | `guild.ts` | `guild_model.py` | the region's guild |
-| `multitools.ts` | `multitool_model.py` | the seeds of the system's own multi-tools |
+| `multitools.ts` | `multitool_model.py` | the seeds of the system's own multi-tools, the day's three included |
 | `parts.ts` | `parts_model.py` | each ship's and multi-tool's parts, from its seed |
 | `partnames.ts` | `part_names_model.py` | the Starship Fabricator's names for those parts |
 | `paint.ts` | `paint_model.py` | each model's palettes and paint |
@@ -81,7 +82,7 @@ The parts, part names and paint come from tables in `src/core/data` that scripts
 ## Roadmap
 
 1. Names for the parts of the other ships, from the No Man's Sky Coordinate Exchange (NMSCE) where it has them, and for the multi-tools' parts
-2. Each system's three other multi-tools, and each multi-tool's class. With the parts and colors already on the site, this makes release 1.0.
+2. Each multi-tool's class. With the parts and colors already on the site, this makes release 1.0.
 3. Then pictures of each ship and multi-tool
 4. After 1.0: each planet's creatures, with their colors and pattern, physical characteristics, aggression, genus, description and battle stats
 

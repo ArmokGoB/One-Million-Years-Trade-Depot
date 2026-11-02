@@ -7,6 +7,7 @@ import "./styles.css";
 
 import {
   AddressError,
+  DAY_MS,
   describeSystem,
   GALAXY_COUNT,
   galaxyLabel,
@@ -16,6 +17,7 @@ import {
   parseGalaxyNumber,
   type BuildInfo,
   type ColorInfo,
+  type MultitoolInfo,
   type PartNameInfo,
   type ShipGroup,
   type ShipsInfo,
@@ -264,19 +266,30 @@ function shipsSection(d: SystemDescription): HTMLElement {
   return el("section", "result__section", el("h3", "result__heading", "Ships"), key, all);
 }
 
-/** The system's own multi-tools: the first run of its set, each with its seed, parts and colors. */
+/**
+ * The system's own multi-tools, each with its seed, parts and colors: the first run of its set, then the
+ * day's rotation.
+ */
 function multitoolsSection(d: SystemDescription): HTMLElement {
   const key = el("dl", "manifest");
-  let standard = 0;
-  for (const tool of d.multitools) {
-    const term = tool.kind === "Standard" ? `Standard ${++standard}` : tool.kind;
+  const entry = (term: string, tool: MultitoolInfo) => {
     const dd = el("dd", undefined, tool.seed);
     if (tool.parts.length) dd.append(el("span", "manifest__note", partsText(tool.parts)));
     if (tool.colors.length) dd.append(el("span", "manifest__note paint", ...paintColors(tool.colors)));
     key.append(el("dt", undefined, term), dd);
-  }
+  };
+  let standard = 0;
+  for (const tool of d.multitools) entry(tool.kind === "Standard" ? `Standard ${++standard}` : tool.kind, tool);
+  d.rotation.multitools.forEach((tool, i) => entry(`Daily ${i + 1}`, tool));
+  const day = new Date(d.rotation.day * DAY_MS).toLocaleDateString("en-US", { timeZone: "UTC", dateStyle: "long" });
   const sale = d.uncharted || d.abandoned ? "" : "The space station sells one of the standard ones, most often the first. ";
-  const intro = el("p", "result__aside", `${sale}Three more standard ones aren't worked out yet.`);
+  const intro = el(
+    "p",
+    "result__aside",
+    `${sale}The daily ones are for ${day}, and change at midnight UTC; multi-tool terminals that restock sell them. ` +
+      "The game makes these as you arrive from space; loading a save on a planet makes it build another set, " +
+      "from that planet's address.",
+  );
   return el("section", "result__section", el("h3", "result__heading", "Multi-tools"), key, intro);
 }
 
