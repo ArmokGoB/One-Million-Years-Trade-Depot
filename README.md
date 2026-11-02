@@ -7,7 +7,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 ## What it shows
 
 - System, region and galaxy names
-- Star color, faction (or uncharted or abandoned), economy, wealth and conflict, and whether outlaws likely control it
+- Star color, faction (or uncharted or abandoned), economy, wealth and conflict, and whether outlaws control it
 - Which guild's envoy the region's space stations have: the Merchants, the Mercenaries or the Explorers
 - How many stars the system has, and each star's color
 - Whether it's a region's black hole or Atlas Interface system, or a giant planet with every other body its moon
@@ -42,6 +42,7 @@ The rest is checked against what the [capture mod](mods/README.md) recorded in t
 | Region names | 178 of 179 |
 | Planet names | 8,276 of 8,606 |
 | Order of bodies, outlaw flag, giant planet layout | all 146 systems |
+| Economy, wealth and conflict | all 120 charted systems |
 | Number of stars | all 66 systems counted |
 | Ship seeds | all 146 systems |
 | Which civilian ships are solar | all 2,920 |

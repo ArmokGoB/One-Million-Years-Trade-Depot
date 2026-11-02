@@ -4208,6 +4208,8 @@ class NamegenComparisonTests(CaptureTestCase):
             trade = names["trade"].index(inverse(report.NAMEGEN_ECONOMY)[attrs["economy_type"]])
             wealth = names["wealth"].index(inverse(report.NAMEGEN_WEALTH)[attrs["wealth"]])
             conflict = names["conflict"].index(inverse(report.NAMEGEN_CONFLICT)[attrs["conflict_level"]])
+            if attrs["pirate"]:  # the game sets an outlaw system's wealth and conflict to Pirate
+                wealth, conflict = names["wealth"].index(report.PIRATE), names["conflict"].index(report.PIRATE)
             anomaly = report._namegen_anomaly(va, (code >> 32) & 0xFFF)
             data.StarType = star.Type = attrs["star_type"]
             data.InhabitingRace = star.Race = race
