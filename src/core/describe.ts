@@ -5,7 +5,14 @@
 import { formatPortalCode, portalParts, toGalacticCoordinates, universalAddress, withPlanet } from "./address";
 import { colorName, hexColor } from "./colornames";
 import { guildFor, type Guild } from "./guild";
-import { MULTITOOL_MODELS, multitoolRun, type MultitoolKind } from "./multitools";
+import {
+  MULTITOOL_MODELS,
+  multitoolRotation,
+  multitoolRun,
+  rotationDay,
+  type Multitool,
+  type MultitoolKind,
+} from "./multitools";
 import {
   basePalettes,
   legacyPalettes,
@@ -173,11 +180,25 @@ export interface SystemDescription {
   guild: Guild;
   /**
    * The first run of the system's own multi-tools, in the game's order: 2 to 4
-   * standard ones, then the royal, the Sentinel and the Atlas one. Three more
-   * standard ones follow, from a seed not worked out (see multitools.ts).
+   * standard ones, then the royal, the Sentinel and the Atlas one (see
+   * multitools.ts). These are the set the game makes as you arrive from space.
    */
-  multitools: { kind: MultitoolKind; seed: string; parts: string[]; colors: ColorInfo[] }[];
+  multitools: MultitoolInfo[];
+  /** The rotation that follows: three more standard ones, which change with the day. */
+  rotation: {
+    /** The day they're for: whole days since 1970 UTC (see rotationDay). */
+    day: number;
+    multitools: MultitoolInfo[];
+  };
   raw: SystemAttributes;
+}
+
+export interface MultitoolInfo {
+  kind: MultitoolKind;
+  seed: string;
+  /** Part IDs as the game lists them (see distinguishingParts). */
+  parts: string[];
+  colors: ColorInfo[];
 }
 
 const seedText = (seed: bigint) => `0x${hex64(seed)}`;
@@ -225,6 +246,15 @@ class Painter {
   }
 }
 
+function describeMultitool({ kind, seed }: Multitool, painter: Painter): MultitoolInfo {
+  return {
+    kind,
+    seed: seedText(seed),
+    parts: distinguishingParts(MULTITOOL_MODELS[kind], seed),
+    colors: painter.colors(MULTITOOL_MODELS[kind], seed),
+  };
+}
+
 function describeShips(code: bigint, galaxy: number, painter: Painter): ShipsInfo {
   const pool = shipPool(code, galaxy);
   return {
@@ -250,7 +280,11 @@ function describeShips(code: bigint, galaxy: number, painter: Painter): ShipsInf
   };
 }
 
-export function describeSystem(code: bigint, galaxy: number): SystemDescription {
+/**
+ * Everything the site shows about the system at `code` in `galaxy`; its
+ * multi-tools' rotation for `day` (see rotationDay), by default today's.
+ */
+export function describeSystem(code: bigint, galaxy: number, day: number = rotationDay(Date.now())): SystemDescription {
   const systemCode = withPlanet(code, 0);
   const { attributes: a, anomaly } = systemAttributesDetailed(systemCode, galaxy);
   const seeds = planetSeeds(systemCode, galaxy);
@@ -296,12 +330,8 @@ export function describeSystem(code: bigint, galaxy: number): SystemDescription 
     bodies,
     ships: describeShips(systemCode, galaxy, painter),
     guild: guildFor(ua),
-    multitools: multitoolRun(ua).map(({ kind, seed }) => ({
-      kind,
-      seed: seedText(seed),
-      parts: distinguishingParts(MULTITOOL_MODELS[kind], seed),
-      colors: painter.colors(MULTITOOL_MODELS[kind], seed),
-    })),
+    multitools: multitoolRun(ua).map((tool) => describeMultitool(tool, painter)),
+    rotation: { day, multitools: multitoolRotation(ua, day).map((tool) => describeMultitool(tool, painter)) },
     raw: a,
   };
 }

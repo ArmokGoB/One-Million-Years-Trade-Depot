@@ -16,6 +16,7 @@ import {
   hexColor,
   legacyPalettes,
   MULTITOOL_MODELS,
+  multitoolRotation,
   multitoolRun,
   NAMED_MODELS,
   namedParts,
@@ -68,6 +69,10 @@ interface Case {
   guild?: string;
   /** tools/captures/multitool_model.py's first run: [model file, seed]. */
   multitools?: [string, string][];
+  /** Its rotation on a day: [day, seeds]. */
+  rotation?: [number, string[]];
+  /** For an address with a planet digit, the first run and rotation made from the planet's address. */
+  planet_multitools?: [string, string][];
   /** tools/captures/parts_model.py's parts for one model with the system's first ship seed: [model, parts]. */
   parts?: [PartModel, string[]];
   /**
@@ -149,6 +154,8 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     const sunsSeen = new Set<string>();
     const guilds = new Map<string, number>();
     const standardCounts = new Map<number, number>();
+    let rotations = 0;
+    let planetSets = 0;
     const partModels = new Set<string>();
     const paintModels = new Set<string>();
     const namedModels = new Set<string>();
@@ -199,6 +206,20 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
         const standard = c.multitools.filter(([file]) => file === "MULTITOOL").length;
         standardCounts.set(standard, (standardCounts.get(standard) ?? 0) + 1);
       }
+      if (c.rotation !== undefined) {
+        const [day, seeds] = c.rotation;
+        const rotation = () => multitoolRotation(universalAddress(code, c.galaxy), day).map((t) => hex64(t.seed));
+        same(seeds, rotation, `${tag} rotation on day ${day}`, mismatches);
+        rotations++;
+      }
+      if (c.planet_multitools !== undefined) {
+        const at = universalAddress(code, c.galaxy) | ((code >> 44n) << 52n);
+        const day = c.rotation?.[0] ?? 0;
+        const tools = () =>
+          [...multitoolRun(at), ...multitoolRotation(at, day)].map((t) => [MULTITOOL_MODELS[t.kind], hex64(t.seed)]);
+        same(c.planet_multitools, tools, `${tag} planet's multitools`, mismatches);
+        planetSets++;
+      }
       if (c.parts !== undefined && !isErr(c.ships)) {
         const [model, parts] = c.parts;
         const seed = BigInt(`0x${(c.ships as ShipCase).first}`);
@@ -229,6 +250,8 @@ describe.skipIf(!path)("crosscheck against the Python reference", () => {
     expect([...sunsSeen].sort(), "star colors seen").toEqual(["Blue", "Green", "Purple", "Red", "Yellow"]);
     expect([...guilds.keys()].sort(), "cases with each guild").toEqual(["Explorers", "Mercenaries", "Merchants"]);
     expect([...standardCounts.keys()].sort(), "cases with 2, 3 and 4 standard multi-tools").toEqual([2, 3, 4]);
+    expect(rotations, "cases with a rotation of multi-tools").toBe(lines.length);
+    expect(planetSets, "cases with multi-tools made from a planet's address").toBeGreaterThan(lines.length / 2);
     expect([...partModels].sort(), "models whose parts were compared").toEqual([...PART_MODELS].sort());
     expect([...paintModels].sort(), "models whose paint was compared").toEqual([...PAINT_MODELS].sort());
     expect([...namedModels].sort(), "models whose names were compared").toEqual([...NAMED_MODELS].sort());

@@ -56,6 +56,8 @@ NOT_MULTITOOL_DIRS = ("/MULTITOOLPARTS/",)
 # What an item record can say of the item, or of how it was recorded: 0 or 1, or why (nameUnread
 # since 0.9.0 says why the player's name couldn't be read).
 ITEM_FLAGS = ("free", "gift", "reward", "extra", "unsettled", "nameUnread")
+# What the report calls the first run's multi-tools that aren't standard ones.
+SPECIAL_LABELS = {"ROYALMULTITOOL": "royal", "SENTINELMULTITOOL": "Sentinel", "ATLASMULTITOOL": "Atlas"}
 
 SHIP_LABELS = {
     "Freighter": "Freighter",
@@ -871,6 +873,40 @@ def _set_key(pool: dict) -> list:
     return [[tool.get("name"), tool.get("seed"), tool.get("parts")] for tool in pool.get("tools") or []]
 
 
+def _locate_set(system: int, recorded: list[tuple[str, int | None]]) -> tuple[int, int, int] | None:
+    """Where a recorded set's first run is (multitool_model.py): the address the game made it from, the
+    system's own or one of its planets', and where the run starts and ends in the set, which may begin with
+    other multi-tools the game built just before it."""
+    for planet in range(16):
+        address = system | (planet << 52)
+        run = multitool_model.first_run(address)
+        for start in range(len(recorded) - len(run) + 1):
+            if recorded[start : start + len(run)] == run:
+                return address, start, start + len(run)
+    return None
+
+
+def _offered_place(seed: int | None, ua: int, at: int | None) -> str:
+    """Which of its system's own multi-tools one on offer is: "standard n", "royal", "Sentinel" or "Atlas"
+    of the first run, "rotation n" of the rotation of the day it was offered or one of the six before (a
+    terminal keeps a multi-tool until it restocks), or "other". The set made from the planet's address in
+    the item's address, if it has one, is tried after the system's."""
+    system = ua & ~PLANET_BITS
+    for address in dict.fromkeys((system, ua)):
+        own = "" if address == system else f" (planet {address >> 52}'s)"
+        run = multitool_model.first_run(address)
+        if seed in (seeds := [s for _, s in run]):
+            name = run[seeds.index(seed)][0]
+            if name != multitool_model.STANDARD:
+                return SPECIAL_LABELS[name] + own
+            return f"standard {[s for n, s in run if n == name].index(seed) + 1}{own}"
+        for back in range(7 if at is not None else 0):
+            rotation = [s for _, s in multitool_model.rotation(address, multitool_model.day_of(at) - back)]
+            if seed in rotation:
+                return f"rotation {rotation.index(seed) + 1}{own}" + (f", {back} day(s) old" if back else "")
+    return "other"
+
+
 def _region(ua: int) -> tuple[int, int]:
     """A system's region: its galaxy and voxel, the address bits other than the planet and system."""
     return (ua >> 32) & 0xFF, ua & MASK32
@@ -1053,8 +1089,9 @@ def giant_lines(captures: Captures) -> list[str]:
 def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
     """Each system's own multi-tools, which the game builds as it generates the system: their files,
     seeds and parts; how many it built just before the generation; whether a system's set came out the
-    same each time it was recorded; and any seed in more than one system's set, which wouldn't be a
-    system's own."""
+    same each time it was recorded; any seed in more than one system's set, which wouldn't be a system's
+    own; and each set against multitool_model.py, its first run from the address it was made from and its
+    rotation from the day it was recorded."""
     if not captures.pools:
         return []
     systems = captures.representative_by_system()
@@ -1086,7 +1123,14 @@ def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
         )
     again = [pools for pools in by_system.values() if len(pools) > 1]
     same = sum(1 for pools in again if len({json.dumps(_set_key(pool)) for pool in pools}) == 1)
-    lines.append(f"  systems recorded more than once: {len(again)}; with the same set each time: {same}")
+    # The rotation, the set's last few, changes with the day.
+    same_run = sum(
+        1 for pools in again if len({json.dumps(_set_key(pool)[: -multitool_model.ROTATION]) for pool in pools}) == 1
+    )
+    lines.append(
+        f"  systems recorded more than once: {len(again)}; with the same set each time: {same}; "
+        f"the same but for the last {multitool_model.ROTATION}: {same_run}"
+    )
     systems_of: dict[str, set[int]] = {}
     for system, pools in by_system.items():
         for pool in pools:
@@ -1095,22 +1139,34 @@ def pool_lines(captures: Captures, limit: int = 100) -> list[str]:
     shared = sorted(seed for seed, where in systems_of.items() if len(where) > 1)
     examples = f" ({', '.join(shared[:5])})" if shared else ""
     lines.append(f"  seeds in more than one system's set: {len(shared)}{examples}")
-    first, second, wrong = 0, 0, []
+    first, from_planet, after, rotated, undated = 0, 0, 0, 0, 0
+    wrong: dict[int, None] = {}  # the systems with a set not as worked out, in order
     for system, pools in by_system.items():
-        run = multitool_model.first_run(system)
-        recorded = [
-            (_model_file(tool.get("name") or ""), _hex_or_none(tool.get("seed"))) for tool in pools[-1]["tools"]
-        ]
-        if recorded[: len(run)] == run:
+        for pool in pools:
+            recorded = [(_model_file(tool.get("name") or ""), _hex_or_none(tool.get("seed"))) for tool in pool["tools"]]
+            found = _locate_set(system, recorded)
+            if found is None:
+                wrong[system] = None
+                continue
+            address, start, end = found
             first += 1
-            second += len(recorded) - len(run) == multitool_model.SECOND_RUN
-        else:
-            wrong.append(system)
+            from_planet += address != system
+            after += start > 0
+            if pool.get("at") is None:
+                undated += 1
+            else:
+                rotated += recorded[end:] == multitool_model.rotation(address, multitool_model.day_of(pool["at"]))
+    said = f"  first run worked out from the address (multitool_model.py): {first}/{len(sets)} sets"
+    if from_planet:
+        said += f", {from_planet} from a planet's (where the player was as the game generated the system)"
+    if after:
+        said += f"; after other multi-tools the game built: {after}"
+    lines.append(said)
     lines.append(
-        f"  first run worked out from the address (multitool_model.py): {first}/{len(by_system)} systems; "
-        f"followed by {multitool_model.SECOND_RUN} more, as in every set so far: {second}/{first}"
+        f"  then the rotation worked out from the address and the day (multitool_model.py): {rotated}/{first - undated}"
+        + (f" ({undated} set(s) with no time)" if undated else "")
     )
-    for system in wrong[:5]:
+    for system in list(wrong)[:5]:
         record = systems.get(system)
         lines.append(f"    not as worked out: {record.label() if record is not None else _portal_label(system)}")
     if late := sum(1 for pool, _ in captures.pools if pool.get("late")):
@@ -1187,6 +1243,7 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
         types = Counter(str(item.get("itemType")) for item, _ in captures.items)
         described: list[str] = []
         tool_systems: dict[str, set[int]] = {}
+        first_offered: dict[tuple[str, int], int | None] = {}  # when each was first seen in each system
         with_tool = 0
         for item, session in captures.items:
             ua, label = place(item)
@@ -1196,6 +1253,8 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
             with_tool += bool(tools)
             for tool in tools:
                 tool_systems.setdefault(tool["seed"], set()).add(ua)
+                times = (first_offered.get((tool["seed"], ua)), item.get("at"))
+                first_offered[(tool["seed"], ua)] = min((t for t in times if t is not None), default=None)
             where = session.name("where", item.get("where")) or f"place {item.get('where')}"
             flags = "".join(
                 f", {flag}" if item[flag] in (1, True) else f", {flag} ({item[flag]})"
@@ -1242,17 +1301,12 @@ def item_lines(captures: Captures, limit: int = 100) -> list[str]:
             lines.append(f"  ... {len(described) - limit} more")
         repeated = sum(1 for seen in tool_systems.values() if len(seen) > 1)
         lines.append(f"  multi-tools: {len(tool_systems)}; offered in more than one system: {repeated}")
-        places: Counter = Counter()
-        for seed, seen in tool_systems.items():
-            for ua in seen:
-                standard = [s for name, s in multitool_model.first_run(ua & ~PLANET_BITS) if name == "MULTITOOL"]
-                value = _hex_or_none(seed)
-                places["other" if value not in standard else standard.index(value) + 1] += 1
+        places = Counter(_offered_place(_hex_or_none(seed), ua, at) for (seed, ua), at in first_offered.items())
         known = sum(n for place, n in places.items() if place != "other")
         lines.append(
-            f"  standard multi-tools of the system's first run worked out from the address: {known}/"
-            f"{sum(places.values())}, by place in it: "
-            + (", ".join(f"{place} x{n}" for place, n in sorted(places.items(), key=lambda kv: str(kv[0]))) or "none")
+            f"  the system's own multi-tools worked out from the address and the day (multitool_model.py): "
+            f"{known}/{sum(places.values())}, by place in its set: "
+            + (", ".join(f"{place} x{n}" for place, n in sorted(places.items())) or "none")
         )
     if captures.built:
         tool_builds = [(b, session) for b, session in captures.built if _is_multitool(b.get("name"))]
