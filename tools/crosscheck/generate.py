@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Differential test data: runs nms_namegen over many addresses, one JSON per line.
 
+The region, system and planet names come from tools/captures/name_model.py,
+nms_namegen's functions with the game's generator in place of its own.
+
 tests/crosscheck.test.ts replays the file against the TypeScript port when
 CROSSCHECK_FILE points at it. Unlike the 443 golden vectors, this covers
 every planet digit, all 256 galaxies, and the system indices where the
@@ -56,9 +59,11 @@ def main() -> int:
     import parts_model  # noqa: E402
     import ship_model  # noqa: E402
     import star_model  # noqa: E402
-    from nms_namegen.planet import planetName  # noqa: E402
-    from nms_namegen.region import regionName, voxelAttributes  # noqa: E402
-    from nms_namegen.system import planetSeeds, systemAttributes, systemName  # noqa: E402
+    from name_model import planet_name as planetName  # noqa: E402
+    from name_model import region_name as regionName  # noqa: E402
+    from name_model import system_name as systemName  # noqa: E402
+    from nms_namegen.region import voxelAttributes  # noqa: E402
+    from nms_namegen.system import planetSeeds, systemAttributes  # noqa: E402
 
     rnd = random.Random(args.seed)
 

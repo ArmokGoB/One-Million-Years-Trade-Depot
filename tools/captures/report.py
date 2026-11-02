@@ -1492,8 +1492,9 @@ def _hex_or_none(text: object) -> int | None:
 
 
 def _region_name_candidates(seed: int) -> dict[str, str | None]:
-    """The region name nms_namegen would make if the game's seed were each stage of its regionName()."""
-    from nms_namegen.generator import generateName
+    """The region name nms_namegen's regionName() would make, with the game's generator (name_model.py), if
+    the game's seed were each stage of it."""
+    from name_model import generate_name as generateName
     from nms_namegen.prng import PRNG
     from nms_namegen.region import region_name_adornments
 
@@ -1521,12 +1522,13 @@ def _region_name_candidates(seed: int) -> dict[str, str | None]:
 
 
 def name_lines(captures: Captures, namegen: Path, examples: int) -> list[str]:
-    """Planet and region names the game generated, against nms_namegen for the same seeds."""
+    """Planet and region names the game generated, against nms_namegen's functions with the game's generator
+    (name_model.py) for the same seeds."""
     if not captures.names:
         return []
     sys.path.insert(0, str(namegen.resolve()))
-    from nms_namegen.planet import planetName
-    from nms_namegen.region import regionName
+    from name_model import planet_name as planetName
+    from name_model import region_name as regionName
 
     systems = captures.representative_by_system()
     t = {
@@ -1596,8 +1598,9 @@ def _game_anomaly(name: str | None) -> int | None:
 def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]:
     """How often nms_namegen (and so the site) predicts what the game generated."""
     sys.path.insert(0, str(namegen.resolve()))
+    from name_model import system_name as systemName
     from nms_namegen.region import voxelAttributes
-    from nms_namegen.system import planetSeeds, systemAttributes, systemName
+    from nms_namegen.system import planetSeeds, systemAttributes
 
     t = {
         "name": Tally("system name"),

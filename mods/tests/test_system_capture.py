@@ -48,6 +48,7 @@ _spec.loader.exec_module(report)
 import game_rng  # noqa: E402  (tools/captures is on the path once report.py is loaded)
 import guild_model  # noqa: E402
 import multitool_model  # noqa: E402
+import name_model  # noqa: E402
 import paint_model  # noqa: E402
 import parts_model  # noqa: E402
 import ship_model  # noqa: E402
@@ -3925,6 +3926,48 @@ class GuildAndMultitoolModelTests(unittest.TestCase):
         self.assertNotEqual(multitool_model.rotation(ua | (2 << 52), day), run, "and with the planet digit")
 
 
+class NameModelTests(unittest.TestCase):
+    """tools/captures/name_model.py; the report checks it against the names the game made."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
+
+    def test_a_word_of_the_list_loses_a_letter_to_a_draw(self):
+        from nms_namegen.prng import PRNG
+
+        word, at, letters = name_model.WORDS[2]  # one three letters long
+        rng, expected = PRNG(0x123456789ABCDEF0), PRNG(0x123456789ABCDEF0)
+        name = "zz" + word + "zz"
+        result = name_model.filtered(name, rng)
+        self.assertEqual([k for k in range(len(name)) if name[k] != result[k]], [2 + at])
+        self.assertEqual(result[2 + at], letters[expected.random(len(letters))])
+        self.assertEqual(rng.seed, expected.seed, "one draw")
+        self.assertEqual(name_model.filtered("zzzz", rng), "zzzz")
+        self.assertEqual(rng.seed, expected.seed, "and none for a name without one")
+
+    def test_a_y_after_three_consonants_starts_a_new_run(self):
+        from nms_namegen.generator import getConsecutiveConsonants
+
+        self.assertEqual(name_model._consonant_run("bcdyfgh"), 3)
+        self.assertEqual(getConsecutiveConsonants("bcdyfgh"), -1, "nms_namegen starts no new run")
+
+    def test_names_where_the_game_and_nms_namegen_differ(self):
+        from nms_namegen.planet import planetName
+        from nms_namegen.region import regionName
+        from nms_namegen.system import systemName
+
+        for seed, game in ((0x907A70C31012F037, "Nafutiss Beta"), (0x59A54A7BB1FEE08F, "Uqulenbo Toig")):  # made up
+            self.assertEqual(name_model.planet_name(seed), game)
+            self.assertNotEqual(planetName(seed), game)
+        code = 0x019D16EDC5D4  # made up
+        self.assertEqual(name_model.system_name(code, 0), "Mulangl-Aoss XI")
+        self.assertNotEqual(systemName(code, 0), "Mulangl-Aoss XI")
+        code = 0x0015B37F5722  # made up
+        self.assertEqual(name_model.region_name(code, 0), "Ejblauw Instability")
+        self.assertNotEqual(regionName(code, 0), "Ejblauw Instability")
+
+
 class ShipModelTests(unittest.TestCase):
     """tools/captures/ship_model.py; the report checks it against real captures."""
 
@@ -4190,7 +4233,9 @@ class NamegenComparisonTests(CaptureTestCase):
     def test_generator_predictions_round_trip(self):
         sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
         from nms_namegen.region import voxelAttributes
-        from nms_namegen.system import planetSeeds, systemAttributes, systemName
+        from nms_namegen.system import planetSeeds, systemAttributes
+
+        systemName = name_model.system_name  # the game's names, which the report checks
 
         inverse = lambda table: {v: k for k, v in table.items()}  # noqa: E731
         names = mod.ENUM_TABLES
@@ -4284,8 +4329,7 @@ class NamegenComparisonTests(CaptureTestCase):
 
     def test_names_are_scored_against_the_generator(self):
         sys.path.insert(0, str(Path(os.environ["NMS_NAMEGEN"]).resolve()))
-        from nms_namegen.planet import planetName
-        from nms_namegen.region import regionName
+        planetName, regionName = name_model.planet_name, name_model.region_name  # the game's
 
         code, galaxy = 0x03E9F3545C3E, 1  # the fake system: UA's region and galaxy
         names = NameTests.name.__get__(self)  # reuse the detour driver
