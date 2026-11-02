@@ -43,6 +43,9 @@ export const ECONOMIES = [
 ] as const;
 export const TIERS = ["", "Low", "Medium", "High"] as const;
 export const RACES = ["None", "Gek", "Korvax", "Vy'keen"] as const;
+/** The game's words for an outlaw system's wealth and conflict. */
+export const OUTLAW_WEALTH = "Black Market";
+export const OUTLAW_CONFLICT = "Pirate Controlled";
 
 /** What each model with parts or paint is, as a type of ship or multi-tool. */
 export const MODEL_NAMES: Record<PaintModel, string> = {
@@ -157,10 +160,18 @@ export interface SystemDescription {
   stars: 1 | 2 | 3;
   /** The color of each of its stars, the main one's first (see starColors). */
   starColors: StarColor[];
+  /** The dominant race, "Uncharted", or the race and "(Abandoned)" as the game puts it. */
   faction: string;
+  /**
+   * The economy, wealth and conflict, as the game's galaxy map gives them:
+   * "None" in an uncharted or abandoned system, where it says the data is
+   * unavailable, and in an outlaw system the game's own words for its wealth
+   * and conflict, "Black Market" and "Pirate Controlled".
+   */
   economy: string;
   wealth: string;
   conflict: string;
+  /** Whether outlaws control the system. */
   pirate: boolean;
   abandoned: boolean;
   uncharted: boolean;
@@ -292,8 +303,9 @@ export function describeSystem(code: bigint, galaxy: number, day: number = rotat
   const race = RACES[a.dominant_race] ?? "Unknown";
   let faction: string;
   if (a.uncharted) faction = "Uncharted";
-  else if (a.abandoned) faction = `Abandoned (${race})`;
+  else if (a.abandoned) faction = `${race} (Abandoned)`;
   else faction = race;
+  const noInfo = a.uncharted || a.abandoned;
 
   const ua = universalAddress(systemCode, galaxy);
   const painter = new Painter(ua);
@@ -316,9 +328,9 @@ export function describeSystem(code: bigint, galaxy: number, day: number = rotat
     stars,
     starColors: starColors(a.star_type, stars),
     faction,
-    economy: a.uncharted ? "None" : ECONOMIES[a.economy_type] ?? "Unknown",
-    wealth: a.uncharted ? "None" : TIERS[a.wealth] ?? "Unknown",
-    conflict: a.uncharted ? "None" : TIERS[a.conflict_level] ?? "Unknown",
+    economy: noInfo ? "None" : (ECONOMIES[a.economy_type] ?? "Unknown"),
+    wealth: noInfo ? "None" : a.pirate ? OUTLAW_WEALTH : (TIERS[a.wealth] ?? "Unknown"),
+    conflict: noInfo ? "None" : a.pirate ? OUTLAW_CONFLICT : (TIERS[a.conflict_level] ?? "Unknown"),
     pirate: a.pirate,
     abandoned: a.abandoned,
     uncharted: a.uncharted,

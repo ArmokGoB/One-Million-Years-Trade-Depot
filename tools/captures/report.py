@@ -89,6 +89,7 @@ NAMEGEN_ECONOMY = {
 }
 NAMEGEN_WEALTH = {"Poor": 1, "Average": 2, "Wealthy": 3}
 NAMEGEN_CONFLICT = {"Low": 1, "Default": 2, "High": 3}
+PIRATE = "Pirate"  # an outlaw system's wealth and conflict in the game's enums
 
 
 class CaptureFormatError(ValueError):
@@ -1603,8 +1604,8 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
         "star": Tally("star color"),
         "race": Tally("dominant race / uncharted"),
         "economy": Tally("economy (charted systems)"),
-        "wealth": Tally("wealth (charted systems)"),
-        "conflict": Tally("conflict (charted systems)"),
+        "wealth": Tally("wealth (charted systems; outlaw ones' Pirate, as the site has it)"),
+        "conflict": Tally("conflict (charted systems; outlaw ones' Pirate, as the site has it)"),
         "abandoned": Tally("abandoned"),
         "pirate": Tally("outlaw (pirate) system"),
         "giant": Tally("giant planet layout (one giant, every other body its moon)"),
@@ -1660,14 +1661,17 @@ def namegen_lines(captures: Captures, namegen: Path, examples: int) -> list[str]
         )
         charted = race_name not in (None, "None_")
         if charted:
+            # The game sets an outlaw system's wealth and conflict to Pirate, which src/core/describe.ts words
+            # as the game does; nms_namegen draws a level as for any other system.
+            outlaw = PIRATE if attrs["pirate"] else None
             for key, enum, table, predicted in (
                 ("economy", "trade", NAMEGEN_ECONOMY, attrs["economy_type"]),
-                ("wealth", "wealth", NAMEGEN_WEALTH, attrs["wealth"]),
-                ("conflict", "conflict", NAMEGEN_CONFLICT, attrs["conflict_level"]),
+                ("wealth", "wealth", NAMEGEN_WEALTH, outlaw or attrs["wealth"]),
+                ("conflict", "conflict", NAMEGEN_CONFLICT, outlaw or attrs["conflict_level"]),
             ):
                 game_name = r.name(enum, enum)
                 if game_name is not None:
-                    t[key].add(table.get(game_name) == predicted, miss(game_name, predicted))
+                    t[key].add(table.get(game_name, game_name) == predicted, miss(game_name, predicted))
         if ga:
             t["abandoned"].add(
                 ("AbandonedSystem" in flags) == attrs["abandoned"], miss(sorted(flags), attrs["abandoned"])

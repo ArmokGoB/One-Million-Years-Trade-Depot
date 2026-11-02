@@ -317,12 +317,12 @@ function render(d: SystemDescription): void {
   row(d.stars > 1 ? "Star colors" : "Star color", starColorsEntry(d.starColors));
   row("Stars", String(d.stars));
   row("Faction", d.faction);
-  if (!d.uncharted) {
+  if (!d.uncharted && !d.abandoned) {
     row("Economy", d.economy);
     row("Wealth", d.wealth);
     row("Conflict", d.conflict);
   }
-  if (d.pirate) row("Outlaws", "Likely outlaw-controlled");
+  if (d.pirate) row("Outlaws", "Outlaw-controlled");
   if (d.uncharted || d.abandoned) row("Guild envoy", d.guild, "(the region's)");
   else row("Guild envoy", d.guild);
   row("Bodies", `${plural(d.planetCount, "planet", "planets")}, ${plural(d.moonCount, "moon", "moons")}`);
