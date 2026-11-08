@@ -13,7 +13,7 @@ A free, open-source website for No Man's Sky explorers. Give it a portal address
 - Whether it's a region's black hole or Atlas Interface system, or a giant planet with every other body its moon
 - Planets and moons, with their names, portal addresses and seeds
 - The system's ship list: 50 slots, each with its seed and type, the exotic included, plus the ship at its Sentinel crash sites. Some slots are frigates you won't meet there, such as Recon and Cursed, which are known only as expedition rewards.
-- Each ship's parts, by the game's part IDs: every civilian ship, the exotic, every freighter, the Sentinels' ship and freighter, and the pirates' fighters and capital freighter. Fighters, haulers, explorers and solars also get the names the Starship Fabricator gives their parts.
+- Each ship's parts, by the game's part IDs: every civilian ship, the exotic, every freighter, the Sentinels' ship and freighter, and the pirates' fighters and capital freighter. Fighters, haulers, explorers and solars also get the names the Starship Fabricator gives their parts, and shuttles, exotics, Sentinel ships, freighters and capital freighters the names players use for theirs: the No Man's Sky Coordinate Exchange's (NMSCE), and this project's own for parts NMSCE doesn't name.
 - The colors the game paints those ships with, and most frigates and the swarm's frigate and drone, each color named in words
 - The system's own multi-tools: 2 to 4 standard ones, a royal, a Sentinel and an Atlas one, and three more standard ones that change every day at midnight UTC, each with its seed, parts and colors
 - A shareable link for every lookup
@@ -57,7 +57,8 @@ Known gaps:
 - What decides a giant planet's biome isn't known, so the site doesn't say which kind a system has.
 - Each multi-tool's class isn't known.
 - The site shows the multi-tools the game makes as you arrive from space. Loading a save on a planet makes it build another set, from that planet's address, which the site doesn't show.
-- The part names haven't been checked against what the game shows. About 1 hauler in 260 has wings that make a component the game doesn't name.
+- The Starship Fabricator's part names haven't been checked against what the game shows. About 1 hauler in 260 has wings that make a component the game doesn't name.
+- Not every part of the ships players name has a name; the rest show by ID only.
 
 ## How it works
 
@@ -73,16 +74,16 @@ The rest is this project's own. Each module ports a Python model in [`tools/capt
 | `guild.ts` | `guild_model.py` | the region's guild |
 | `multitools.ts` | `multitool_model.py` | the seeds of the system's own multi-tools, the day's three included |
 | `parts.ts` | `parts_model.py` | each ship's and multi-tool's parts, from its seed |
-| `partnames.ts` | `part_names_model.py` | the Starship Fabricator's names for those parts |
+| `partnames.ts` | `part_names_model.py` | the names of those parts: the Starship Fabricator's, and those players use |
 | `paint.ts` | `paint_model.py` | each model's palettes and paint |
 
-The parts, part names and paint come from tables in `src/core/data` that scripts in `tools` derive from the game's own files (see [Development](#development)). `colornames.ts` puts each color into words.
+The parts, part names and paint come from tables in `src/core/data` that scripts in `tools` derive from the game's own files (see [Development](#development)). The names players use come from [`tools/community_part_names.tsv`](tools/community_part_names.tsv), which `tools/build_community_part_names.py` checks against the parts tables. `colornames.ts` puts each color into words.
 
 `npm test` replays nms_namegen's golden vectors and fixtures from each Python model. CI also checks that the name tables and test fixtures in the repository are the ones the scripts make, and compares 20,000 fresh cases from the Python library, across all 256 galaxies, field by field.
 
 ## Roadmap
 
-1. Names for the parts of the other ships, from the No Man's Sky Coordinate Exchange (NMSCE) where it has them, and for the multi-tools' parts
+1. Names for the multi-tools' parts
 2. Each multi-tool's class. With the parts and colors already on the site, this makes release 1.0.
 3. Then pictures of each ship and multi-tool
 4. After 1.0: each planet's creatures, with their colors and pattern, physical characteristics, aggression, genus, description and battle stats
@@ -110,6 +111,7 @@ python3 tools/crosscheck/guild_vectors.py
 python3 tools/crosscheck/multitool_vectors.py
 python3 tools/crosscheck/parts_vectors.py
 python3 tools/crosscheck/paint_vectors.py
+python3 tools/build_community_part_names.py
 python3 tools/crosscheck/part_names_vectors.py
 python3 tools/crosscheck/generate.py --namegen ../nms_namegen --count 20000 > crosscheck.jsonl
 CROSSCHECK_FILE=crosscheck.jsonl npm test
@@ -144,6 +146,7 @@ The capture mod has its own tests; see [mods/README.md](mods/README.md#developme
 ## Credits
 
 - [nms_namegen](https://github.com/hadsh/nms_namegen) by Stuart Coyle, had.sh and GoodGuysFree (MIT): the generator this site ports, and the ground truth behind the accuracy figures.
+- The [No Man's Sky Coordinate Exchange](https://nmsce.com/) (NMSCE): the names players use for the parts of shuttles, exotics, Sentinel ships and freighters.
 - [NMS.py](https://github.com/monkeyman192/NMS.py), [pyMHF](https://github.com/monkeyman192/pyMHF), [HGPAKtool](https://github.com/monkeyman192/HGPAKtool) and [MBINCompiler](https://github.com/monkeyman192/MBINCompiler) by monkeyman192 and contributors: the tools the capture mod and the part tables build on.
 - Fonts: [MatrixType](https://ggbot.itch.io/matrixtype-font-family) by GGBotNet (CC0 1.0) and [Façade](https://velvetyne.fr/fonts/facade/) by Éléonore Fines, published by the Velvetyne Type Foundry (SIL Open Font License 1.1). The logo's lettering is [Butovo Mono](https://fontesk.com/butovo-mono-font/) by Okunkir.
 

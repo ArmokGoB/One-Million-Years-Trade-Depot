@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Writes tests/fixtures/part-names-vectors.json: the named parts of ships with made-up seeds.
 
-tools/captures/part_names_model.py names a fighter's, hauler's, explorer's or solar's parts from its seed;
-tests/partnames.test.ts replays these vectors through the TypeScript port. The seeds are made up, picked by
-a fixed search: for each ship type, the first few seeds, and then one for each case the naming treats
-apart: a hauler wing with no name in the game and one whose component fits by any one of its groups; and
-explorers with a matched pair of wings on each of their two cockpits, with a right wing named by a
-lookalike, and with wings whose accessory lists the generator never picks from. CI regenerates the file
-and fails if it changed.
+tools/captures/part_names_model.py names a ship's parts from its seed, by the game's names or by the names
+players use; tests/partnames.test.ts replays these vectors through the TypeScript port. The seeds are made
+up, picked by a fixed search: for each model whose parts have names, the first few seeds, and then one for
+each case the naming treats apart: a hauler wing with no name in the game and one whose component fits by
+any one of its groups; explorers with a matched pair of wings on each of their two cockpits, with a right
+wing named by a lookalike, and with wings whose accessory lists the generator never picks from; and among
+the names players use, names made of more than one part, one two of whose groups fit, two names for one
+part, and a squid exotic, whose parts have none. CI regenerates the file and fails if it changed.
 
 Usage:
     python3 tools/crosscheck/part_names_vectors.py
@@ -36,6 +37,11 @@ def wing_rule_any(seed: int) -> bool:
     return any(n.name in any_names for n in part_names_model.names("DROPSHIP_PROC", seed))
 
 
+def having(model: str, *parts: str):
+    """A test of a seed: whether ``model`` with it has all of ``parts``."""
+    return lambda seed: set(parts) <= set(parts_model.parts(model, seed))
+
+
 # The cases each ship type needs beyond its first few seeds: a description and a test of the seed.
 CASES = {
     "DROPSHIP_PROC": [
@@ -57,6 +63,23 @@ CASES = {
             "a left wing with an empty accessory list",
             lambda seed: "_WINGSL_G" in parts_model.parts("SCIENTIFIC_PROC", seed),
         ),
+    ],
+    "SHUTTLE_PROC": [
+        ("a name made of a wing and its dish's face", having("SHUTTLE_PROC", "_WCACC_1")),
+        ("a name two of whose groups fit", having("SHUTTLE_PROC", "_ACC_C", "_ACCC_1")),
+    ],
+    "S-CLASS_PROC": [
+        ("a squid, whose parts have no names", having("S-CLASS_PROC", "_SCLASSSHIP_SQU")),
+        ("two names for one part", having("S-CLASS_PROC", "_TOPWING_A")),
+    ],
+    "SENTINELSHIP_PROC": [
+        ("both halves of a forward X-wing in one part", having("SENTINELSHIP_PROC", "_WINGS1_O")),
+    ],
+    "FREIGHTER_PROC": [
+        ("a name made of two parts", having("FREIGHTER_PROC", "_CARGO_JOINTTB")),
+    ],
+    "CAPITALFREIGHTER_PROC": [
+        ("a name made of two parts", having("CAPITALFREIGHTER_PROC", "_HULLBTOP_C2", "_VERTICALFINC_B")),
     ],
 }
 

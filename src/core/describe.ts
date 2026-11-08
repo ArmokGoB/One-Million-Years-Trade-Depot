@@ -85,9 +85,12 @@ export interface ColorInfo {
   name: string;
 }
 
-/** A part of a ship as the game names it (see namedParts). */
+/** A named part of a ship (see namedParts). */
 export interface PartNameInfo {
-  /** As the game names it, in its English, e.g. "Omega Fuselage". */
+  /**
+   * As the game names it, in its English, e.g. "Omega Fuselage", or for a
+   * ship it doesn't name, as players do, e.g. "Magnatreme Ring".
+   */
   name: string;
   /** Which of an explorer's wings it is, "left" or "right"; "" for any other part. */
   side: Side;
@@ -102,10 +105,11 @@ export interface BuildInfo {
   /** Part IDs as the game lists them, e.g. "_COCKPIT_E" (see distinguishingParts); none for a frigate. */
   parts: string[];
   /**
-   * The parts the game names, for a fighter, hauler, explorer or solar: one
-   * for each slot the Starship Fabricator fills, but for the few the game
-   * leaves unnamed. Part IDs in `parts` that none of them is made of have no
-   * name.
+   * Its named parts: for a fighter, hauler, explorer or solar, one for each
+   * slot the Starship Fabricator fills, but for the few the game leaves
+   * unnamed; for a shuttle, exotic, Sentinel ship, freighter or capital
+   * freighter, the parts players name. Part IDs in `parts` that none of them
+   * is made of have no name.
    */
   names: PartNameInfo[];
   /** Its paint's colors, each once, the hull's before the decals' (see paintColors); none if the game paints none. */
@@ -132,9 +136,13 @@ export interface ShipsInfo {
   /** Whether the exotic is a squid. */
   exoticSquid: boolean;
   exoticParts: string[];
+  /** The exotic's named parts (see BuildInfo.names). */
+  exoticNames: PartNameInfo[];
   exoticColors: ColorInfo[];
   crashSite: string;
   crashSiteParts: string[];
+  /** The crash-site ship's named parts (see BuildInfo.names). */
+  crashSiteNames: PartNameInfo[];
   crashSiteColors: ColorInfo[];
   /** All 50, in the game's order. */
   ships: ShipInfo[];
@@ -216,7 +224,7 @@ const seedText = (seed: bigint) => `0x${hex64(seed)}`;
 
 const isPartModel = (model: PaintModel): model is PartModel => (PART_MODELS as string[]).includes(model);
 
-/** A model's parts that tell it apart, and the names the game gives its parts, each with the IDs it's made of. */
+/** A model's parts that tell it apart, and its named parts, each with the IDs of those it's made of. */
 function partsAndNames(model: PaintModel, seed: bigint): Pick<BuildInfo, "parts" | "names"> {
   if (!isPartModel(model)) return { parts: [], names: [] };
   const parts = distinguishingParts(model, seed);
@@ -268,13 +276,17 @@ function describeMultitool({ kind, seed }: Multitool, painter: Painter): Multito
 
 function describeShips(code: bigint, galaxy: number, painter: Painter): ShipsInfo {
   const pool = shipPool(code, galaxy);
+  const exotic = partsAndNames("S-CLASS_PROC", pool.exotic);
+  const crashSite = partsAndNames(CRASH_SITE_MODEL, pool.crashSite);
   return {
     exotic: seedText(pool.exotic),
     exoticSquid: pool.exoticSquid,
-    exoticParts: distinguishingParts("S-CLASS_PROC", pool.exotic),
+    exoticParts: exotic.parts,
+    exoticNames: exotic.names,
     exoticColors: painter.colors("S-CLASS_PROC", pool.exotic),
     crashSite: seedText(pool.crashSite),
-    crashSiteParts: distinguishingParts(CRASH_SITE_MODEL, pool.crashSite),
+    crashSiteParts: crashSite.parts,
+    crashSiteNames: crashSite.names,
     crashSiteColors: painter.colors(CRASH_SITE_MODEL, pool.crashSite),
     ships: pool.ships.map(({ slot, type, group, seed, paints, hint, note }) => ({
       slot,
