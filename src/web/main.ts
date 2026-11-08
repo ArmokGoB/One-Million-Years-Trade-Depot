@@ -172,8 +172,8 @@ function paintColors(colors: readonly ColorInfo[], label = "Colors: "): Node[] {
 const SIDES = { left: "Left: ", right: "Right: " } as const;
 
 /**
- * The parts the game names, each its name in the game's words over, smaller,
- * the IDs it's made of, wrapping between parts, never inside one.
+ * A ship's named parts, each its name over, smaller, the IDs it's made of,
+ * wrapping between parts, never inside one.
  */
 function partNames(names: readonly PartNameInfo[]): Node[] {
   const named = names.map(({ name, side, parts }, i) => {
@@ -194,19 +194,25 @@ function partNames(names: readonly PartNameInfo[]): Node[] {
   return [el("span", "visually-hidden", "Parts: "), el("span", "part-names__list", ...named)];
 }
 
+/** The IDs in `parts` that none of `names` is made of, as text, after "Other parts: " if any part is named. */
+function otherParts(parts: readonly string[], names: readonly PartNameInfo[]): string {
+  const named = new Set(names.flatMap((n) => n.parts));
+  const unnamed = parts.filter((part) => !named.has(part));
+  if (!unnamed.length) return "";
+  return (names.length ? "Other parts: " : "") + partsText(unnamed);
+}
+
 /**
- * A ship's parts and colors: the parts the game names, if it names any, then a
- * line of the parts it doesn't, if it has parts to pick, then a line of its
- * colors, if the game paints it.
+ * A ship's parts and colors: its named parts, if it has any, then a line of
+ * the others, if it has parts to pick, then a line of its colors, if the game
+ * paints it.
  */
 function buildLines(builds: readonly BuildInfo[]): HTMLElement[] {
   return builds.flatMap(({ parts, names, colors }) => {
     const lines: HTMLElement[] = [];
     if (names.length) lines.push(el("dd", "ships__names part-names", ...partNames(names)));
-    const named = new Set(names.flatMap((n) => n.parts));
-    const unnamed = parts.filter((part) => !named.has(part));
-    const other = names.length ? "Other parts: " : "";
-    if (unnamed.length) lines.push(el("dd", "ships__parts", other + partsText(unnamed)));
+    const other = otherParts(parts, names);
+    if (other) lines.push(el("dd", "ships__parts", other));
     if (colors.length) lines.push(el("dd", "ships__paint paint", ...paintColors(colors)));
     return lines;
   });
@@ -233,22 +239,30 @@ function shipList(ships: ShipsInfo): HTMLElement {
 interface KeyShip {
   seed: string;
   parts: readonly string[];
+  names: readonly PartNameInfo[];
   colors: readonly ColorInfo[];
 }
 
-/** A ship's seed, parts and colors in the key. */
+/** A ship's seed in the key, then its parts and colors as the full list gives them. */
 function keyShip(ship: KeyShip): Node[] {
+  const other = otherParts(ship.parts, ship.names);
   return [
     el("span", "manifest__note", `Seed ${ship.seed}`),
-    ...(ship.parts.length ? [el("span", "manifest__note", partsText(ship.parts))] : []),
+    ...(ship.names.length ? [el("span", "manifest__note manifest__names part-names", ...partNames(ship.names))] : []),
+    ...(other ? [el("span", "manifest__note", other)] : []),
     ...(ship.colors.length ? [el("span", "manifest__note paint", ...paintColors(ship.colors))] : []),
   ];
 }
 
 function shipsSection(d: SystemDescription): HTMLElement {
   const ships = d.ships;
-  const exotic = { seed: ships.exotic, parts: ships.exoticParts, colors: ships.exoticColors };
-  const crashSite = { seed: ships.crashSite, parts: ships.crashSiteParts, colors: ships.crashSiteColors };
+  const exotic = { seed: ships.exotic, parts: ships.exoticParts, names: ships.exoticNames, colors: ships.exoticColors };
+  const crashSite = {
+    seed: ships.crashSite,
+    parts: ships.crashSiteParts,
+    names: ships.crashSiteNames,
+    colors: ships.crashSiteColors,
+  };
   const key = el("dl", "manifest");
   key.append(
     el("dt", undefined, "Exotic"),

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// A ship's parts by the names the game gives them: a port of
-// tools/captures/part_names_model.py. tests/partnames.test.ts holds this port
-// to it.
+// A ship's parts by name: a port of tools/captures/part_names_model.py.
+// tests/partnames.test.ts holds this port to it.
 //
 // The game names the parts of the ships a player can build at a space
 // station's Starship Fabricator: fighters, haulers, explorers and solars.
@@ -20,9 +19,19 @@
 //   tables' pairs) is named as if it had the pair's second part, its right
 //   wing its left one; a part named for having the second is made of the
 //   first.
+//
+// Players name the parts of the other ships: shuttles, exotics, Sentinel
+// ships, freighters and capital freighters. tools/community_part_names.tsv has
+// their names, the No Man's Sky Coordinate Exchange's (NMSCE) and this
+// project's own for parts NMSCE has no name for, each with groups of part IDs
+// (in data/community-part-names.json, by tools/build_community_part_names.py).
+// A ship has each name it has every part of a group of, made of the parts of
+// every such group, in the order their first parts come on the ship; a name
+// with no parts, which every ship of its model has, comes first.
 
+import rawCommunityNames from "./data/community-part-names.json";
 import rawNames from "./data/part-names.json";
-import { partsAndOptions, type PartModel } from "./parts";
+import { partsAndOptions, partsFor, type PartModel } from "./parts";
 
 /** Which of a pair of slots, for the explorer's wings: "left" or "right"; "" for any other slot. */
 export type Side = "" | "left" | "right";
@@ -37,24 +46,42 @@ interface PartNamesFile {
   models: Record<string, Slot[]>;
 }
 
-const NAMES = rawNames as unknown as PartNamesFile;
+/** A name players use for a part, and the groups of part IDs a ship has it with. */
+type CommunityName = [string, string[][]];
 
-/** A slot of a ship named. */
+interface CommunityNamesFile {
+  models: Record<string, CommunityName[]>;
+}
+
+const NAMES = rawNames as unknown as PartNamesFile;
+const COMMUNITY_NAMES = rawCommunityNames as unknown as CommunityNamesFile;
+
+/** A named part of a ship. */
 export interface NamedPart {
   side: Side;
-  /** As the game names it, in its English, e.g. "Omega Fuselage". */
+  /**
+   * As the game names it, in its English, e.g. "Omega Fuselage", or for a
+   * ship it doesn't name, as players do, e.g. "Magnatreme Ring".
+   */
   name: string;
-  /** The ship's parts that make it, in the order the ship has them. */
+  /** The ship's parts that make it, in the order the ship has them; none for a part every ship of its model has. */
   parts: string[];
 }
 
-/** The models the game names parts of: the ones its Starship Fabricator builds. */
-export const NAMED_MODELS = Object.keys(NAMES.models) as PartModel[];
+/**
+ * The models whose parts have names: those the game's Starship Fabricator
+ * builds, then those players name the parts of.
+ */
+export const NAMED_MODELS = [...Object.keys(NAMES.models), ...Object.keys(COMMUNITY_NAMES.models)] as PartModel[];
 
-/** The named slots of `model` with `seed`, in the Fabricator's order; none for a model the game doesn't name. */
+/**
+ * The named parts of `model` with `seed`: a Fabricator ship's named slots, in
+ * the Fabricator's order, or the names players give the parts of another ship
+ * (see communityNames); none for a model whose parts have no names.
+ */
 export function namedParts(model: PartModel, seed: bigint): NamedPart[] {
   const slots = NAMES.models[model];
-  if (!slots) return [];
+  if (!slots) return communityNames(model, seed);
   const { parts, offered } = partsAndOptions(model, seed);
   const have = new Set(parts);
   const standsFor = new Map<string, string>(); // a pair's second part, by the first, which the ship has instead
@@ -87,4 +114,26 @@ export function namedParts(model: PartModel, seed: bigint): NamedPart[] {
     found[right] = named ? { ...named, side: "right" } : null;
   }
   return found.filter((named): named is NamedPart => named !== null);
+}
+
+/**
+ * The names players give the parts of `model` with `seed`, in the order their
+ * first parts come on the ship, a name with no parts first; none for a model
+ * they don't name the parts of.
+ */
+function communityNames(model: PartModel, seed: bigint): NamedPart[] {
+  const entries = COMMUNITY_NAMES.models[model];
+  if (!entries) return [];
+  const parts = partsFor(model, seed);
+  const have = new Set(parts);
+  const found = entries.flatMap(([name, groups], index) => {
+    const fit = groups.filter((group) => group.every((part) => have.has(part)));
+    if (!fit.length) return [];
+    const made = new Set(fit.flat());
+    const ordered = parts.filter((part) => made.has(part));
+    const first = ordered.length ? parts.indexOf(ordered[0]!) : -1;
+    return [{ first, index, named: { side: "" as Side, name, parts: ordered } }];
+  });
+  found.sort((a, b) => a.first - b.first || a.index - b.index);
+  return found.map(({ named }) => named);
 }

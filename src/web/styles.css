@@ -456,6 +456,10 @@ a:hover {
 .manifest__note + .manifest__note {
   margin-top: 0.25rem;
 }
+/* A key ship's named parts, as the full list shows them: each name in the text's color over its IDs. */
+.manifest__names {
+  color: var(--ink);
+}
 
 .star-color {
   white-space: nowrap;
@@ -637,8 +641,8 @@ a:hover {
   margin: 0.25rem 0 0;
 }
 
-/* The parts the game names: each name in the game's words over, at MatrixType's
- * smallest size, the IDs it's made of, wrapping between parts, never inside one. */
+/* A ship's named parts: each name over, at MatrixType's smallest size, the IDs
+ * it's made of, wrapping between parts, never inside one. */
 .part-names {
   display: flex;
   flex-wrap: wrap;

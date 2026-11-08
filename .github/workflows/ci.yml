@@ -55,6 +55,7 @@ jobs:
           python tools/crosscheck/multitool_vectors.py
           python tools/crosscheck/parts_vectors.py
           python tools/crosscheck/paint_vectors.py
+          python tools/build_community_part_names.py
           python tools/crosscheck/part_names_vectors.py
           git diff --exit-code -- src/core/data tests/fixtures
       - name: Generate 20,000 reference cases

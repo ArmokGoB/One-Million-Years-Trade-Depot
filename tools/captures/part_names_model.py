@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""A ship's parts by the names the game gives them, from its seed.
+"""A ship's parts by name, from its seed: the game's names, or for ships it doesn't name, the names players use.
 
 The game names the parts of the ships a player can build at a space station's Starship Fabricator:
 fighters, haulers, explorers and solars. Each slot of such a ship (fuselage or cockpit, wings, thruster,
@@ -21,8 +21,16 @@ parts_model.py picks for it:
 Exactly one component fits each slot of every fighter, hauler, explorer and solar the capture mod has
 recorded, and of 20,000 made-up seeds of each; the one hauler wing that has no name in the game is the
 only one left unnamed, on about 1 hauler in 260. For fighters, haulers and solars, the slots come out the
-same whether parts in lists the descriptor never goes through count or not. src/core/partnames.ts is the
-site's port.
+same whether parts in lists the descriptor never goes through count or not.
+
+Players name the parts of the other ships: shuttles, exotics, Sentinel ships, freighters and capital
+freighters. tools/community_part_names.tsv has their names, the No Man's Sky Coordinate Exchange's (NMSCE)
+and this project's own for parts NMSCE has no name for, each with groups of part IDs (kept in
+src/core/data/community-part-names.json by tools/build_community_part_names.py). A ship has each name it
+has every part of a group of, made of the parts of every such group, and has them in the order their first
+parts come on the ship; a name with no parts, which every ship of its model has, comes first.
+
+src/core/partnames.ts is the site's port.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ from pathlib import Path
 import parts_model
 
 TABLES = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "part-names.json"
+COMMUNITY_TABLES = TABLES.parent / "community-part-names.json"
 
 
 @lru_cache(maxsize=1)
@@ -43,15 +52,22 @@ def tables() -> dict:
         return json.load(f)
 
 
+@lru_cache(maxsize=1)
+def community_tables() -> dict:
+    with open(COMMUNITY_TABLES, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def models() -> list[str]:
-    """The models the tables name parts of, by the key of the parts tables (FIGHTER_PROC, ...)."""
-    return list(tables()["models"])
+    """The models whose parts have names, by the key of the parts tables (FIGHTER_PROC, ...): those the game
+    names the parts of, then those players do."""
+    return list(tables()["models"]) + list(community_tables()["models"])
 
 
 @dataclass(frozen=True)
 class Named:
-    """A slot of a ship named: its side ('left', 'right' or none), the name, and the ship's parts that make
-    it, in the order the ship has them."""
+    """A named part of a ship: its side ('left', 'right' or none), the name, and the ship's parts that make it,
+    in the order the ship has them."""
 
     side: str
     name: str
@@ -59,12 +75,13 @@ class Named:
 
 
 def names(model: str, seed: int) -> list[Named]:
-    """The named slots of ``model`` with ``seed``, in the Fabricator's order; none for a model the tables
-    don't name."""
+    """The named parts of ``model`` with ``seed``: a Fabricator ship's named slots, in the Fabricator's order,
+    or the names players give the parts of another ship (see community_names); none for a model whose parts
+    have no names."""
     t = tables()
     slots = t["models"].get(model)
     if slots is None:
-        return []
+        return community_names(model, seed)
     parts, reached = parts_model.parts_and_options(model, seed)
     have = set(parts)
     stands_for: dict[str, str] = {}  # a pair's second part, by the first, which the ship has instead
@@ -95,3 +112,23 @@ def names(model: str, seed: int) -> list[Named]:
         left = found[sides.index("left")]
         found[sides.index("right")] = left and Named("right", left.name, left.parts)
     return [n for n in found if n]
+
+
+def community_names(model: str, seed: int) -> list[Named]:
+    """The names players give the parts of ``model`` with ``seed``, in the order their first parts come on the
+    ship, a name with no parts first; none for a model they don't name the parts of."""
+    entries = community_tables()["models"].get(model)
+    if entries is None:
+        return []
+    parts = parts_model.parts(model, seed)
+    have = set(parts)
+    found: list[tuple[int, int, Named]] = []
+    for index, (name, groups) in enumerate(entries):
+        fit = [group for group in groups if all(part in have for part in group)]
+        if not fit:
+            continue
+        made = {part for group in fit for part in group}
+        ordered = tuple(part for part in parts if part in made)
+        first = parts.index(ordered[0]) if ordered else -1
+        found.append((first, index, Named("", name, ordered)))
+    return [named for _, _, named in sorted(found, key=lambda entry: entry[:2])]

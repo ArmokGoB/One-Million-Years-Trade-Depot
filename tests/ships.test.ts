@@ -42,7 +42,7 @@ import {
   type ShipGroup,
 } from "../src/core";
 
-/** The names the game gives a starship's parts, each with the parts that tell ships apart it's made of. */
+/** A starship's named parts, each with the parts that tell ships apart it's made of. */
 function namesOf(model: PartModel, seed: bigint) {
   const parts = distinguishingParts(model, seed);
   return namedParts(model, seed).map(({ name, side, parts: made }) => ({
@@ -377,11 +377,16 @@ describe("describeSystem", () => {
     });
     // A hauler's cockpit, thrusters and wings, each by name; nothing else of its parts is named.
     expect(d.ships.ships[0]!.builds[0]!.names.map((n) => n.side)).toEqual(["", "", ""]);
-    // The exotic's aren't named: the game's Starship Fabricator doesn't build exotics.
-    expect(d.ships.ships[20]!.builds[0]!.names).toEqual([]);
+    // The exotic's by the names players use, in the full list and in the key alike.
+    expect(d.ships.ships[20]!.builds[0]!.names).toEqual(namesOf("S-CLASS_PROC", seed(20)));
+    expect(d.ships.exoticNames).toEqual(namesOf("S-CLASS_PROC", seed(20)));
+    expect(d.ships.exoticNames.length).toBeGreaterThan(0);
     expect(d.ships.exoticParts).toEqual(distinguishingParts("S-CLASS_PROC", seed(20)));
     expect(d.ships.exoticColors).toEqual(colorsOf("S-CLASS_PROC", seed(20), basePalettes(seed(20))));
     expect(d.ships.crashSiteParts).toEqual(distinguishingParts("SENTINELSHIP_PROC", crash));
+    // The crash-site ship's, its body first, which has no ID of its own.
+    expect(d.ships.crashSiteNames).toEqual(namesOf("SENTINELSHIP_PROC", crash));
+    expect(d.ships.crashSiteNames[0]).toEqual({ name: "Body", side: "", parts: [] });
     // The crash-site ship has no texture hint; the system's Sentinel ship has POLICE.
     expect(d.ships.crashSiteColors).toEqual(colorsOf("SENTINELSHIP_PROC", crash, basePalettes(crash)));
     expect(d.ships.ships[35]!.builds[0]!.colors).toEqual(
