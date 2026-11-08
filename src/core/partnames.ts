@@ -24,8 +24,9 @@
 // ships, freighters and capital freighters. tools/community_part_names.tsv has
 // their names, the No Man's Sky Coordinate Exchange's (NMSCE) and this
 // project's own for parts NMSCE has no name for, each with groups of part IDs
-// (in data/community-part-names.json, by tools/build_community_part_names.py).
-// A ship has each name it has every part of a group of, made of the parts of
+// (in data/community-part-names.json, by tools/build_community_part_names.py):
+// the IDs that make the part and any the ship must have as well. A ship has
+// each name it has every ID of a group of, made of the IDs that make it of
 // every such group, in the order their first parts come on the ship; a name
 // with no parts, which every ship of its model has, comes first.
 
@@ -46,8 +47,10 @@ interface PartNamesFile {
   models: Record<string, Slot[]>;
 }
 
+/** Part IDs a ship has a part with: [those that make it] or [those, and IDs the ship must have as well]. */
+type Group = [string[]] | [string[], string[]];
 /** A name players use for a part, and the groups of part IDs a ship has it with. */
-type CommunityName = [string, string[][]];
+type CommunityName = [string, Group[]];
 
 interface CommunityNamesFile {
   models: Record<string, CommunityName[]>;
@@ -127,9 +130,9 @@ function communityNames(model: PartModel, seed: bigint): NamedPart[] {
   const parts = partsFor(model, seed);
   const have = new Set(parts);
   const found = entries.flatMap(([name, groups], index) => {
-    const fit = groups.filter((group) => group.every((part) => have.has(part)));
+    const fit = groups.filter((group) => group.every((ids) => ids.every((part) => have.has(part))));
     if (!fit.length) return [];
-    const made = new Set(fit.flat());
+    const made = new Set(fit.flatMap(([ids]) => ids));
     const ordered = parts.filter((part) => made.has(part));
     const first = ordered.length ? parts.indexOf(ordered[0]!) : -1;
     return [{ first, index, named: { side: "" as Side, name, parts: ordered } }];

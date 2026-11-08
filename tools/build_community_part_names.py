@@ -10,9 +10,10 @@ they're written.
 
 This script checks the file against the parts tables (src/core/data/part-tables.json): each line's model has
 parts, and every part ID it names is one that model's descriptors can pick. It writes each model's names in
-the file's order, each [name, groups], a group being the part IDs that must all be on a ship for it to have
-the part; a name whose only group is empty is on every ship of the model. tools/captures/part_names_model.py
-and src/core/partnames.ts name a ship's parts from the result.
+the file's order, each [name, groups], a group [the part IDs that make the part] or [those, and the IDs the
+ship must have as well]: a ship has the part when it has every ID of one of its groups. A name whose only
+group is empty is on every ship of the model. tools/captures/part_names_model.py and src/core/partnames.ts
+name a ship's parts from the result.
 
 Usage:
     python3 tools/build_community_part_names.py
@@ -73,18 +74,23 @@ def part_ids(term: str) -> list[str]:
     return ids
 
 
-def groups(parts: str) -> list[list[str]]:
-    """The groups a line's parts stand for: each alternative's terms, one ID of each, in every combination."""
+def groups(parts: str) -> list[list[list[str]]]:
+    """The groups a line's parts stand for: each alternative's terms, one ID of each, in every combination,
+    as [the IDs that make the part] or, for an alternative with "on", [those, the IDs after "on"]."""
     if parts == ALWAYS:
-        return [[]]
-    out: list[list[str]] = []
+        return [[[]]]
+    out: list[list[list[str]]] = []
     for alternative in split_top(parts, ","):
-        terms = [part_ids(term) for term in split_top(alternative, "+")]
-        for group in itertools.product(*terms):
-            if len(set(group)) < len(group):
+        made, _, needs = alternative.partition(" on ")
+        made_terms = [part_ids(term) for term in split_top(made, "+")]
+        need_terms = [part_ids(term) for term in split_top(needs, "+")] if needs else []
+        for combination in itertools.product(*made_terms, *need_terms):
+            if len(set(combination)) < len(combination):
                 raise SourceError(f"a part twice in one group: {alternative!r}")
-            if list(group) not in out:
-                out.append(list(group))
+            ids = list(combination)
+            group = [ids[: len(made_terms)], ids[len(made_terms) :]] if need_terms else [ids]
+            if group not in out:
+                out.append(group)
     return out
 
 
@@ -116,7 +122,7 @@ def read(source: Path) -> dict[str, list[list]]:
             found = groups(parts)
             pickable.setdefault(model, options(model))
             for group in found:
-                for part in group:
+                for part in (part for ids in group for part in ids):
                     if part not in pickable[model]:
                         raise SourceError(f"{model} never has {part}")
         except SourceError as exc:
@@ -140,8 +146,9 @@ def main() -> int:
     about = (
         "Derived from tools/community_part_names.tsv by tools/build_community_part_names.py. For each model, "
         "the names players use for its parts, NMSCE's and this project's own, in the file's order, each "
-        "[name, groups]: a ship has the part when it has every part ID of one of its groups, and the part is "
-        "made of the IDs of every such group. A name whose only group is empty is on every ship of the model."
+        "[name, groups], a group [the part IDs that make the part] or [those, and IDs the ship must have as "
+        "well]: a ship has the part when it has every ID of one of its groups, and the part is made of the IDs "
+        "that make it of every such group. A name whose only group is empty is on every ship of the model."
     )
 
     def compact(value) -> str:

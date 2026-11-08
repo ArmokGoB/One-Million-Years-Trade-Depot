@@ -57,7 +57,7 @@ Known gaps:
 - What decides a giant planet's biome isn't known, so the site doesn't say which kind a system has.
 - Each multi-tool's class isn't known.
 - The site shows the multi-tools the game makes as you arrive from space. Loading a save on a planet makes it build another set, from that planet's address, which the site doesn't show.
-- The Starship Fabricator's part names haven't been checked against what the game shows. About 1 hauler in 260 has wings that make a component the game doesn't name.
+- The Starship Fabricator's part names haven't been checked against what the game shows.
 - Not every part of the ships players name has a name; the rest show by ID only.
 
 ## How it works

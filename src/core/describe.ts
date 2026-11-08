@@ -106,10 +106,9 @@ export interface BuildInfo {
   parts: string[];
   /**
    * Its named parts: for a fighter, hauler, explorer or solar, one for each
-   * slot the Starship Fabricator fills, but for the few the game leaves
-   * unnamed; for a shuttle, exotic, Sentinel ship, freighter or capital
-   * freighter, the parts players name. Part IDs in `parts` that none of them
-   * is made of have no name.
+   * slot the Starship Fabricator fills; for a shuttle, exotic, Sentinel ship,
+   * freighter or capital freighter, the parts players name. Part IDs in
+   * `parts` that none of them is made of have no name.
    */
   names: PartNameInfo[];
   /** Its paint's colors, each once, the hull's before the decals' (see paintColors); none if the game paints none. */
