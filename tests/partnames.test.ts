@@ -45,13 +45,18 @@ describe("part name vectors from the Python model", () => {
 });
 
 describe("named parts", () => {
-  it("name every slot of a Fabricator ship but for one hauler wing the game leaves unnamed", () => {
-    for (const v of fabricator) {
-      expect(v.names.length, `${v.model} ${v.seed}`).toBe(v.model === "DROPSHIP_PROC" ? v.names.length : 3);
+  it("name every slot of a Fabricator ship", () => {
+    for (const v of fabricator) expect(v.names.length, `${v.model} ${v.seed}`).toBe(3);
+  });
+
+  it("give the hauler wing the product tables leave out the name the game's text has for it", () => {
+    const heavy = fabricator.filter((v) => v.names.some(([, , made]) => made.includes("_SUBWINGS_D27")));
+    expect(heavy.length).toBeGreaterThan(0);
+    for (const v of heavy) {
+      const [, name, made] = v.names.find(([, , made]) => made.includes("_SUBWINGS_D27"))!;
+      expect(name).toBe("Heavy-22 D-Wing");
+      expect(made).toEqual(expect.arrayContaining(["_WINGS_C", "_THRUSTERS_D2", "_SUBWINGS_D27"]));
     }
-    const haulers = fabricator.filter((v) => v.model === "DROPSHIP_PROC");
-    expect(haulers.filter((v) => v.names.length === 2)).toHaveLength(1);
-    expect(haulers.filter((v) => v.names.length === 3)).toHaveLength(haulers.length - 1);
   });
 
   it("are made of the ship's own parts, in its order", () => {
@@ -76,6 +81,20 @@ describe("named parts", () => {
     const sentinels = community.filter((v) => v.model === "SENTINELSHIP_PROC");
     expect(sentinels.length).toBeGreaterThan(0);
     for (const v of sentinels) expect(v.names[0], v.seed).toEqual(["", "Body", []]);
+  });
+
+  it("name a slot by what it holds on each kind of freighter", () => {
+    const slots = community.filter(
+      (v) => v.model === "FREIGHTER_PROC" && v.names.some(([, , made]) => made.includes("_CARGOB_A")),
+    );
+    const kinds = slots.map((v) => {
+      const hull = partsFor(v.model, BigInt(`0x${v.seed}`)).find((p) => p === "_HULL_A" || p === "_HULL_B");
+      const holds = v.names.filter(([, , made]) => made.includes("_CARGOB_A")).map(([, name]) => name);
+      return [hull, holds];
+    });
+    expect(kinds).toContainEqual(["_HULL_A", ["Tokamak Cargo"]]);
+    expect(kinds).toContainEqual(["_HULL_B", ["Dewar Cargo"]]);
+    for (const [hull, holds] of kinds) expect(holds).toEqual([hull === "_HULL_A" ? "Tokamak Cargo" : "Dewar Cargo"]);
   });
 
   it("can name one part twice, as a forward X-wing's two open halves in one model", () => {

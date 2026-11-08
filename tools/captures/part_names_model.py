@@ -19,16 +19,18 @@ parts_model.py picks for it:
    wing its left one. A part named for having the second is made of the first.
 
 Exactly one component fits each slot of every fighter, hauler, explorer and solar the capture mod has
-recorded, and of 20,000 made-up seeds of each; the one hauler wing that has no name in the game is the
-only one left unnamed, on about 1 hauler in 260. For fighters, haulers and solars, the slots come out the
-same whether parts in lists the descriptor never goes through count or not.
+recorded, and of 20,000 made-up seeds of each, and every one has a name: the hauler wing whose item the
+product tables leave out, on about 1 hauler in 260, has the one the game's text gives it (see
+build_part_names.py). For fighters, haulers and solars, the slots come out the same whether parts in lists
+the descriptor never goes through count or not.
 
 Players name the parts of the other ships: shuttles, exotics, Sentinel ships, freighters and capital
 freighters. tools/community_part_names.tsv has their names, the No Man's Sky Coordinate Exchange's (NMSCE)
 and this project's own for parts NMSCE has no name for, each with groups of part IDs (kept in
-src/core/data/community-part-names.json by tools/build_community_part_names.py). A ship has each name it
-has every part of a group of, made of the parts of every such group, and has them in the order their first
-parts come on the ship; a name with no parts, which every ship of its model has, comes first.
+src/core/data/community-part-names.json by tools/build_community_part_names.py): the IDs that make the part
+and any the ship must have as well. A ship has each name it has every ID of a group of, made of the IDs that
+make it of every such group, and has them in the order their first parts come on the ship; a name with no
+parts, which every ship of its model has, comes first.
 
 src/core/partnames.ts is the site's port.
 """
@@ -124,10 +126,10 @@ def community_names(model: str, seed: int) -> list[Named]:
     have = set(parts)
     found: list[tuple[int, int, Named]] = []
     for index, (name, groups) in enumerate(entries):
-        fit = [group for group in groups if all(part in have for part in group)]
+        fit = [group for group in groups if all(part in have for ids in group for part in ids)]
         if not fit:
             continue
-        made = {part for group in fit for part in group}
+        made = {part for group in fit for part in group[0]}
         ordered = tuple(part for part in parts if part in made)
         first = parts.index(ordered[0]) if ordered else -1
         found.append((first, index, Named("", name, ordered)))

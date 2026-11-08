@@ -28,6 +28,10 @@ fit a generated explorer as they are. This script names them as the generated pa
 - In a list whose options the generator never picks, it picks nothing; an option of such a list named
   NULL, which brings in nothing, stands for that, and isn't required.
 
+One component's item, DROPS_WINGCDD, a hauler wing, is missing from the product tables, though the game's
+English has its name under the key its neighbors' names follow (DROPS_WINGCDA is UI_DROPSHIP_WING_CDA_NAME_L,
+and so on). This script names it by that key (NAME_KEYS).
+
 And it adds one rule the tables don't say. About half the explorers the game generates have a matched pair
 of wings: their descriptor picks _WINGS_SYM (or _WINGS_SYM1), and one wing for both sides, where an explorer
 built at the Fabricator has _WINGS_ASYM (_WINGS_ASYM1) and a wing for each side, which may be the same one.
@@ -111,6 +115,8 @@ LOOKALIKES = {
         "_SUBWINGR_DXNEVER": "_SUBWINGL_D",
     }
 }
+# The name keys of the Fabricator's items that the product tables leave out (see above).
+NAME_KEYS = {"DROPS_WINGCDD": "UI_DROPSHIP_WING_CDD_NAME_L"}
 PART_TABLES = OUT_DEFAULT.parent / "part-tables.json"
 NEVER = 2  # the weight class of an option the generator never picks, in the parts tables
 
@@ -242,6 +248,10 @@ def main() -> int:
         slots_of = configs(read(files, MODULAR_TABLE, MODULAR_TABLE_HASH))
         groups = descriptor_groups(read(files, DESCRIPTOR_GROUPS, DESCRIPTOR_GROUPS_HASH))
         products = product_names(files)
+        for item, key in NAME_KEYS.items():
+            if item in products:
+                raise TableError(f"{item} is a product now: drop it from NAME_KEYS")
+            products[item] = key
         items = {item for slots in slots_of.values() for _, its in slots for item, _, _ in its}
         texts = english(files, {products[i] for i in items if i in products})
 

@@ -5,11 +5,12 @@
 tools/captures/part_names_model.py names a ship's parts from its seed, by the game's names or by the names
 players use; tests/partnames.test.ts replays these vectors through the TypeScript port. The seeds are made
 up, picked by a fixed search: for each model whose parts have names, the first few seeds, and then one for
-each case the naming treats apart: a hauler wing with no name in the game and one whose component fits by
-any one of its groups; explorers with a matched pair of wings on each of their two cockpits, with a right
-wing named by a lookalike, and with wings whose accessory lists the generator never picks from; and among
-the names players use, names made of more than one part, one two of whose groups fit, two names for one
-part, and a squid exotic, whose parts have none. CI regenerates the file and fails if it changed.
+each case the naming treats apart: the hauler wing whose item the product tables leave out and one whose
+component fits by any one of its groups; explorers with a matched pair of wings on each of their two
+cockpits, with a right wing named by a lookalike, and with wings whose accessory lists the generator never
+picks from; and among the names players use, names made of more than one part, one two of whose groups fit,
+two names for one part, a squid exotic, whose parts have none, and a cargo slot whose cargo depends on the
+freighter's hull. CI regenerates the file and fails if it changed.
 
 Usage:
     python3 tools/crosscheck/part_names_vectors.py
@@ -45,7 +46,7 @@ def having(model: str, *parts: str):
 # The cases each ship type needs beyond its first few seeds: a description and a test of the seed.
 CASES = {
     "DROPSHIP_PROC": [
-        ("a wing with no name", lambda seed: len(part_names_model.names("DROPSHIP_PROC", seed)) == 2),
+        ("the wing whose item the product tables leave out", having("DROPSHIP_PROC", "_SUBWINGS_D27", "_THRUSTERS_D2")),
         ("wings that fit by any one group", wing_rule_any),
     ],
     "SCIENTIFIC_PROC": [
@@ -77,6 +78,8 @@ CASES = {
     ],
     "FREIGHTER_PROC": [
         ("a name made of two parts", having("FREIGHTER_PROC", "_CARGO_JOINTTB")),
+        ("a cargo slot on a Staggered Hull", having("FREIGHTER_PROC", "_HULL_A", "_CARGOB_A")),
+        ("the same slot on a Linear Hull", having("FREIGHTER_PROC", "_HULL_B", "_CARGOB_A")),
     ],
     "CAPITALFREIGHTER_PROC": [
         ("a name made of two parts", having("CAPITALFREIGHTER_PROC", "_HULLBTOP_C2", "_VERTICALFINC_B")),
