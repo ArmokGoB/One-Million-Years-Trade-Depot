@@ -9,8 +9,9 @@ each case the naming treats apart: the hauler wing whose item the product tables
 component fits by any one of its groups; explorers with a matched pair of wings on each of their two
 cockpits, with a right wing named by a lookalike, and with wings whose accessory lists the generator never
 picks from; and among the names players use, names made of more than one part, one two of whose groups fit,
-two names for one part, a squid exotic, whose parts have none, and a cargo slot whose cargo depends on the
-freighter's hull. CI regenerates the file and fails if it changed.
+two names for one part, a squid exotic, whose parts have none, a cargo slot whose cargo depends on the
+freighter's hull, a shuttle's chin on a cockpit that has one and its ID on one that has none, and an accessory
+in a double hull's slot. CI regenerates the file and fails if it changed.
 
 Usage:
     python3 tools/crosscheck/part_names_vectors.py
@@ -68,6 +69,9 @@ CASES = {
     "SHUTTLE_PROC": [
         ("a name made of a wing and its dish's face", having("SHUTTLE_PROC", "_WCACC_1")),
         ("a name two of whose groups fit", having("SHUTTLE_PROC", "_ACC_C", "_ACCC_1")),
+        ("a chin on a cockpit that has one", having("SHUTTLE_PROC", "_DCOCKPIT_A", "_ACC_B")),
+        ("the chin's ID on a cockpit with no chin there", having("SHUTTLE_PROC", "_SCOCKPIT_C", "_ACC_B")),
+        ("an accessory in a double hull's slot", having("SHUTTLE_PROC", "_OUTA_3", "_ABACC_3")),
     ],
     "S-CLASS_PROC": [
         ("a squid, whose parts have no names", having("S-CLASS_PROC", "_SCLASSSHIP_SQU")),

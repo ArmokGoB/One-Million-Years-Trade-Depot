@@ -97,6 +97,18 @@ describe("named parts", () => {
     for (const [hull, holds] of kinds) expect(holds).toEqual([hull === "_HULL_A" ? "Tokamak Cargo" : "Dewar Cargo"]);
   });
 
+  it("name a shuttle's chin only on a cockpit with a place for it", () => {
+    const withId = community
+      .filter((v) => v.model === "SHUTTLE_PROC")
+      .map((v) => ({ parts: partsFor(v.model, BigInt(`0x${v.seed}`)), names: v.names.map(([, name]) => name) }))
+      .filter((v) => v.parts.includes("_ACC_B"));
+    const on = (cockpit: string) => withId.filter((v) => v.parts.includes(cockpit));
+    expect(on("_DCOCKPIT_A").length).toBeGreaterThan(0);
+    expect(on("_SCOCKPIT_C").length).toBeGreaterThan(0);
+    for (const v of on("_DCOCKPIT_A")) expect(v.names).toContain("Angled Chin");
+    for (const v of on("_SCOCKPIT_C")) expect(v.names).not.toContain("Angled Chin");
+  });
+
   it("can name one part twice, as a forward X-wing's two open halves in one model", () => {
     const xwing = community.find((v) => partsFor(v.model, BigInt(`0x${v.seed}`)).includes("_WINGS1_O"))!;
     const names = xwing.names.filter(([, , made]) => made.includes("_WINGS1_O")).map(([, name]) => name);
